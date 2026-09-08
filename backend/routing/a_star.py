@@ -30,7 +30,7 @@ def heuristic(graph, node, destination):
     return EARTH_RADIUS_M * c
 
 
-def a_star(graph, start, destination):
+def a_star(graph, start, destination, return_stats=False):
     distances = {
         node: float("inf")
         for node in graph.nodes
@@ -44,20 +44,27 @@ def a_star(graph, start, destination):
     distances[start] = 0
 
     priority_queue = [
-        (heuristic(graph, start, destination), start)
+        (heuristic(graph, start, destination), 0, start)
     ]
 
+    nodes_explored = 0
+
     while priority_queue:
-        _, current_node = heapq.heappop(priority_queue)
+        _, current_distance, current_node = heapq.heappop(
+            priority_queue
+        )
+
+        if current_distance > distances[current_node]:
+            continue
+
+        nodes_explored += 1
 
         if current_node == destination:
             break
 
         for neighbour, weight in graph.get_neighbours(current_node):
 
-            new_distance = (
-                distances[current_node] + weight
-            )
+            new_distance = current_distance + weight
 
             if new_distance < distances[neighbour]:
                 distances[neighbour] = new_distance
@@ -74,14 +81,20 @@ def a_star(graph, start, destination):
 
                 heapq.heappush(
                     priority_queue,
-                    (estimated_total_cost, neighbour)
+                    (
+                        estimated_total_cost,
+                        new_distance,
+                        neighbour
+                    )
                 )
 
     if distances[destination] == float("inf"):
+        if return_stats:
+            return [], float("inf"), nodes_explored
+
         return [], float("inf")
 
     path = []
-
     current = destination
 
     while current is not None:
@@ -89,5 +102,8 @@ def a_star(graph, start, destination):
         current = previous[current]
 
     path.reverse()
+
+    if return_stats:
+        return path, distances[destination], nodes_explored
 
     return path, distances[destination]

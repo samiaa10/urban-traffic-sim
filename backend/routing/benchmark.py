@@ -1,18 +1,14 @@
 import pickle
 import random
 import time
+from pathlib import Path
 
 from dijkstra import dijkstra
 from a_star import a_star
 
 
-from pathlib import Path
-
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GRAPH_FILE = PROJECT_ROOT / "data" / "osm" / "norwich_graph.pkl"
-
-NUM_TESTS = 100
-RANDOM_SEED = 42
 
 
 def load_graph():
@@ -27,135 +23,116 @@ def load_graph():
     return graph
 
 
-def generate_test_pairs(graph):
-    random.seed(RANDOM_SEED)
+def benchmark_algorithm(algorithm, graph, start, destination):
+    start_time = time.perf_counter()
 
-    nodes = list(graph.nodes.keys())
-
-    pairs = []
-
-    while len(pairs) < NUM_TESTS:
-        start = random.choice(nodes)
-        destination = random.choice(nodes)
-
-        if start != destination:
-            pairs.append((start, destination))
-
-    return pairs
-
-
-def benchmark(graph, pairs):
-    dijkstra_times = []
-    a_star_times = []
-
-    dijkstra_distances = []
-    a_star_distances = []
-
-    print(f"\nRunning {NUM_TESTS} routing tests...\n")
-
-    for start, destination in pairs:
-
-        start_time = time.perf_counter()
-
-        dijkstra_path, dijkstra_distance = dijkstra(
-            graph,
-            start,
-            destination
-        )
-
-        dijkstra_time = time.perf_counter() - start_time
-
-        start_time = time.perf_counter()
-
-        a_star_path, a_star_distance = a_star(
-            graph,
-            start,
-            destination
-        )
-
-        a_star_time = time.perf_counter() - start_time
-
-        dijkstra_times.append(dijkstra_time)
-        a_star_times.append(a_star_time)
-
-        dijkstra_distances.append(dijkstra_distance)
-        a_star_distances.append(a_star_distance)
-
-    return (
-        dijkstra_times,
-        a_star_times,
-        dijkstra_distances,
-        a_star_distances
+    path, distance, nodes_explored = algorithm(
+        graph,
+        start,
+        destination,
+        return_stats=True
     )
 
+    end_time = time.perf_counter()
 
-def print_results(
-    dijkstra_times,
-    a_star_times,
-    dijkstra_distances,
-    a_star_distances
-):
-    dijkstra_average = sum(dijkstra_times) / len(dijkstra_times)
-    a_star_average = sum(a_star_times) / len(a_star_times)
+    runtime_ms = (end_time - start_time) * 1000
 
-    print("========== BENCHMARK RESULTS ==========")
-
-    print(
-        f"Dijkstra average: "
-        f"{dijkstra_average * 1000:.3f} ms"
-    )
-
-    print(
-        f"A* average:       "
-        f"{a_star_average * 1000:.3f} ms"
-    )
-
-    speedup = dijkstra_average / a_star_average
-
-    print(
-        f"A* speedup:       "
-        f"{speedup:.2f}x"
-    )
-
-    print(
-        f"\nDijkstra routes tested: "
-        f"{len(dijkstra_distances)}"
-    )
-
-    print(
-        f"A* routes tested:       "
-        f"{len(a_star_distances)}"
-    )
-
-    for dijkstra_distance, a_star_distance in zip(
-        dijkstra_distances,
-        a_star_distances
-    ):
-        if dijkstra_distance != a_star_distance:
-            print("\nWARNING: Route distances do not match!")
-            return
-
-    print("\n✓ All routes produced the same optimal distance.")
+    return path, distance, nodes_explored, runtime_ms
 
 
 def main():
     graph = load_graph()
 
-    pairs = generate_test_pairs(graph)
+    nodes = list(graph.nodes)
 
-    (
-        dijkstra_times,
-        a_star_times,
-        dijkstra_distances,
-        a_star_distances
-    ) = benchmark(graph, pairs)
+    tests = []
 
-    print_results(
-        dijkstra_times,
-        a_star_times,
-        dijkstra_distances,
-        a_star_distances
+    while len(tests) < 100:
+        start = random.choice(nodes)
+        destination = random.choice(nodes)
+
+        if start != destination:
+            tests.append((start, destination))
+
+    print("\nRunning 100 routing tests...")
+
+    dijkstra_times = []
+    a_star_times = []
+
+    dijkstra_nodes = []
+    a_star_nodes = []
+
+    for start, destination in tests:
+
+        dijkstra_path, dijkstra_distance, dijkstra_explored, dijkstra_runtime = (
+            benchmark_algorithm(
+                dijkstra,
+                graph,
+                start,
+                destination
+            )
+        )
+
+        a_star_path, a_star_distance, a_star_explored, a_star_runtime = (
+            benchmark_algorithm(
+                a_star,
+                graph,
+                start,
+                destination
+            )
+        )
+
+        if dijkstra_distance != a_star_distance:
+            print("ERROR: Algorithms produced different distances!")
+            return
+
+        dijkstra_times.append(dijkstra_runtime)
+        a_star_times.append(a_star_runtime)
+
+        dijkstra_nodes.append(dijkstra_explored)
+        a_star_nodes.append(a_star_explored)
+
+    average_dijkstra_time = sum(dijkstra_times) / len(dijkstra_times)
+    average_a_star_time = sum(a_star_times) / len(a_star_times)
+
+    average_dijkstra_nodes = sum(dijkstra_nodes) / len(dijkstra_nodes)
+    average_a_star_nodes = sum(a_star_nodes) / len(a_star_nodes)
+
+    speedup = average_dijkstra_time / average_a_star_time
+
+    node_reduction = (
+        1 - (average_a_star_nodes / average_dijkstra_nodes)
+    ) * 100
+
+    print("\n========== BENCHMARK RESULTS ==========")
+
+    print(f"Dijkstra average runtime: {average_dijkstra_time:.3f} ms")
+    print(f"A* average runtime:       {average_a_star_time:.3f} ms")
+    print(f"A* speedup:               {speedup:.2f}x")
+
+    print()
+
+    print(
+        f"Dijkstra average nodes explored: "
+        f"{average_dijkstra_nodes:,.1f}"
     )
+
+    print(
+        f"A* average nodes explored:       "
+        f"{average_a_star_nodes:,.1f}"
+    )
+
+    print(
+        f"A* node exploration reduction:   "
+        f"{node_reduction:.1f}%"
+    )
+
+    print()
+
+    print("Dijkstra routes tested:", len(dijkstra_times))
+    print("A* routes tested:", len(a_star_times))
+
+    print("\n✓ All routes produced the same optimal distance.")
 
 
 if __name__ == "__main__":
