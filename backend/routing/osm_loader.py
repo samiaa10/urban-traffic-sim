@@ -3,7 +3,7 @@ import pickle
 
 import osmnx as ox
 
-from graph import Graph
+from backend.routing.graph import Graph
 
 
 PLACE = "Norwich, Norfolk, England, United Kingdom"

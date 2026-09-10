@@ -3,9 +3,8 @@ import random
 import time
 from pathlib import Path
 
-from dijkstra import dijkstra
-from a_star import a_star
-
+from backend.routing.dijkstra import dijkstra
+from backend.routing.a_star import a_star
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
 GRAPH_FILE = PROJECT_ROOT / "data" / "osm" / "norwich_graph.pkl"
