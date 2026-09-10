@@ -1,5 +1,6 @@
 import pickle
 from pathlib import Path
+import math
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -35,6 +36,30 @@ def root():
     return {
         "name": "NORWICH//SIM",
         "status": "online"
+    }
+
+@app.get("/nearest-node")
+def nearest_node(latitude: float, longitude: float):
+    nearest = None
+    nearest_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+        node_lat = data["latitude"]
+        node_lon = data["longitude"]
+
+        distance = math.sqrt(
+            (node_lat - latitude) ** 2 +
+            (node_lon - longitude) ** 2
+        )
+
+        if distance < nearest_distance:
+            nearest_distance = distance
+            nearest = node
+
+    return {
+        "node": nearest,
+        "latitude": graph.nodes[nearest]["latitude"],
+        "longitude": graph.nodes[nearest]["longitude"]
     }
 
 
