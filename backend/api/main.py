@@ -59,11 +59,20 @@ def route(start: int, destination: int):
         return_stats=True
     )
 
-    return {
-        "algorithm": "A*",
-        "start": start,
-        "destination": destination,
-        "path": path,
-        "distance_metres": distance,
-        "nodes_explored": nodes_explored
+    path_coordinates = [
+    {
+        "latitude": graph.nodes[node]["latitude"],
+        "longitude": graph.nodes[node]["longitude"]
     }
+    for node in path
+    ]
+
+    return {
+    "algorithm": "A*",
+    "start": start,
+    "destination": destination,
+    "path": path,
+    "path_coordinates": path_coordinates,
+    "distance_metres": distance,
+    "nodes_explored": nodes_explored
+}

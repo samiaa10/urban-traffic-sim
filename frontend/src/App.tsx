@@ -1,7 +1,10 @@
 import { useState } from "react"
+import { MapContainer, TileLayer, Polyline } from "react-leaflet"
+import "leaflet/dist/leaflet.css"
 
 function App() {
-  const [result, setResult] = useState<string>("")
+  const [route, setRoute] = useState<[number, number][]>([])
+  const [result, setResult] = useState("")
 
   const calculateRoute = async () => {
     try {
@@ -11,10 +14,18 @@ function App() {
 
       const data = await response.json()
 
+      const coordinates: [number, number][] =
+        data.path_coordinates.map(
+          (point: { latitude: number; longitude: number }) => [
+            point.latitude,
+            point.longitude,
+          ]
+        )
+
+      setRoute(coordinates)
+
       setResult(
-        `A* calculated a route of ${Math.round(
-          data.distance_metres
-        )} metres using ${data.nodes_explored} nodes.`
+        `A* route: ${Math.round(data.distance_metres)} metres | ${data.nodes_explored} nodes explored`
       )
     } catch {
       setResult("Could not connect to the routing API.")
@@ -27,17 +38,24 @@ function App() {
 
       <p>Urban Traffic Simulation & Optimisation Platform</p>
 
-      <hr />
-
-      <h2>Routing Engine</h2>
-
-      <p>Norwich road network loaded</p>
-
       <button onClick={calculateRoute}>
-        Calculate Route
+        Calculate A* Route
       </button>
 
       {result && <p>{result}</p>}
+
+      <MapContainer
+        center={[52.6309, 1.2974]}
+        zoom={13}
+        style={{ height: "600px", width: "100%" }}
+      >
+        <TileLayer
+          attribution="&copy; OpenStreetMap contributors"
+          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+        />
+
+        <Polyline positions={route} />
+      </MapContainer>
     </div>
   )
 }
