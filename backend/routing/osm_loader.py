@@ -21,7 +21,7 @@ def download_norwich_network():
         PLACE,
         network_type="drive",
         simplify=True,
-        retain_all=False
+        retain_all=True
     )
 
     print(f"OSM nodes: {len(osm_graph.nodes):,}")
