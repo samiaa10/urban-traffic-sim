@@ -17,9 +17,15 @@ class Simulation:
                 location["longitude"]
             )
 
-            self.vehicle.move()
+            self.vehicle.move(1)
 
         print("Vehicle has reached its destination.")
+
+        print(
+            "Distance travelled:",
+            round(self.vehicle.distance_travelled),
+            "metres"
+        )
 
 
 if __name__ == "__main__":
