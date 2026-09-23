@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import {
   MapContainer,
   TileLayer,
@@ -28,7 +28,37 @@ function App() {
   const [start, setStart] = useState<Coordinate | null>(null)
   const [destination, setDestination] = useState<Coordinate | null>(null)
   const [route, setRoute] = useState<Coordinate[]>([])
+  const [vehiclePosition, setVehiclePosition] =
+    useState<Coordinate | null>(null)
+  const [vehicleIndex, setVehicleIndex] = useState(0)
   const [result, setResult] = useState("")
+
+  useEffect(() => {
+    if (route.length === 0) {
+      setVehiclePosition(null)
+      return
+    }
+
+    setVehicleIndex(0)
+    setVehiclePosition(route[0])
+
+    const interval = setInterval(() => {
+      setVehicleIndex((currentIndex) => {
+        const nextIndex = currentIndex + 1
+
+        if (nextIndex >= route.length) {
+          clearInterval(interval)
+          return currentIndex
+        }
+
+        setVehiclePosition(route[nextIndex])
+
+        return nextIndex
+      })
+    }, 100)
+
+    return () => clearInterval(interval)
+  }, [route])
 
   const handleMapClick = (location: Coordinate) => {
     if (!start) {
@@ -128,6 +158,13 @@ function App() {
         )}
 
         <Polyline positions={route} />
+
+        {vehiclePosition && (
+          <CircleMarker
+            center={vehiclePosition}
+            radius={10}
+          />
+        )}
       </MapContainer>
 
       {result && <p>{result}</p>}
