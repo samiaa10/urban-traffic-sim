@@ -1,4 +1,4 @@
-from vehicle import Vehicle
+from backend.simulation.vehicle import Vehicle
 
 
 class Simulation:

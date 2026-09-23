@@ -67,11 +67,42 @@ class Vehicle:
 
                 distance_to_travel = 0
 
-                # We are part-way between two route points.
-                break
-
         if self.position >= len(self.route) - 1:
             self.finished = True
 
     def get_current_location(self):
-        return self.route[self.position]
+
+        if self.position >= len(self.route) - 1:
+            return self.route[-1]
+
+        current_point = self.route[self.position]
+        next_point = self.route[self.position + 1]
+
+        segment_distance = self.calculate_distance(
+            current_point,
+            next_point
+        )
+
+        if segment_distance == 0:
+            return current_point
+
+        fraction = (
+            self.distance_on_segment / segment_distance
+        )
+
+        latitude = (
+            current_point["latitude"]
+            + (next_point["latitude"] - current_point["latitude"])
+            * fraction
+        )
+
+        longitude = (
+            current_point["longitude"]
+            + (next_point["longitude"] - current_point["longitude"])
+            * fraction
+        )
+
+        return {
+            "latitude": latitude,
+            "longitude": longitude
+        }

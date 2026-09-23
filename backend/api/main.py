@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routing.a_star import a_star
+from backend.simulation.simulation import Simulation
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -29,6 +30,7 @@ app.add_middleware(
 
 with open(GRAPH_FILE, "rb") as file:
     graph = pickle.load(file)
+    simulation = None
 
 
 @app.get("/")
@@ -101,3 +103,77 @@ def route(start: int, destination: int):
     "distance_metres": distance,
     "nodes_explored": nodes_explored
 }
+
+@app.post("/simulation/start")
+def start_simulation(start: int, destination: int):
+
+    global simulation
+
+    if start not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Start node not found"
+        )
+
+    if destination not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Destination node not found"
+        )
+
+    path, distance, nodes_explored = a_star(
+        graph,
+        start,
+        destination,
+        return_stats=True
+    )
+
+    path_coordinates = [
+        {
+            "latitude": graph.nodes[node]["latitude"],
+            "longitude": graph.nodes[node]["longitude"]
+        }
+        for node in path
+    ]
+
+    simulation = Simulation(path_coordinates)
+
+    return {
+        "status": "simulation started",
+        "distance_metres": distance,
+        "nodes_explored": nodes_explored,
+        "vehicle_position": simulation.vehicle.get_current_location()
+    }
+
+
+@app.get("/simulation/state")
+def simulation_state():
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    return {
+        "vehicle_position": simulation.vehicle.get_current_location(),
+        "distance_travelled": simulation.vehicle.distance_travelled,
+        "finished": simulation.vehicle.finished
+    }
+
+@app.post("/simulation/step")
+def simulation_step():
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    simulation.vehicle.move(1)
+
+    return {
+        "vehicle_position": simulation.vehicle.get_current_location(),
+        "distance_travelled": simulation.vehicle.distance_travelled,
+        "finished": simulation.vehicle.finished
+    }
