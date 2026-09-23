@@ -26,21 +26,29 @@ function MapClickHandler({
 
 function App() {
   const [start, setStart] = useState<Coordinate | null>(null)
-  const [destination, setDestination] = useState<Coordinate | null>(null)
-  const [route, setRoute] = useState<Coordinate[]>([])
-  const [vehiclePosition, setVehiclePosition] =
+  const [destination, setDestination] =
     useState<Coordinate | null>(null)
+
+  const [route, setRoute] = useState<Coordinate[]>([])
+
+  // Store positions of all vehicles
+  const [vehiclePositions, setVehiclePositions] =
+    useState<Coordinate[]>([])
+
   const [result, setResult] = useState("")
 
-  const simulationInterval = useRef<number | null>(null)
+  const simulationInterval =
+    useRef<number | null>(null)
 
   const handleMapClick = (location: Coordinate) => {
+
     // First click = start
     if (!start) {
+
       setStart(location)
       setDestination(null)
       setRoute([])
-      setVehiclePosition(null)
+      setVehiclePositions([])
 
       setResult(
         "Start selected. Click another location for your destination."
@@ -49,6 +57,7 @@ function App() {
 
     // Second click = destination
     else if (!destination) {
+
       setDestination(location)
 
       setResult(
@@ -58,10 +67,11 @@ function App() {
 
     // Third click = new start
     else {
+
       setStart(location)
       setDestination(null)
       setRoute([])
-      setVehiclePosition(null)
+      setVehiclePositions([])
 
       setResult(
         "New start selected. Click another location for your destination."
@@ -70,9 +80,11 @@ function App() {
   }
 
   const calculateRoute = async () => {
+
     if (!start || !destination) return
 
     try {
+
       // --------------------------------
       // 1. Find nearest start road node
       // --------------------------------
@@ -83,6 +95,7 @@ function App() {
 
       const startNode = await startResponse.json()
 
+
       // --------------------------------
       // 2. Find nearest destination node
       // --------------------------------
@@ -91,7 +104,9 @@ function App() {
         `http://127.0.0.1:8000/nearest-node?latitude=${destination[0]}&longitude=${destination[1]}`
       )
 
-      const destinationNode = await destinationResponse.json()
+      const destinationNode =
+        await destinationResponse.json()
+
 
       // --------------------------------
       // 3. Calculate A* route
@@ -102,6 +117,7 @@ function App() {
       )
 
       const data = await routeResponse.json()
+
 
       // Convert backend coordinates into Leaflet coordinates
       const coordinates: Coordinate[] =
@@ -117,6 +133,7 @@ function App() {
 
       setRoute(coordinates)
 
+
       // --------------------------------
       // 4. Start backend simulation
       // --------------------------------
@@ -128,68 +145,129 @@ function App() {
         }
       )
 
-      const simulationData = await simulationResponse.json()
+      const simulationData =
+        await simulationResponse.json()
 
-      // Put vehicle at backend starting position
-      setVehiclePosition([
-        simulationData.vehicle_position.latitude,
-        simulationData.vehicle_position.longitude,
-      ])
+
+      // Put both vehicles at their starting positions
+      if (simulationData.vehicle_position) {
+
+        setVehiclePositions([
+          [
+            simulationData.vehicle_position.latitude,
+            simulationData.vehicle_position.longitude,
+          ],
+        ])
+
+      }
+
 
       // --------------------------------
       // 5. Stop previous simulation timer
       // --------------------------------
 
       if (simulationInterval.current !== null) {
-        clearInterval(simulationInterval.current)
+
+        clearInterval(
+          simulationInterval.current
+        )
+
       }
 
+
       // --------------------------------
-      // 6. Move backend vehicle every second
+      // 6. Move backend vehicles every second
       // --------------------------------
 
-      simulationInterval.current = window.setInterval(
-        async () => {
-          try {
-            const response = await fetch(
-              "http://127.0.0.1:8000/simulation/step",
-              {
-                method: "POST",
+      simulationInterval.current =
+        window.setInterval(
+          async () => {
+
+            try {
+
+              const response = await fetch(
+                "http://127.0.0.1:8000/simulation/step",
+                {
+                  method: "POST",
+                }
+              )
+
+              const stepData =
+                await response.json()
+
+
+              // --------------------------------
+              // Update ALL vehicle positions
+              // --------------------------------
+
+              const positions: Coordinate[] =
+                stepData.vehicles.map(
+                  (vehicle: {
+                    latitude: number
+                    longitude: number
+                  }) => [
+                    vehicle.latitude,
+                    vehicle.longitude,
+                  ]
+                )
+
+              setVehiclePositions(positions)
+
+
+              // --------------------------------
+              // Check if all vehicles finished
+              // --------------------------------
+
+              const allFinished =
+                stepData.vehicles.every(
+                  (vehicle: {
+                    finished: boolean
+                  }) => vehicle.finished
+                )
+
+
+              if (allFinished) {
+
+                if (
+                  simulationInterval.current !== null
+                ) {
+
+                  clearInterval(
+                    simulationInterval.current
+                  )
+
+                  simulationInterval.current = null
+
+                }
+
+                setResult(
+                  "All vehicles reached their destinations."
+                )
               }
-            )
 
-            const stepData = await response.json()
+            } catch {
 
-            // Update vehicle position on the map
-            setVehiclePosition([
-              stepData.vehicle_position.latitude,
-              stepData.vehicle_position.longitude,
-            ])
+              if (
+                simulationInterval.current !== null
+              ) {
 
-            // Stop when vehicle reaches destination
-            if (stepData.finished) {
-              if (simulationInterval.current !== null) {
-                clearInterval(simulationInterval.current)
+                clearInterval(
+                  simulationInterval.current
+                )
+
                 simulationInterval.current = null
+
               }
 
               setResult(
-                `Vehicle reached destination. Distance travelled: ${Math.round(
-                  stepData.distance_travelled
-                )} metres`
+                "Simulation connection lost."
               )
             }
-          } catch {
-            if (simulationInterval.current !== null) {
-              clearInterval(simulationInterval.current)
-              simulationInterval.current = null
-            }
 
-            setResult("Simulation connection lost.")
-          }
-        },
-        1000
-      )
+          },
+          1000
+        )
+
 
       // --------------------------------
       // 7. Show route information
@@ -198,43 +276,76 @@ function App() {
       setResult(
         `A* route: ${Math.round(
           data.distance_metres
-        )} metres | ${data.nodes_explored} nodes explored`
+        )} metres | ${
+          data.nodes_explored
+        } nodes explored | 2 vehicles`
       )
+
     } catch {
-      setResult("Could not calculate route.")
+
+      setResult(
+        "Could not calculate route."
+      )
+
     }
   }
 
+
   // Clean up timer if the React component closes
   useEffect(() => {
+
     return () => {
-      if (simulationInterval.current !== null) {
-        clearInterval(simulationInterval.current)
+
+      if (
+        simulationInterval.current !== null
+      ) {
+
+        clearInterval(
+          simulationInterval.current
+        )
+
       }
+
     }
+
   }, [])
+
 
   return (
     <div>
+
       <h1>NORWICH//SIM</h1>
 
       <p>
         Urban Traffic Simulation & Optimisation Platform
       </p>
 
+
       <p>
+
         {start
+
           ? destination
+
             ? "Start and destination selected."
+
             : "Now select your destination."
-          : "Click the map to select a start location."}
+
+          : "Click the map to select a start location."
+
+        }
+
       </p>
 
+
       {start && destination && (
+
         <button onClick={calculateRoute}>
           Calculate Route
         </button>
+
       )}
+
 
       <MapContainer
         center={[52.6309, 1.2974]}
@@ -244,44 +355,66 @@ function App() {
           width: "100%",
         }}
       >
+
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+
         <MapClickHandler
           onClick={handleMapClick}
         />
 
+
         {/* Start marker */}
+
         {start && (
+
           <CircleMarker
             center={start}
             radius={8}
           />
+
         )}
 
+
         {/* Destination marker */}
+
         {destination && (
+
           <CircleMarker
             center={destination}
             radius={8}
           />
+
         )}
+
 
         {/* A* route */}
+
         <Polyline positions={route} />
 
-        {/* Backend-controlled vehicle */}
-        {vehiclePosition && (
-          <CircleMarker
-            center={vehiclePosition}
-            radius={10}
-          />
+
+        {/* All backend-controlled vehicles */}
+
+        {vehiclePositions.map(
+          (position, index) => (
+
+            <CircleMarker
+              key={index}
+              center={position}
+              radius={10}
+            />
+
+          )
         )}
+
       </MapContainer>
 
+
       {result && <p>{result}</p>}
+
     </div>
   )
 }
