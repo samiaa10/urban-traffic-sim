@@ -68,6 +68,30 @@ class Simulation:
 
         return traffic
 
+    def get_congestion(self):
+
+        traffic = self.get_traffic_density()
+
+        congestion = {}
+
+        for segment, vehicle_count in traffic.items():
+
+            if vehicle_count == 1:
+                level = "light"
+            elif vehicle_count == 2:
+                level = "moderate"
+            elif vehicle_count >= 3:
+                level = "heavy"
+            else:
+                level = "clear"
+
+            congestion[segment] = {
+                "vehicle_count": vehicle_count,
+                "level": level
+            }
+
+        return congestion
+
     def run(self):
 
         while not all(

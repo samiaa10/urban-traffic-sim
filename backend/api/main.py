@@ -235,8 +235,8 @@ def simulation_step():
         "vehicles": vehicles
     }
 
-@app.get("/simulation/traffic")
-def simulation_traffic():
+@app.get("/simulation/congestion")
+def simulation_congestion():
 
     if simulation is None:
         raise HTTPException(
@@ -244,15 +244,15 @@ def simulation_traffic():
             detail="No simulation is running"
         )
 
-    traffic = simulation.get_traffic_density()
+    congestion = simulation.get_congestion()
 
-    traffic_segments = []
+    congestion_segments = []
 
-    for segment, vehicle_count in traffic.items():
+    for segment, data in congestion.items():
 
         start_point, end_point = segment
 
-        traffic_segments.append({
+        congestion_segments.append({
             "start": {
                 "latitude": start_point[0],
                 "longitude": start_point[1]
@@ -261,9 +261,10 @@ def simulation_traffic():
                 "latitude": end_point[0],
                 "longitude": end_point[1]
             },
-            "vehicle_count": vehicle_count
+            "vehicle_count": data["vehicle_count"],
+            "level": data["level"]
         })
 
     return {
-        "traffic": traffic_segments
+        "congestion": congestion_segments
     }
