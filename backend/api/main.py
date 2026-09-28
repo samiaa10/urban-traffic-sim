@@ -234,3 +234,36 @@ def simulation_step():
     return {
         "vehicles": vehicles
     }
+
+@app.get("/simulation/traffic")
+def simulation_traffic():
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    traffic = simulation.get_traffic_density()
+
+    traffic_segments = []
+
+    for segment, vehicle_count in traffic.items():
+
+        start_point, end_point = segment
+
+        traffic_segments.append({
+            "start": {
+                "latitude": start_point[0],
+                "longitude": start_point[1]
+            },
+            "end": {
+                "latitude": end_point[0],
+                "longitude": end_point[1]
+            },
+            "vehicle_count": vehicle_count
+        })
+
+    return {
+        "traffic": traffic_segments
+    }

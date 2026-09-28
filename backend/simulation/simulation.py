@@ -30,14 +30,58 @@ class Simulation:
 
         return positions
 
+    def get_traffic_density(self):
+        traffic = {}
+
+        for vehicle in self.vehicles:
+
+            # Ignore vehicles that have finished
+            if vehicle.finished:
+                continue
+
+            # Current road segment
+            if vehicle.position >= len(vehicle.route) - 1:
+                continue
+
+            current_point = vehicle.route[vehicle.position]
+            next_point = vehicle.route[vehicle.position + 1]
+
+            # Create a segment identifier
+            segment = (
+                (
+                    current_point["latitude"],
+                    current_point["longitude"]
+                ),
+                (
+                    next_point["latitude"],
+                    next_point["longitude"]
+                )
+            )
+
+            # Make the segment direction-independent
+            segment = tuple(sorted(segment))
+
+            if segment not in traffic:
+                traffic[segment] = 0
+
+            traffic[segment] += 1
+
+        return traffic
+
     def run(self):
-        while not all(vehicle.finished for vehicle in self.vehicles):
+
+        while not all(
+            vehicle.finished
+            for vehicle in self.vehicles
+        ):
 
             for vehicle in self.vehicles:
 
                 if not vehicle.finished:
 
-                    location = vehicle.get_current_location()
+                    location = (
+                        vehicle.get_current_location()
+                    )
 
                     print(
                         "Vehicle location:",
@@ -48,7 +92,10 @@ class Simulation:
                     vehicle.move(1)
 
         for vehicle in self.vehicles:
-            print("Vehicle has reached its destination.")
+
+            print(
+                "Vehicle has reached its destination."
+            )
 
             print(
                 "Distance travelled:",
@@ -60,9 +107,18 @@ class Simulation:
 if __name__ == "__main__":
 
     route = [
-        {"latitude": 52.6309, "longitude": 1.2974},
-        {"latitude": 52.6315, "longitude": 1.2980},
-        {"latitude": 52.6320, "longitude": 1.2990},
+        {
+            "latitude": 52.6309,
+            "longitude": 1.2974
+        },
+        {
+            "latitude": 52.6315,
+            "longitude": 1.2980
+        },
+        {
+            "latitude": 52.6320,
+            "longitude": 1.2990
+        },
     ]
 
     simulation = Simulation(route)
