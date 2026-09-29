@@ -240,7 +240,9 @@ def simulation_step():
             "latitude": location["latitude"],
             "longitude": location["longitude"],
             "distance_travelled": vehicle.distance_travelled,
-            "finished": vehicle.finished
+            "finished": vehicle.finished,
+            "vehicle_type": vehicle.vehicle_type,
+            "on_emergency": vehicle.on_emergency
         })
 
     return {
