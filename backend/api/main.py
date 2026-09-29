@@ -502,44 +502,48 @@ def reroute_vehicle(vehicle_id: int = 0):
 def create_emergency(
     latitude: float,
     longitude: float,
-    emergency_type: str = "ambulance",
-    vehicle_id: int = 0
+    emergency_type: str = "ambulance"
 ):
-
     if simulation is None:
         raise HTTPException(
             status_code=404,
             detail="No simulation is running"
         )
 
-    if vehicle_id < 0 or vehicle_id >= len(simulation.vehicles):
-        raise HTTPException(
-            status_code=404,
-            detail="Vehicle not found"
-        )
-
-    # --------------------------------
-    # Create emergency
-    # --------------------------------
-
+    # Create the emergency
     emergency = simulation.create_emergency(
         latitude,
         longitude,
         emergency_type
     )
 
-    vehicle = simulation.vehicles[vehicle_id]
+    # Find the nearest station with an available vehicle
+    vehicle = simulation.dispatch_from_nearest_station(
+        emergency
+    )
 
-    if vehicle.finished:
+    if vehicle is None:
         raise HTTPException(
-            status_code=400,
-            detail="Vehicle has already finished"
+            status_code=404,
+            detail="No available emergency vehicle"
         )
 
-    # --------------------------------
-    # Find vehicle's current location
-    # --------------------------------
+    # Find the nearest graph node to the emergency
+    nearest_emergency_node = None
+    nearest_emergency_distance = float("inf")
 
+    for node, data in graph.nodes.items():
+
+        distance = math.sqrt(
+            (data["latitude"] - latitude) ** 2
+            + (data["longitude"] - longitude) ** 2
+        )
+
+        if distance < nearest_emergency_distance:
+            nearest_emergency_distance = distance
+            nearest_emergency_node = node
+
+    # Find the nearest graph node to the dispatched vehicle
     current_location = vehicle.get_current_location()
 
     nearest_vehicle_node = None
@@ -556,40 +560,11 @@ def create_emergency(
             nearest_vehicle_distance = distance
             nearest_vehicle_node = node
 
-    # --------------------------------
-    # Find emergency node
-    # --------------------------------
-
-    nearest_emergency_node = None
-    nearest_emergency_distance = float("inf")
-
-    for node, data in graph.nodes.items():
-
-        distance = math.sqrt(
-            (data["latitude"] - latitude) ** 2
-            + (data["longitude"] - longitude) ** 2
-        )
-
-        if distance < nearest_emergency_distance:
-            nearest_emergency_distance = distance
-            nearest_emergency_node = node
-
-    # --------------------------------
-    # Current traffic
-    # --------------------------------
-
+    # Get current traffic and blocked roads
     traffic = simulation.get_traffic_density()
-
-    # --------------------------------
-    # Current blocked roads
-    # --------------------------------
-
     blocked_segments = simulation.get_blocked_segments()
 
-    # --------------------------------
     # Calculate emergency route
-    # --------------------------------
-
     path, distance, nodes_explored = a_star(
         graph,
         nearest_vehicle_node,
@@ -605,10 +580,7 @@ def create_emergency(
             detail="No route to emergency"
         )
 
-    # --------------------------------
-    # Convert route to coordinates
-    # --------------------------------
-
+    # Convert graph path into coordinates
     new_route = [
         {
             "latitude": graph.nodes[node]["latitude"],
@@ -617,10 +589,7 @@ def create_emergency(
         for node in path
     ]
 
-    # --------------------------------
-    # Give vehicle emergency route
-    # --------------------------------
-
+    # Give the emergency vehicle its new route
     vehicle.route = new_route
     vehicle.position = 0
     vehicle.distance_on_segment = 0
@@ -628,9 +597,9 @@ def create_emergency(
     vehicle.finished = False
 
     return {
-        "status": "emergency created",
+        "status": "emergency dispatched",
         "emergency_type": emergency_type,
-        "vehicle_id": vehicle_id,
+        "vehicle_id": simulation.vehicles.index(vehicle),
         "emergency_location": {
             "latitude": latitude,
             "longitude": longitude
@@ -638,4 +607,73 @@ def create_emergency(
         "route_distance_metres": distance,
         "nodes_explored": nodes_explored,
         "route": new_route
+    }
+
+
+@app.post("/station/create")
+def create_station(
+    latitude: float,
+    longitude: float,
+    station_type: str = "ambulance"
+):
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    station = simulation.add_station(
+        latitude,
+        longitude,
+        station_type
+    )
+
+    return {
+        "status": "station created",
+        "station": station.get_location(),
+        "station_type": station_type
+    }
+
+
+@app.post("/station/add-vehicle")
+def add_station_vehicle(
+    station_id: int = 0,
+    speed: float = 20,
+    vehicle_type: str = "ambulance"
+):
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    if station_id < 0 or station_id >= len(simulation.stations):
+        raise HTTPException(
+            status_code=404,
+            detail="Station not found"
+        )
+
+    station = simulation.stations[station_id]
+
+    station_location = station.get_location()
+
+    route = [
+        station_location,
+        station_location
+    ]
+
+    vehicle = simulation.add_emergency_vehicle(
+        route,
+        station,
+        speed=speed,
+        vehicle_type=vehicle_type
+    )
+
+    vehicle_id = simulation.vehicles.index(vehicle)
+
+    return {
+        "status": "emergency vehicle added",
+        "station_id": station_id,
+        "vehicle_id": vehicle_id,
+        "vehicle_type": vehicle_type
     }

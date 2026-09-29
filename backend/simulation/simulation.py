@@ -1,4 +1,5 @@
 import time
+
 from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
@@ -15,6 +16,7 @@ class Simulation:
         # Active emergency incidents
         self.emergencies = []
 
+        # Emergency stations
         self.stations = []
 
         # Create the first vehicle
@@ -31,6 +33,10 @@ class Simulation:
             speed,
             vehicle_type
         )
+
+        self.vehicles.append(vehicle)
+
+        return vehicle
 
     # ========================================
     # INCIDENTS / BLOCKED ROADS
@@ -82,7 +88,6 @@ class Simulation:
         return self.emergencies
 
     def check_emergencies(self):
-
         for emergency in self.emergencies:
 
             if not emergency.active:
@@ -95,7 +100,6 @@ class Simulation:
 
                 location = vehicle.get_current_location()
 
-                # Calculate approximate distance to emergency
                 latitude_difference = (
                     location["latitude"]
                     - emergency.latitude
@@ -111,7 +115,6 @@ class Simulation:
                     + longitude_difference ** 2
                 ) ** 0.5
 
-                # Vehicle has reached emergency
                 if distance < 0.0001:
 
                     response_time = (
@@ -120,6 +123,9 @@ class Simulation:
                     )
 
                     emergency.resolve(response_time)
+
+                    vehicle.on_emergency = False
+                    vehicle.available = True
 
                     break
 
@@ -165,13 +171,15 @@ class Simulation:
             if station.station_type != station_type:
                 continue
 
+            if not station.has_available_vehicle():
+                continue
+
             distance = (
                 (station.latitude - latitude) ** 2
                 + (station.longitude - longitude) ** 2
             )
 
             if distance < nearest_distance:
-
                 nearest_distance = distance
                 nearest_station = station
 
@@ -182,7 +190,7 @@ class Simulation:
         vehicle_id,
         emergency
     ):
-        """Dispatch a vehicle to an emergency."""
+        """Dispatch a specific emergency vehicle."""
 
         if vehicle_id < 0:
             return None
@@ -200,6 +208,53 @@ class Simulation:
 
         return vehicle
 
+    def dispatch_from_nearest_station(
+        self,
+        emergency
+    ):
+        """Find the nearest station and dispatch an available vehicle."""
+
+        station = self.find_nearest_station(
+            emergency.latitude,
+            emergency.longitude,
+            emergency.emergency_type
+        )
+
+        if station is None:
+            return None
+
+        vehicle = station.get_available_vehicle()
+
+        if vehicle is None:
+            return None
+
+        vehicle.on_emergency = True
+        vehicle.available = False
+
+        return vehicle
+
+    def add_emergency_vehicle(
+        self,
+        route,
+        station,
+        speed=20,
+        vehicle_type="ambulance"
+    ):
+        """Create an emergency vehicle and place it at a station."""
+
+        vehicle = self.add_vehicle(
+            route,
+            speed,
+            vehicle_type
+        )
+
+        vehicle.available = True
+        vehicle.on_emergency = False
+
+        station.add_vehicle(vehicle)
+
+        return vehicle
+
     # ========================================
     # SIMULATION
     # ========================================
@@ -211,7 +266,6 @@ class Simulation:
             if vehicle.finished:
                 continue
 
-            # Check the road segment the vehicle is currently on
             if vehicle.position < len(vehicle.route) - 1:
 
                 current_point = vehicle.route[vehicle.position]
@@ -228,10 +282,8 @@ class Simulation:
                     )
                 )
 
-                # Make segment direction-independent
                 segment = tuple(sorted(segment))
 
-                # Stop vehicle if its current road is blocked
                 if segment in self.blocked_segments:
                     continue
 
@@ -240,7 +292,6 @@ class Simulation:
         self.check_emergencies()
 
     def get_vehicle_positions(self):
-
         positions = []
 
         for vehicle in self.vehicles:
@@ -255,23 +306,19 @@ class Simulation:
     # ========================================
 
     def get_traffic_density(self):
-
         traffic = {}
 
         for vehicle in self.vehicles:
 
-            # Ignore vehicles that have finished
             if vehicle.finished:
                 continue
 
-            # Current road segment
             if vehicle.position >= len(vehicle.route) - 1:
                 continue
 
             current_point = vehicle.route[vehicle.position]
             next_point = vehicle.route[vehicle.position + 1]
 
-            # Create a segment identifier
             segment = (
                 (
                     current_point["latitude"],
@@ -283,7 +330,6 @@ class Simulation:
                 )
             )
 
-            # Make the segment direction-independent
             segment = tuple(sorted(segment))
 
             if segment not in traffic:
@@ -307,13 +353,10 @@ class Simulation:
 
             if vehicle_count == 1:
                 level = "light"
-
             elif vehicle_count == 2:
                 level = "moderate"
-
             elif vehicle_count >= 3:
                 level = "heavy"
-
             else:
                 level = "clear"
 
@@ -339,9 +382,7 @@ class Simulation:
 
                 if not vehicle.finished:
 
-                    location = (
-                        vehicle.get_current_location()
-                    )
+                    location = vehicle.get_current_location()
 
                     print(
                         "Vehicle location:",
@@ -363,10 +404,6 @@ class Simulation:
                 "metres"
             )
 
-
-# ========================================
-# TEST
-# ========================================
 
 if __name__ == "__main__":
 
