@@ -3,9 +3,15 @@ import math
 
 class Vehicle:
 
-    def __init__(self, route, speed=13.9):
+    def __init__(
+        self,
+        route,
+        speed=13.9,
+        vehicle_type="normal"
+    ):
         self.route = route
         self.speed = speed
+        self.vehicle_type = vehicle_type
 
         self.position = 0
         self.distance_on_segment = 0
@@ -13,7 +19,12 @@ class Vehicle:
 
         self.finished = False
 
+        # Emergency vehicle state
+        self.on_emergency = False
+        self.available = True
+
     def calculate_distance(self, point1, point2):
+
         lat1 = math.radians(point1["latitude"])
         lon1 = math.radians(point1["longitude"])
 
@@ -22,52 +33,74 @@ class Vehicle:
 
         earth_radius = 6371000
 
-        x = (lon2 - lon1) * math.cos((lat1 + lat2) / 2)
+        x = (
+            lon2 - lon1
+        ) * math.cos(
+            (lat1 + lat2) / 2
+        )
+
         y = lat2 - lat1
 
-        return earth_radius * math.sqrt(x * x + y * y)
+        return earth_radius * math.sqrt(
+            x * x + y * y
+        )
 
     def move(self, time_seconds=1):
 
         if self.finished:
             return
 
-        distance_to_travel = self.speed * time_seconds
+        distance_to_travel = (
+            self.speed * time_seconds
+        )
 
         while distance_to_travel > 0:
 
             if self.position >= len(self.route) - 1:
+
                 self.finished = True
                 break
 
             current_point = self.route[self.position]
             next_point = self.route[self.position + 1]
 
-            segment_distance = self.calculate_distance(
-                current_point,
-                next_point
+            segment_distance = (
+                self.calculate_distance(
+                    current_point,
+                    next_point
+                )
             )
 
             remaining_segment = (
-                segment_distance - self.distance_on_segment
+                segment_distance
+                - self.distance_on_segment
             )
 
             if distance_to_travel >= remaining_segment:
 
                 distance_to_travel -= remaining_segment
-                self.distance_travelled += remaining_segment
+
+                self.distance_travelled += (
+                    remaining_segment
+                )
 
                 self.position += 1
                 self.distance_on_segment = 0
 
             else:
 
-                self.distance_on_segment += distance_to_travel
-                self.distance_travelled += distance_to_travel
+                self.distance_on_segment += (
+                    distance_to_travel
+                )
+
+                self.distance_travelled += (
+                    distance_to_travel
+                )
 
                 distance_to_travel = 0
 
         if self.position >= len(self.route) - 1:
+
             self.finished = True
 
     def get_current_location(self):
@@ -78,28 +111,35 @@ class Vehicle:
         current_point = self.route[self.position]
         next_point = self.route[self.position + 1]
 
-        segment_distance = self.calculate_distance(
-            current_point,
-            next_point
+        segment_distance = (
+            self.calculate_distance(
+                current_point,
+                next_point
+            )
         )
 
         if segment_distance == 0:
             return current_point
 
         fraction = (
-            self.distance_on_segment / segment_distance
+            self.distance_on_segment
+            / segment_distance
         )
 
         latitude = (
             current_point["latitude"]
-            + (next_point["latitude"] - current_point["latitude"])
-            * fraction
+            + (
+                next_point["latitude"]
+                - current_point["latitude"]
+            ) * fraction
         )
 
         longitude = (
             current_point["longitude"]
-            + (next_point["longitude"] - current_point["longitude"])
-            * fraction
+            + (
+                next_point["longitude"]
+                - current_point["longitude"]
+            ) * fraction
         )
 
         return {

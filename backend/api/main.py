@@ -86,12 +86,24 @@ def route(start: int, destination: int):
             detail="Destination node not found"
         )
 
+    traffic = None
+
+    if simulation is not None:
+        traffic = simulation.get_traffic_density()
+
+    blocked_segments = set()
+
+    if simulation is not None:
+        blocked_segments = simulation.get_blocked_segments()
+
     path, distance, nodes_explored = a_star(
-        graph,
-        start,
-        destination,
-        return_stats=True
-    )
+    graph,
+    start,
+    destination,
+    return_stats=True,
+    traffic=traffic,
+    blocked_segments=blocked_segments
+)
 
     path_coordinates = [
         {
@@ -267,4 +279,363 @@ def simulation_congestion():
 
     return {
         "congestion": congestion_segments
+    }
+
+@app.post("/incident/block")
+def block_incident(
+    start: int,
+    destination: int
+):
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    if start not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Start node not found"
+        )
+
+    if destination not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Destination node not found"
+        )
+
+    segment = (
+        (
+            graph.nodes[start]["latitude"],
+            graph.nodes[start]["longitude"]
+        ),
+        (
+            graph.nodes[destination]["latitude"],
+            graph.nodes[destination]["longitude"]
+        )
+    )
+
+    simulation.block_segment(segment)
+
+    return {
+        "status": "incident created",
+        "blocked_segment": segment
+    }
+
+
+@app.post("/incident/unblock")
+def unblock_incident(
+    start: int,
+    destination: int
+):
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    if start not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Start node not found"
+        )
+
+    if destination not in graph.nodes:
+        raise HTTPException(
+            status_code=404,
+            detail="Destination node not found"
+        )
+
+    segment = (
+        (
+            graph.nodes[start]["latitude"],
+            graph.nodes[start]["longitude"]
+        ),
+        (
+            graph.nodes[destination]["latitude"],
+            graph.nodes[destination]["longitude"]
+        )
+    )
+
+    simulation.unblock_segment(segment)
+
+    return {
+        "status": "incident removed",
+        "blocked_segment": segment
+    }
+
+
+@app.get("/incidents")
+def get_incidents():
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    incidents = []
+
+    for segment in simulation.get_blocked_segments():
+
+        start_point, end_point = segment
+
+        incidents.append({
+            "start": {
+                "latitude": start_point[0],
+                "longitude": start_point[1]
+            },
+            "end": {
+                "latitude": end_point[0],
+                "longitude": end_point[1]
+            }
+        })
+
+    return {
+        "incidents": incidents
+    }
+
+
+@app.post("/simulation/reroute")
+def reroute_vehicle(vehicle_id: int = 0):
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    if vehicle_id < 0 or vehicle_id >= len(simulation.vehicles):
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    vehicle = simulation.vehicles[vehicle_id]
+
+    if vehicle.finished:
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle has already finished"
+        )
+
+    # Find the vehicle's current location
+    current_location = vehicle.get_current_location()
+
+    # Find the nearest graph node to the vehicle
+    nearest = None
+    nearest_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+
+        distance = math.sqrt(
+            (data["latitude"] - current_location["latitude"]) ** 2
+            + (data["longitude"] - current_location["longitude"]) ** 2
+        )
+
+        if distance < nearest_distance:
+            nearest_distance = distance
+            nearest = node
+
+    # Find the vehicle's destination
+    destination_point = vehicle.route[-1]
+
+    destination_node = None
+    nearest_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+
+        distance = math.sqrt(
+            (data["latitude"] - destination_point["latitude"]) ** 2
+            + (data["longitude"] - destination_point["longitude"]) ** 2
+        )
+
+        if distance < nearest_distance:
+            nearest_distance = distance
+            destination_node = node
+
+    # Current traffic
+    traffic = simulation.get_traffic_density()
+
+    # Current blocked roads
+    blocked_segments = simulation.get_blocked_segments()
+
+    # Calculate new route
+    path, distance, nodes_explored = a_star(
+        graph,
+        nearest,
+        destination_node,
+        return_stats=True,
+        traffic=traffic,
+        blocked_segments=blocked_segments
+    )
+
+    if not path:
+        raise HTTPException(
+            status_code=404,
+            detail="No alternative route available"
+        )
+
+    # Convert graph route to coordinates
+    new_route = [
+        {
+            "latitude": graph.nodes[node]["latitude"],
+            "longitude": graph.nodes[node]["longitude"]
+        }
+        for node in path
+    ]
+
+    # Replace vehicle's route
+    vehicle.route = new_route
+    vehicle.position = 0
+    vehicle.distance_on_segment = 0
+
+    return {
+        "status": "vehicle rerouted",
+        "vehicle_id": vehicle_id,
+        "distance_metres": distance,
+        "nodes_explored": nodes_explored,
+        "route": new_route
+    }
+
+@app.post("/emergency/create")
+def create_emergency(
+    latitude: float,
+    longitude: float,
+    emergency_type: str = "ambulance",
+    vehicle_id: int = 0
+):
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    if vehicle_id < 0 or vehicle_id >= len(simulation.vehicles):
+        raise HTTPException(
+            status_code=404,
+            detail="Vehicle not found"
+        )
+
+    # --------------------------------
+    # Create emergency
+    # --------------------------------
+
+    emergency = simulation.create_emergency(
+        latitude,
+        longitude,
+        emergency_type
+    )
+
+    vehicle = simulation.vehicles[vehicle_id]
+
+    if vehicle.finished:
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle has already finished"
+        )
+
+    # --------------------------------
+    # Find vehicle's current location
+    # --------------------------------
+
+    current_location = vehicle.get_current_location()
+
+    nearest_vehicle_node = None
+    nearest_vehicle_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+
+        distance = math.sqrt(
+            (data["latitude"] - current_location["latitude"]) ** 2
+            + (data["longitude"] - current_location["longitude"]) ** 2
+        )
+
+        if distance < nearest_vehicle_distance:
+            nearest_vehicle_distance = distance
+            nearest_vehicle_node = node
+
+    # --------------------------------
+    # Find emergency node
+    # --------------------------------
+
+    nearest_emergency_node = None
+    nearest_emergency_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+
+        distance = math.sqrt(
+            (data["latitude"] - latitude) ** 2
+            + (data["longitude"] - longitude) ** 2
+        )
+
+        if distance < nearest_emergency_distance:
+            nearest_emergency_distance = distance
+            nearest_emergency_node = node
+
+    # --------------------------------
+    # Current traffic
+    # --------------------------------
+
+    traffic = simulation.get_traffic_density()
+
+    # --------------------------------
+    # Current blocked roads
+    # --------------------------------
+
+    blocked_segments = simulation.get_blocked_segments()
+
+    # --------------------------------
+    # Calculate emergency route
+    # --------------------------------
+
+    path, distance, nodes_explored = a_star(
+        graph,
+        nearest_vehicle_node,
+        nearest_emergency_node,
+        return_stats=True,
+        traffic=traffic,
+        blocked_segments=blocked_segments
+    )
+
+    if not path:
+        raise HTTPException(
+            status_code=404,
+            detail="No route to emergency"
+        )
+
+    # --------------------------------
+    # Convert route to coordinates
+    # --------------------------------
+
+    new_route = [
+        {
+            "latitude": graph.nodes[node]["latitude"],
+            "longitude": graph.nodes[node]["longitude"]
+        }
+        for node in path
+    ]
+
+    # --------------------------------
+    # Give vehicle emergency route
+    # --------------------------------
+
+    vehicle.route = new_route
+    vehicle.position = 0
+    vehicle.distance_on_segment = 0
+    vehicle.distance_travelled = 0
+    vehicle.finished = False
+
+    return {
+        "status": "emergency created",
+        "emergency_type": emergency_type,
+        "vehicle_id": vehicle_id,
+        "emergency_location": {
+            "latitude": latitude,
+            "longitude": longitude
+        },
+        "route_distance_metres": distance,
+        "nodes_explored": nodes_explored,
+        "route": new_route
     }
