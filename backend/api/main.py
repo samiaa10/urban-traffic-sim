@@ -548,6 +548,11 @@ def create_emergency(
     # Find the nearest graph node to the dispatched vehicle
     current_location = vehicle.get_current_location()
 
+    print("Ambulance starting location:", current_location)
+    print("Emergency location:", latitude, longitude)
+    print("Ambulance initial route:", vehicle.route)
+    
+
     nearest_vehicle_node = None
     nearest_vehicle_distance = float("inf")
 
@@ -597,6 +602,9 @@ def create_emergency(
     vehicle.distance_on_segment = 0
     vehicle.distance_travelled = 0
     vehicle.finished = False
+
+    print("Calculated emergency route:", new_route)
+    print("Calculated route distance:", distance)
 
     return {
         "status": "emergency dispatched",

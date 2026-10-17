@@ -53,6 +53,12 @@ function App() {
   const [emergencyActive, setEmergencyActive] =
     useState(false)
 
+  const [incidentActive, setIncidentActive] =
+  useState(false)
+
+  const [incidentRoute, setIncidentRoute] =
+  useState<Coordinate[]>([])
+
   const [result, setResult] = useState("")
 
   const simulationInterval =
@@ -344,6 +350,161 @@ function App() {
     }
   }
 
+// ------------------------------------------------
+// TRIGGER ROAD CLOSURE + DYNAMIC REROUTING
+// ------------------------------------------------
+
+const triggerIncident = async () => {
+
+  try {
+
+    if (route.length < 4) {
+
+      setResult(
+        "Route is too short to create an incident."
+      )
+
+      return
+    }
+
+    setResult(
+      "🚧 Road closure detected. Rerouting vehicle..."
+    )
+
+
+    // --------------------------------
+    // Choose a road segment ahead
+    // of the vehicle
+    // --------------------------------
+
+    const blockedStart =
+      route[2]
+
+    const blockedEnd =
+      route[3]
+
+
+    // --------------------------------
+    // Find graph node for first point
+    // --------------------------------
+
+    const startResponse =
+      await fetch(
+        `http://127.0.0.1:8000/nearest-node?latitude=${blockedStart[0]}&longitude=${blockedStart[1]}`
+      )
+
+    const startNode =
+      await startResponse.json()
+
+
+    // --------------------------------
+    // Find graph node for second point
+    // --------------------------------
+
+    const endResponse =
+      await fetch(
+        `http://127.0.0.1:8000/nearest-node?latitude=${blockedEnd[0]}&longitude=${blockedEnd[1]}`
+      )
+
+    const endNode =
+      await endResponse.json()
+
+
+    // --------------------------------
+    // Block road segment
+    // --------------------------------
+
+    const blockResponse =
+      await fetch(
+        `http://127.0.0.1:8000/incident/block?start=${startNode.node}&destination=${endNode.node}`,
+        {
+          method: "POST",
+        }
+      )
+
+    if (!blockResponse.ok) {
+
+      throw new Error(
+        "Could not block road segment"
+      )
+
+    }
+
+
+    // --------------------------------
+    // Reroute vehicle 0
+    // --------------------------------
+
+    const rerouteResponse =
+      await fetch(
+        "http://127.0.0.1:8000/simulation/reroute?vehicle_id=0",
+        {
+          method: "POST",
+        }
+      )
+
+    const rerouteData =
+      await rerouteResponse.json()
+
+
+    if (!rerouteResponse.ok) {
+
+      throw new Error(
+        rerouteData.detail ||
+        "Could not reroute vehicle"
+      )
+
+    }
+
+
+    // --------------------------------
+    // Convert new route to Leaflet
+    // --------------------------------
+
+    const newRoute: Coordinate[] =
+      rerouteData.route.map(
+        (point: {
+          latitude: number
+          longitude: number
+        }) => [
+          point.latitude,
+          point.longitude,
+        ]
+      )
+
+
+    setIncidentRoute(newRoute)
+
+    setIncidentActive(true)
+
+
+    setResult(
+      `🚧 Road blocked | 🔄 Vehicle rerouted | ${Math.round(
+        rerouteData.distance_metres
+      )} m new route | ${
+        rerouteData.nodes_explored
+      } nodes explored`
+    )
+
+  } catch (error) {
+
+    if (error instanceof Error) {
+
+      setResult(
+        `Incident failed: ${error.message}`
+      )
+
+    } else {
+
+      setResult(
+        "Incident failed."
+      )
+
+    }
+
+  }
+}
+
   // ------------------------------------------------
   // TRIGGER EMERGENCY
   // ------------------------------------------------
@@ -361,11 +522,16 @@ function App() {
       // Emergency location
       // --------------------------------
 
+      if (!destination) {
+        setResult("Please select a destination first.")
+        return
+      }
+
       const emergencyLatitude =
-        52.6319
+        destination[0]
 
       const emergencyLongitude =
-        1.2988
+        destination[1]
 
 
       // --------------------------------
@@ -589,6 +755,19 @@ function App() {
 
       )}
 
+      {start && destination && (
+
+        <button
+          onClick={triggerIncident}
+          style={{
+            marginLeft: "10px",
+          }}
+        >
+          🚧 Cause Road Closure & Reroute
+        </button>
+
+    )}
+
 
       <MapContainer
         center={[52.6309, 1.2974]}
@@ -664,6 +843,23 @@ function App() {
           />
 
         )}
+
+        {/* --------------------------------
+            DYNAMIC REROUTED ROUTE
+            -------------------------------- */}
+
+        {incidentActive &&
+          incidentRoute.length > 0 && (
+
+          <Polyline
+            positions={incidentRoute}
+            pathOptions={{
+              color: "orange",
+              weight: 5,
+            }}
+          />
+
+        )}        
 
 
         {/* --------------------------------
