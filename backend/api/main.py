@@ -7,6 +7,9 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routing.a_star import a_star
 from backend.simulation.simulation import Simulation
+from backend.optimiser.station_optimiser import (
+    optimise_station_locations,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -706,4 +709,78 @@ def add_station_vehicle(
         "station_id": station_id,
         "vehicle_id": vehicle_id,
         "vehicle_type": vehicle_type
+    }
+
+
+
+@app.get("/optimiser/stations")
+def optimise_stations(
+    candidates: str,
+    scenarios: int = 200,
+    seed: int = 1,
+    target_seconds: float = 480,
+    speed: float = 20
+):
+    """Rank candidate station locations by emergency response time.
+
+    candidates looks like "52.63,1.29;52.62,1.31" (latitude,longitude
+    pairs separated by semicolons). Any roads closed in the running
+    simulation are avoided.
+    """
+
+    try:
+        points = [
+            tuple(float(value) for value in pair.split(","))
+            for pair in candidates.split(";")
+            if pair.strip()
+        ]
+
+        if any(len(point) != 2 for point in points):
+            raise ValueError
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="candidates must look like 52.63,1.29;52.62,1.31"
+        )
+
+    if len(points) < 2 or len(points) > 20:
+        raise HTTPException(
+            status_code=400,
+            detail="Give between 2 and 20 candidate locations"
+        )
+
+    if scenarios < 1 or scenarios > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail="scenarios must be between 1 and 5000"
+        )
+
+    if speed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="speed must be above 0"
+        )
+
+    blocked_segments = set()
+
+    if simulation is not None:
+        blocked_segments = simulation.get_blocked_segments()
+
+    results = optimise_station_locations(
+        graph,
+        points,
+        scenarios=scenarios,
+        seed=seed,
+        target_seconds=target_seconds,
+        speed=speed,
+        blocked_segments=blocked_segments
+    )
+
+    return {
+        "scenarios": scenarios,
+        "seed": seed,
+        "target_seconds": target_seconds,
+        "closed_roads": len(blocked_segments),
+        "results": results
     }
