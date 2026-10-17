@@ -1,13 +1,11 @@
-import time
-
-
 class Emergency:
 
     def __init__(
         self,
         latitude,
         longitude,
-        emergency_type="ambulance"
+        emergency_type="ambulance",
+        created_time=0
     ):
         self.latitude = latitude
         self.longitude = longitude
@@ -17,17 +15,22 @@ class Emergency:
         self.response_time = None
         self.resolved = False
 
-        # Time when the emergency was created
-        self.created_at = time.time()
+        # Simulated time (in seconds) when the emergency was created.
+        # We use simulation time, not the computer's clock, so that
+        # response times don't depend on how fast the frontend polls.
+        self.created_at = created_time
 
-        # Time when a vehicle reaches the emergency
+        # Simulated time when a vehicle reached the emergency
         self.resolved_at = None
 
-    def resolve(self, response_time):
-        self.response_time = response_time
+        # The emergency vehicle that was sent to this emergency
+        self.assigned_vehicle = None
+
+    def resolve(self, resolved_time):
+        self.resolved_at = resolved_time
+        self.response_time = resolved_time - self.created_at
         self.resolved = True
         self.active = False
-        self.resolved_at = time.time()
 
     def get_location(self):
         return {

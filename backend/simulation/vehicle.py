@@ -23,6 +23,20 @@ class Vehicle:
         self.on_emergency = False
         self.available = True
 
+        # The station this vehicle belongs to (emergency vehicles only)
+        self.home_station = None
+
+    def set_route(self, route, reset_distance=False):
+        """Give the vehicle a new route and start it from the beginning."""
+
+        self.route = route
+        self.position = 0
+        self.distance_on_segment = 0
+        self.finished = False
+
+        if reset_distance:
+            self.distance_travelled = 0
+
     def calculate_distance(self, point1, point2):
 
         lat1 = math.radians(point1["latitude"])
@@ -45,7 +59,13 @@ class Vehicle:
             x * x + y * y
         )
 
-    def move(self, time_seconds=1):
+    def move(self, time_seconds=1, is_blocked=None):
+        """Drive for time_seconds.
+
+        is_blocked(point_a, point_b) is an optional function that says
+        whether the road between two points is closed. The vehicle stops
+        at the junction instead of driving into a closed road.
+        """
 
         if self.finished:
             return
@@ -86,6 +106,17 @@ class Vehicle:
 
                 self.position += 1
                 self.distance_on_segment = 0
+
+                # Stop at the junction if the next road is closed
+                if (
+                    is_blocked is not None
+                    and self.position < len(self.route) - 1
+                    and is_blocked(
+                        self.route[self.position],
+                        self.route[self.position + 1]
+                    )
+                ):
+                    break
 
             else:
 

@@ -19,3 +19,10 @@ class Graph:
 
     def get_neighbours(self, node):
         return self.edges.get(node, [])
+
+    def has_edge(self, from_node, to_node):
+        """True if there is a direct road from from_node to to_node."""
+        return any(
+            neighbour == to_node
+            for neighbour, _ in self.get_neighbours(from_node)
+        )

@@ -18,8 +18,27 @@ class EmergencyStation:
 
         vehicle.available = True
         vehicle.on_emergency = False
+        vehicle.home_station = self
 
         self.available_vehicles.append(vehicle)
+
+    def return_vehicle(self, vehicle):
+        """Put a vehicle back at the station, ready for the next call.
+
+        Simplification: the vehicle returns to base instantly
+        (it does not drive back).
+        """
+
+        location = self.get_location()
+
+        vehicle.set_route([location, location])
+        vehicle.finished = True  # parked
+
+        vehicle.available = True
+        vehicle.on_emergency = False
+
+        if vehicle not in self.available_vehicles:
+            self.available_vehicles.append(vehicle)
 
     def get_available_vehicle(self):
         """Remove and return an available emergency vehicle."""

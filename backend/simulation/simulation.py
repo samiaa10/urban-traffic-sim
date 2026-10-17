@@ -1,5 +1,3 @@
-import time
-
 from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
@@ -9,6 +7,9 @@ class Simulation:
 
     def __init__(self, route):
         self.vehicles = []
+
+        # Simulated time in seconds (goes up by 1 every step)
+        self.time = 0
 
         # Roads currently affected by incidents
         self.blocked_segments = set()
@@ -57,6 +58,13 @@ class Simulation:
         segment = tuple(sorted(segment))
         return segment in self.blocked_segments
 
+    def is_road_closed(self, point_a, point_b):
+        """Check whether the road between two route points is closed."""
+        return self.is_segment_blocked((
+            (point_a["latitude"], point_a["longitude"]),
+            (point_b["latitude"], point_b["longitude"])
+        ))
+
     def get_blocked_segments(self):
         """Return all currently blocked road segments."""
         return self.blocked_segments
@@ -76,7 +84,8 @@ class Simulation:
         emergency = Emergency(
             latitude,
             longitude,
-            emergency_type
+            emergency_type,
+            created_time=self.time
         )
 
         self.emergencies.append(emergency)
@@ -88,46 +97,52 @@ class Simulation:
         return self.emergencies
 
     def check_emergencies(self):
+        """Resolve emergencies whose dispatched vehicle has arrived.
+
+        Only the vehicle that was sent to an emergency can resolve it
+        (a normal car driving past does not count). The vehicle has
+        arrived when it reaches the end of its route.
+        """
+
         for emergency in self.emergencies:
 
             if not emergency.active:
                 continue
 
-            for vehicle in self.vehicles:
+            vehicle = emergency.assigned_vehicle
 
-                if vehicle.finished:
-                    continue
+            # Nobody has been sent yet
+            if vehicle is None:
+                continue
 
-                location = vehicle.get_current_location()
+            # Still on its way
+            if not vehicle.finished:
+                continue
 
-                latitude_difference = (
-                    location["latitude"]
-                    - emergency.latitude
-                )
+            emergency.resolve(self.time)
 
-                longitude_difference = (
-                    location["longitude"]
-                    - emergency.longitude
-                )
+            # Free the vehicle so it can answer the next emergency
+            if vehicle.home_station is not None:
+                vehicle.home_station.return_vehicle(vehicle)
+            else:
+                vehicle.on_emergency = False
+                vehicle.available = True
 
-                distance = (
-                    latitude_difference ** 2
-                    + longitude_difference ** 2
-                ) ** 0.5
+    def cancel_emergency(self, emergency):
+        """Remove an emergency that could not be answered and free its vehicle."""
 
-                if distance < 0.0001:
+        vehicle = emergency.assigned_vehicle
 
-                    response_time = (
-                        time.time()
-                        - emergency.created_at
-                    )
+        if vehicle is not None:
 
-                    emergency.resolve(response_time)
+            if vehicle.home_station is not None:
+                vehicle.home_station.return_vehicle(vehicle)
+            else:
+                vehicle.on_emergency = False
+                vehicle.available = True
 
-                    vehicle.on_emergency = False
-                    vehicle.available = True
-
-                    break
+        if emergency in self.emergencies:
+            self.emergencies.remove(emergency)
 
     # ========================================
     # EMERGENCY STATIONS
@@ -206,6 +221,8 @@ class Simulation:
         vehicle.on_emergency = True
         vehicle.available = False
 
+        emergency.assigned_vehicle = vehicle
+
         return vehicle
 
     def dispatch_from_nearest_station(
@@ -230,6 +247,8 @@ class Simulation:
 
         vehicle.on_emergency = True
         vehicle.available = False
+
+        emergency.assigned_vehicle = vehicle
 
         return vehicle
 
@@ -287,7 +306,9 @@ class Simulation:
                 if segment in self.blocked_segments:
                     continue
 
-            vehicle.move(1)
+            vehicle.move(1, is_blocked=self.is_road_closed)
+
+        self.time += 1
 
         self.check_emergencies()
 

@@ -105,6 +105,12 @@ def route(start: int, destination: int):
     blocked_segments=blocked_segments
 )
 
+    if not path:
+        raise HTTPException(
+            status_code=404,
+            detail="No route available (roads may be closed)"
+        )
+
     path_coordinates = [
         {
             "latitude": graph.nodes[node]["latitude"],
@@ -306,6 +312,15 @@ def block_incident(
             detail="Destination node not found"
         )
 
+    if not (
+        graph.has_edge(start, destination)
+        or graph.has_edge(destination, start)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="These two nodes are not directly connected by a road"
+        )
+
     segment = (
         (
             graph.nodes[start]["latitude"],
@@ -346,6 +361,15 @@ def unblock_incident(
         raise HTTPException(
             status_code=404,
             detail="Destination node not found"
+        )
+
+    if not (
+        graph.has_edge(start, destination)
+        or graph.has_edge(destination, start)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="These two nodes are not directly connected by a road"
         )
 
     segment = (
@@ -488,9 +512,7 @@ def reroute_vehicle(vehicle_id: int = 0):
     ]
 
     # Replace vehicle's route
-    vehicle.route = new_route
-    vehicle.position = 0
-    vehicle.distance_on_segment = 0
+    vehicle.set_route(new_route)
 
     return {
         "status": "vehicle rerouted",
@@ -525,6 +547,7 @@ def create_emergency(
     )
 
     if vehicle is None:
+        simulation.cancel_emergency(emergency)
         raise HTTPException(
             status_code=404,
             detail="No available emergency vehicle"
@@ -582,6 +605,7 @@ def create_emergency(
     )
 
     if not path:
+        simulation.cancel_emergency(emergency)
         raise HTTPException(
             status_code=404,
             detail="No route to emergency"
@@ -597,11 +621,7 @@ def create_emergency(
     ]
 
     # Give the emergency vehicle its new route
-    vehicle.route = new_route
-    vehicle.position = 0
-    vehicle.distance_on_segment = 0
-    vehicle.distance_travelled = 0
-    vehicle.finished = False
+    vehicle.set_route(new_route, reset_distance=True)
 
     print("Calculated emergency route:", new_route)
     print("Calculated route distance:", distance)
