@@ -1,0 +1,5 @@
+# Backend (Python)
+fastapi
+uvicorn
+osmnx      # only needed to download the Norwich road map the first time
+pytest     # only needed to run the tests

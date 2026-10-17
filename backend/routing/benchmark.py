@@ -42,6 +42,8 @@ def benchmark_algorithm(algorithm, graph, start, destination):
 def main():
     graph = load_graph()
 
+    random.seed(42)  # same random routes every run, so results can be repeated
+
     nodes = list(graph.nodes)
 
     tests = []
