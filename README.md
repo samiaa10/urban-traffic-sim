@@ -1,5 +1,7 @@
 # NORWICH//SIM
 
+[![Tests](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml)
+
 A traffic and emergency-response simulator built on Norwich's real road network.
 Vehicles drive around the city, roads can be closed, ambulances are dispatched to
 emergencies, and an **optimiser** works out where a new ambulance station should go.
