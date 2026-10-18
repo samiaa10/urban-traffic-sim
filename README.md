@@ -22,9 +22,10 @@ answers a real question: *which station location gets help to people fastest?*
 - **Routing from scratch:** Dijkstra and A* (both written by hand), with
   congestion-aware costs and road closures.
 - **Vehicle simulation:** vehicles follow routes at realistic speeds, one second per step.
-- **Road closures:** close a road and vehicles stop at the junction; routes are
-  recalculated around the closure. If a closure cuts a place off completely, the API
-  says so instead of crashing.
+- **Road closures with automatic rerouting:** close a road and the vehicles whose
+  route uses it get new routes around it automatically. Vehicles in the middle of a
+  road finish that road first, then detour. If a closure cuts a place off completely,
+  the vehicle waits and the API says so instead of crashing.
 - **Emergency response:** stations, ambulances, dispatch, and response times measured
   in simulated seconds.
 - **Emergency Station Optimiser:** simulates hundreds of random emergencies and ranks
@@ -54,6 +55,13 @@ seed 1):
 The best location is clearly ahead of the others on average response time and on
 worst case. The run takes about 0.3 seconds.
 
+**Checked against the full simulation.** The optimiser works out response time as
+driving distance / speed. `python -m backend.optimiser.validate` drives an ambulance
+through the full simulation for 150 random station-to-emergency pairs and compares:
+the simulation is on average 1.2% faster (range -6.3% to +1.1%). That's expected,
+because simulated vehicles move in straight lines between junctions, which is about
+1.5% shorter than the real road length on these routes.
+
 **Why it's fast.** Working out each emergency separately would need one A* search per
 (station, emergency) pair: 9 stations x 500 emergencies = 4,500 searches, an
 estimated 25-30 seconds (I timed 30 individual A* searches at about 6 ms each).
@@ -82,6 +90,26 @@ across the real Norwich graph (fixed seed, so the route set is the same every ru
 A* explores **about 65% fewer junctions** and always finds the same optimal distance
 as Dijkstra. Wall-clock times depend on your machine, so run the script to see yours.
 
+## Rerouting after a closure
+
+When a road is closed the simulation doesn't recalculate every vehicle's route. It
+first checks which vehicles' remaining routes use the closed road (a cheap check) and
+only runs A* for those. `python -m backend.simulation.benchmark_rerouting` closes the
+busiest road for fleets of 100, 500 and 1,000 vehicles and compares this against
+recalculating everyone:
+
+| Vehicles | Use the closed road | A* searches, affected only | A* searches, all |
+|---|---|---|---|
+| 100 | 22 (22%) | 22 | 100 |
+| 500 | 77 (15%) | 77 | 500 |
+| 1,000 | 143 (14%) | 143 | 1,000 |
+
+That is 4.5x to 7x fewer searches. The script also measures running time and saves it
+to [docs/rerouting_benchmark.md](docs/rerouting_benchmark.md); timings depend on your
+machine, so re-run it to get yours. The searches still run one after another, so on a
+very large fleet a closure briefly pauses the server. Running them in parallel is a
+possible next step.
+
 ## How it fits together
 
 ```mermaid
@@ -96,7 +124,8 @@ flowchart LR
 ```
 
 - `backend/routing/`: the graph, Dijkstra, A*, the OpenStreetMap loader, the benchmark.
-- `backend/simulation/`: vehicles, emergencies, stations and the simulation loop.
+- `backend/simulation/`: vehicles, emergencies, stations, the simulation loop and
+  rerouting.
 - `backend/optimiser/`: the station optimiser and its command-line runner.
 - `backend/api/main.py`: the FastAPI endpoints the front end talks to.
 - `backend/tests/`: automated tests (road closures, emergencies, routing, optimiser).
@@ -135,12 +164,15 @@ Other commands:
 python -m pytest backend/tests -v        # run the tests
 python -m backend.optimiser.run          # station optimiser (add --help for options)
 python -m backend.routing.benchmark      # Dijkstra vs A*
+python -m backend.simulation.benchmark_rerouting   # cost of rerouting after a closure
+python -m backend.optimiser.validate     # optimiser vs the full simulation
 ```
 
 ## Tests
 
-22 automated tests cover: routes avoiding closed roads (both directions), no route
-when every road is closed, vehicles waiting at a closure until it reopens, ambulances
+29 automated tests cover: routes avoiding closed roads (both directions), no route
+when every road is closed, vehicles waiting at a closure until it reopens, rerouting
+only the affected vehicles, vehicles in the middle of a road not teleporting, ambulances
 resolving emergencies (even at high speed), ambulances becoming available again,
 response times in simulated seconds, and the optimiser's rankings, repeatability and
 closure handling.
@@ -148,12 +180,10 @@ closure handling.
 ## Known limitations and next steps
 
 - The simulation lives in memory and supports one run at a time.
-- Vehicles reroute when asked (the "close road" button or `/simulation/reroute`),
-  not automatically yet.
 - Congestion changes routes but isn't drawn on the map yet.
 - Ambulances return to base instantly after a call instead of driving back.
-- Planned: automatic rerouting, an optimiser view in the front end, Docker, and a
-  deployed demo.
+- Planned: an optimiser view in the front end, running route recalculations in
+  parallel, Docker, and a deployed demo.
 
 ## Data
 

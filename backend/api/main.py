@@ -7,6 +7,7 @@ from fastapi.middleware.cors import CORSMiddleware
 
 from backend.routing.a_star import a_star
 from backend.simulation.simulation import Simulation
+from backend.simulation import rerouting
 from backend.optimiser.station_optimiser import (
     optimise_station_locations,
 )
@@ -34,6 +35,10 @@ app.add_middleware(
 
 with open(GRAPH_FILE, "rb") as file:
     graph = pickle.load(file)
+
+
+# Lets us turn a route point back into its junction id (used for rerouting)
+node_by_point = rerouting.build_node_lookup(graph)
 
 
 simulation = None
@@ -161,6 +166,12 @@ def start_simulation(start: int, destination: int):
         return_stats=True
     )
 
+    if not path:
+        raise HTTPException(
+            status_code=404,
+            detail="No route between start and destination"
+        )
+
     path_coordinates = [
         {
             "latitude": graph.nodes[node]["latitude"],
@@ -192,8 +203,10 @@ def start_simulation(start: int, destination: int):
         for node in second_path
     ]
 
-    # Add Vehicle 2
-    simulation.add_vehicle(second_path_coordinates)
+    # Add Vehicle 2 (one-way streets mean the way back may not exist,
+    # and a vehicle with no route would crash the simulation)
+    if second_path_coordinates:
+        simulation.add_vehicle(second_path_coordinates)
 
 
     # --------------------------------
@@ -337,9 +350,17 @@ def block_incident(
 
     simulation.block_segment(segment)
 
+    # Event -> affected road -> only the vehicles that use it get new routes
+    rerouting_stats = rerouting.reroute_affected_vehicles(
+        graph,
+        simulation,
+        node_by_point
+    )
+
     return {
         "status": "incident created",
-        "blocked_segment": segment
+        "blocked_segment": segment,
+        "rerouting": rerouting_stats
     }
 
 
@@ -448,82 +469,34 @@ def reroute_vehicle(vehicle_id: int = 0):
             detail="Vehicle has already finished"
         )
 
-    # Find the vehicle's current location
-    current_location = vehicle.get_current_location()
-
-    # Find the nearest graph node to the vehicle
-    nearest = None
-    nearest_distance = float("inf")
-
-    for node, data in graph.nodes.items():
-
-        distance = math.sqrt(
-            (data["latitude"] - current_location["latitude"]) ** 2
-            + (data["longitude"] - current_location["longitude"]) ** 2
-        )
-
-        if distance < nearest_distance:
-            nearest_distance = distance
-            nearest = node
-
-    # Find the vehicle's destination
-    destination_point = vehicle.route[-1]
-
-    destination_node = None
-    nearest_distance = float("inf")
-
-    for node, data in graph.nodes.items():
-
-        distance = math.sqrt(
-            (data["latitude"] - destination_point["latitude"]) ** 2
-            + (data["longitude"] - destination_point["longitude"]) ** 2
-        )
-
-        if distance < nearest_distance:
-            nearest_distance = distance
-            destination_node = node
-
-    # Current traffic
-    traffic = simulation.get_traffic_density()
-
-    # Current blocked roads
-    blocked_segments = simulation.get_blocked_segments()
-
-    # Calculate new route
-    path, distance, nodes_explored = a_star(
+    result = rerouting.reroute_vehicle(
         graph,
-        nearest,
-        destination_node,
-        return_stats=True,
-        traffic=traffic,
-        blocked_segments=blocked_segments
+        vehicle,
+        node_by_point,
+        traffic=simulation.get_traffic_density(),
+        blocked_segments=simulation.get_blocked_segments()
     )
 
-    if not path:
+    if result["status"] == "skipped":
+        raise HTTPException(
+            status_code=400,
+            detail="Vehicle route is not on the road network"
+        )
+
+    if result["status"] == "stranded":
         raise HTTPException(
             status_code=404,
             detail="No alternative route available"
         )
 
-    # Convert graph route to coordinates
-    new_route = [
-        {
-            "latitude": graph.nodes[node]["latitude"],
-            "longitude": graph.nodes[node]["longitude"]
-        }
-        for node in path
-    ]
-
-    # Replace vehicle's route
-    vehicle.set_route(new_route)
-
     return {
         "status": "vehicle rerouted",
         "vehicle_id": vehicle_id,
-        "distance_metres": distance,
-        "nodes_explored": nodes_explored,
-        "route": new_route
+        "distance_metres": result["distance"],
+        "nodes_explored": result["nodes_explored"],
+        "route": result["route"]
     }
+
 
 @app.post("/emergency/create")
 def create_emergency(
