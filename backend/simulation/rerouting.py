@@ -118,6 +118,7 @@ def reroute_vehicle(
     ]
 
     vehicle.set_route(new_route)
+    vehicle.reroutes += 1
 
     return {
         "status": "rerouted",

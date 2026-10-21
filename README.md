@@ -27,12 +27,27 @@ answers a real question: *which station location gets help to people fastest?*
   road finish that road first, then detour. If a closure cuts a place off completely,
   the vehicle waits and the API says so instead of crashing.
 - **Emergency response:** stations, ambulances, dispatch, and response times measured
-  in simulated seconds.
+  in simulated seconds. A live status panel shows the ambulance's ETA, whether it has
+  been rerouted, and the final response time (see the demo below).
 - **Emergency Station Optimiser:** simulates hundreds of random emergencies and ranks
   candidate station locations by average response time, worst case, and the percentage
   of emergencies reached within a target time.
 - **Interactive map:** React + TypeScript + Leaflet front end to pick a route, watch
   vehicles move, close a road, and dispatch an ambulance.
+
+## Demo: an ambulance meets a road closure
+
+1. Click a start and a destination on the map, then **Calculate Route**.
+2. Click **Trigger Ambulance Emergency**. The nearest ambulance is dispatched and the
+   status panel shows its ETA counting down.
+3. Click **Close Road Ahead of Ambulance**. A road on its route is closed (shown in
+   black), the ambulance is rerouted by the same code that reroutes every other
+   vehicle, and the panel shows the extra distance and time the detour costs.
+4. When it arrives, the panel shows the final response time in simulated seconds.
+
+If closing a road would cut the ambulance off completely, nothing is closed and the
+app says so. The logic lives in `backend/simulation/dispatch.py` and is tested on a
+tiny map in `backend/tests/test_emergency_response.py`.
 
 ## Emergency Station Optimiser: results
 

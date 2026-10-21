@@ -27,6 +27,15 @@ type CongestionSegment = {
   level: string
 }
 
+type EmergencyStatus = {
+  state: "waiting" | "en_route" | "blocked" | "arrived"
+  elapsed_seconds: number
+  response_time_seconds: number | null
+  remaining_metres: number
+  eta_seconds: number
+  reroutes: number
+}
+
 function MapClickHandler({
   onClick,
 }: {
@@ -69,6 +78,12 @@ function App() {
   const [incidentRoute, setIncidentRoute] =
     useState<Coordinate[]>([])
 
+  const [emergencyStatus, setEmergencyStatus] =
+    useState<EmergencyStatus | null>(null)
+
+  const [blockedAhead, setBlockedAhead] =
+    useState<Coordinate[]>([])
+
   const [result, setResult] = useState("")
 
   const simulationInterval =
@@ -91,6 +106,8 @@ function App() {
       setEmergencyActive(false)
       setIncidentActive(false)
       setIncidentRoute([])
+      setEmergencyStatus(null)
+      setBlockedAhead([])
 
       setResult(
         "Start selected. Click another location for your destination."
@@ -118,6 +135,8 @@ function App() {
       setEmergencyActive(false)
       setIncidentActive(false)
       setIncidentRoute([])
+      setEmergencyStatus(null)
+      setBlockedAhead([])
 
       setResult(
         "New start selected. Click another location for your destination."
@@ -170,6 +189,26 @@ function App() {
             } catch {
               // Keep the simulation running if congestion
               // data is temporarily unavailable.
+            }
+
+            // Fetch the emergency response status (ETA, response time)
+            try {
+              const statusResponse = await fetch(
+                "http://127.0.0.1:8000/emergency/status"
+              )
+
+              if (statusResponse.ok) {
+                const statusData = await statusResponse.json()
+                const emergencies = statusData.emergencies ?? []
+
+                setEmergencyStatus(
+                  emergencies.length > 0
+                    ? emergencies[emergencies.length - 1]
+                    : null
+                )
+              }
+            } catch {
+              // Status is optional; keep the simulation running.
             }
 
             const allFinished =
@@ -255,6 +294,8 @@ function App() {
       setEmergencyActive(false)
       setIncidentRoute([])
       setIncidentActive(false)
+      setEmergencyStatus(null)
+      setBlockedAhead([])
       setCongestion([])
 
       // 4. Start backend simulation
@@ -507,6 +548,66 @@ function App() {
   }
 
   // ------------------------------------------------
+  // CLOSE A ROAD AHEAD OF THE AMBULANCE
+  // ------------------------------------------------
+
+  const blockRoadAheadOfAmbulance = async () => {
+    try {
+      const response = await fetch(
+        "http://127.0.0.1:8000/emergency/block-ahead",
+        {
+          method: "POST",
+        }
+      )
+
+      const data = await response.json()
+
+      if (!response.ok) {
+        throw new Error(
+          data.detail ||
+          "Could not close a road ahead"
+        )
+      }
+
+      // Show the ambulance's new route
+      setEmergencyRoute(
+        data.route.map(
+          (point: {
+            latitude: number
+            longitude: number
+          }) => [point.latitude, point.longitude]
+        )
+      )
+
+      // Show the closed road
+      setBlockedAhead([
+        [
+          data.blocked_segment.start.latitude,
+          data.blocked_segment.start.longitude,
+        ],
+        [
+          data.blocked_segment.end.latitude,
+          data.blocked_segment.end.longitude,
+        ],
+      ])
+
+      setResult(
+        `🚧 Road ahead closed | 🔄 Ambulance rerouted: +${Math.round(
+          data.extra_metres
+        )} m (about +${Math.round(
+          data.extra_seconds
+        )} s on the response time)`
+      )
+    } catch (error) {
+      if (error instanceof Error) {
+        setResult(`Could not close road: ${error.message}`)
+      } else {
+        setResult("Could not close road.")
+      }
+    }
+  }
+
+  // ------------------------------------------------
   // CLEAN UP TIMER
   // ------------------------------------------------
 
@@ -563,6 +664,44 @@ function App() {
         >
           🚧 Cause Road Closure & Reroute
         </button>
+      )}
+
+      {/* CLOSE ROAD AHEAD OF AMBULANCE BUTTON */}
+      {emergencyStatus &&
+        (emergencyStatus.state === "en_route" ||
+          emergencyStatus.state === "blocked") && (
+          <button
+            onClick={blockRoadAheadOfAmbulance}
+            style={{ marginLeft: "10px" }}
+          >
+            🚧 Close Road Ahead of Ambulance
+          </button>
+        )}
+
+      {/* EMERGENCY RESPONSE STATUS */}
+      {emergencyStatus && (
+        <div style={{ margin: "10px 0" }}>
+          <strong>🚑 Emergency response:</strong>{" "}
+          {emergencyStatus.state === "arrived"
+            ? `Arrived. Response time ${Math.round(
+                emergencyStatus.response_time_seconds ?? 0
+              )} s`
+            : emergencyStatus.state === "blocked"
+              ? "Stopped by a closed road"
+              : emergencyStatus.state === "waiting"
+                ? "Waiting for an ambulance"
+                : `En route | ETA ${Math.round(
+                    emergencyStatus.eta_seconds
+                  )} s | ${Math.round(
+                    emergencyStatus.remaining_metres
+                  )} m to go`}
+          {" | "}
+          {emergencyStatus.reroutes === 0
+            ? "not rerouted"
+            : `rerouted ${emergencyStatus.reroutes}x`}
+          {" | "}
+          {Math.round(emergencyStatus.elapsed_seconds)} s elapsed
+        </div>
       )}
 
       {/* LIVE CONGESTION LEGEND */}
@@ -646,6 +785,18 @@ function App() {
               }}
             />
           )}
+
+        {/* ROAD CLOSED AHEAD OF THE AMBULANCE */}
+        {blockedAhead.length > 0 && (
+          <Polyline
+            positions={blockedAhead}
+            pathOptions={{
+              color: "black",
+              weight: 10,
+              opacity: 0.85,
+            }}
+          />
+        )}
 
         {/* DYNAMIC REROUTED ROUTE */}
         {incidentActive &&

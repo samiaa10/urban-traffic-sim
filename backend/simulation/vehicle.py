@@ -19,6 +19,10 @@ class Vehicle:
 
         self.finished = False
 
+        # How many times the route was recalculated during this trip
+        # (because of a closure). Reset when a new trip starts.
+        self.reroutes = 0
+
         # Emergency vehicle state
         self.on_emergency = False
         self.available = True
@@ -36,6 +40,7 @@ class Vehicle:
 
         if reset_distance:
             self.distance_travelled = 0
+            self.reroutes = 0
 
     def calculate_distance(self, point1, point2):
 

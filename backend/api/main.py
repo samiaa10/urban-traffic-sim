@@ -8,6 +8,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from backend.routing.a_star import a_star
 from backend.simulation.simulation import Simulation
 from backend.simulation import rerouting
+from backend.simulation import dispatch
 from backend.optimiser.station_optimiser import (
     optimise_station_locations,
 )
@@ -613,6 +614,66 @@ def create_emergency(
         "route_distance_metres": distance,
         "nodes_explored": nodes_explored,
         "route": new_route
+    }
+
+
+@app.get("/emergency/status")
+def emergency_status():
+    """Live status of every emergency (state, ETA, response time, reroutes)."""
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    return {
+        "simulation_time": simulation.time,
+        "emergencies": [
+            dispatch.emergency_status(simulation, emergency)
+            for emergency in simulation.get_emergencies()
+        ]
+    }
+
+
+@app.post("/emergency/block-ahead")
+def emergency_block_road_ahead():
+    """Close a road on the ambulance's route; it is rerouted around it."""
+
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+    result = dispatch.block_road_ahead(graph, simulation, node_by_point)
+
+    messages = {
+        "no_emergency": (404, "No ambulance is on its way to an emergency"),
+        "too_close": (400, "The ambulance is too close to its destination to close a road ahead"),
+        "no_detour": (400, "Every road ahead is the only way there, so none was closed"),
+        "off_network": (400, "The ambulance route is not on the road network"),
+    }
+
+    if result["outcome"] in messages:
+        status_code, detail = messages[result["outcome"]]
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    start_point, end_point = result["blocked_segment"]
+
+    return {
+        "status": "road closed, ambulance rerouted",
+        "vehicle_id": result["vehicle_id"],
+        "blocked_segment": {
+            "start": {"latitude": start_point[0], "longitude": start_point[1]},
+            "end": {"latitude": end_point[0], "longitude": end_point[1]}
+        },
+        "distance_before_metres": result["distance_before_metres"],
+        "distance_after_metres": result["distance_after_metres"],
+        "extra_metres": result["extra_metres"],
+        "extra_seconds": result["extra_seconds"],
+        "rerouting": result["rerouting"],
+        "route": result["route"]
     }
 
 
