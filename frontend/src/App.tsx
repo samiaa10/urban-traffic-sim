@@ -36,6 +36,11 @@ type EmergencyStatus = {
   reroutes: number
 }
 
+type RouteInfo = {
+  distance: number
+  nodesExplored: number
+}
+
 function MapClickHandler({
   onClick,
 }: {
@@ -84,10 +89,32 @@ function App() {
   const [blockedAhead, setBlockedAhead] =
     useState<Coordinate[]>([])
 
+  // Details of the route the simulation was started with
+  const [routeInfo, setRouteInfo] =
+    useState<RouteInfo | null>(null)
+
+  // Is the polling timer running, and did the backend stop answering?
+  const [running, setRunning] = useState(false)
+  const [connectionLost, setConnectionLost] = useState(false)
+
+  // Simulated seconds, reported by the backend
+  const [simulationTime, setSimulationTime] =
+    useState<number | null>(null)
+
+  // Feedback about the last thing the user did
   const [result, setResult] = useState("")
 
   const simulationInterval =
     useRef<number | null>(null)
+
+  const stopSimulationPolling = () => {
+    if (simulationInterval.current !== null) {
+      clearInterval(simulationInterval.current)
+      simulationInterval.current = null
+    }
+
+    setRunning(false)
+  }
 
   // ------------------------------------------------
   // MAP CLICKING
@@ -108,19 +135,17 @@ function App() {
       setIncidentRoute([])
       setEmergencyStatus(null)
       setBlockedAhead([])
-
-      setResult(
-        "Start selected. Click another location for your destination."
-      )
+      setRouteInfo(null)
+      setSimulationTime(null)
+      setConnectionLost(false)
+      stopSimulationPolling()
+      setResult("")
     }
 
     // Second click = destination
     else if (!destination) {
       setDestination(location)
-
-      setResult(
-        "Destination selected. Click Calculate Route."
-      )
+      setResult("")
     }
 
     // Third click = new start
@@ -137,10 +162,11 @@ function App() {
       setIncidentRoute([])
       setEmergencyStatus(null)
       setBlockedAhead([])
-
-      setResult(
-        "New start selected. Click another location for your destination."
-      )
+      setRouteInfo(null)
+      setSimulationTime(null)
+      setConnectionLost(false)
+      stopSimulationPolling()
+      setResult("")
     }
   }
 
@@ -152,6 +178,9 @@ function App() {
     if (simulationInterval.current !== null) {
       clearInterval(simulationInterval.current)
     }
+
+    setRunning(true)
+    setConnectionLost(false)
 
     simulationInterval.current =
       window.setInterval(
@@ -201,6 +230,10 @@ function App() {
                 const statusData = await statusResponse.json()
                 const emergencies = statusData.emergencies ?? []
 
+                setSimulationTime(
+                  statusData.simulation_time ?? null
+                )
+
                 setEmergencyStatus(
                   emergencies.length > 0
                     ? emergencies[emergencies.length - 1]
@@ -218,22 +251,11 @@ function App() {
               )
 
             if (allFinished) {
-              if (simulationInterval.current !== null) {
-                clearInterval(simulationInterval.current)
-                simulationInterval.current = null
-              }
-
-              setResult(
-                "All vehicles reached their destinations."
-              )
+              stopSimulationPolling()
             }
           } catch {
-            if (simulationInterval.current !== null) {
-              clearInterval(simulationInterval.current)
-              simulationInterval.current = null
-            }
-
-            setResult("Simulation connection lost.")
+            stopSimulationPolling()
+            setConnectionLost(true)
           }
         },
         1000
@@ -297,6 +319,8 @@ function App() {
       setEmergencyStatus(null)
       setBlockedAhead([])
       setCongestion([])
+      setRouteInfo(null)
+      setSimulationTime(null)
 
       // 4. Start backend simulation
       const simulationResponse = await fetch(
@@ -333,16 +357,14 @@ function App() {
       // 5. Start simulation polling
       startSimulationPolling()
 
-      // 6. Show route information
-      setResult(
-        `A* route: ${Math.round(
-          data.distance_metres
-        )} metres | ${
-          data.nodes_explored
-        } nodes explored | 2 vehicles`
-      )
+      // 6. Remember the route numbers for the status panel
+      setRouteInfo({
+        distance: data.distance_metres,
+        nodesExplored: data.nodes_explored,
+      })
+      setResult("")
     } catch {
-      setResult("Could not calculate route.")
+      setResult("Could not calculate route. Is the backend running?")
     }
   }
 
@@ -360,7 +382,7 @@ function App() {
       }
 
       setResult(
-        "🚧 Road closure detected. Rerouting vehicle..."
+        "🚧 Closing a road on the route and rerouting..."
       )
 
       // Choose a road segment ahead of the vehicle
@@ -389,9 +411,16 @@ function App() {
         }
       )
 
+      const blockData = await blockResponse.json()
+
       if (!blockResponse.ok) {
-        throw new Error("Could not block road segment")
+        throw new Error(
+          blockData.detail ||
+          "Could not block road segment"
+        )
       }
+
+      const stats = blockData.rerouting
 
       // Reroute vehicle 0
       const rerouteResponse = await fetch(
@@ -426,11 +455,15 @@ function App() {
       setIncidentActive(true)
 
       setResult(
-        `🚧 Road blocked | 🔄 Vehicle rerouted | ${Math.round(
+        `🚧 Road closed: ${stats.affected} of ${
+          stats.vehicles_checked
+        } active vehicles used it, ${stats.rerouted} rerouted${
+          stats.stranded > 0
+            ? `, ${stats.stranded} stranded`
+            : ""
+        } | 🔄 Vehicle 0 new route cost ${Math.round(
           rerouteData.distance_metres
-        )} m new route | ${
-          rerouteData.nodes_explored
-        } nodes explored`
+        )} m (${rerouteData.nodes_explored} nodes explored)`
       )
     } catch (error) {
       if (error instanceof Error) {
@@ -534,7 +567,7 @@ function App() {
       setResult(
         `🚑 Ambulance ${emergencyData.vehicle_id} dispatched | ${Math.round(
           emergencyData.route_distance_metres
-        )} m response route | ${
+        )} m response route cost | ${
           emergencyData.nodes_explored
         } nodes explored`
       )
@@ -620,6 +653,46 @@ function App() {
   }, [])
 
   // ------------------------------------------------
+  // WHAT THE STATUS PANEL SHOWS
+  // ------------------------------------------------
+
+  const finishedVehicles = vehicles.filter(
+    (vehicle) => vehicle.finished
+  ).length
+
+  let simulationState = {
+    label: "Waiting for input",
+    hint: "Click the map to choose a start point.",
+    colour: "#d97706",
+  }
+
+  if (connectionLost) {
+    simulationState = {
+      label: "Connection lost",
+      hint: "The backend stopped responding. Is it still running?",
+      colour: "#dc2626",
+    }
+  } else if (!start) {
+    // default state above
+  } else if (!destination) {
+    simulationState.hint = "Click the map to choose a destination."
+  } else if (!routeInfo) {
+    simulationState.hint = "Click Calculate Route to start the simulation."
+  } else if (running) {
+    simulationState = {
+      label: "Running",
+      hint: "Vehicles are moving.",
+      colour: "#16a34a",
+    }
+  } else {
+    simulationState = {
+      label: "Completed",
+      hint: "All vehicles have finished their journeys.",
+      colour: "#2563eb",
+    }
+  }
+
+  // ------------------------------------------------
   // UI
   // ------------------------------------------------
 
@@ -629,14 +702,6 @@ function App() {
 
       <p>
         Urban Traffic Simulation & Optimisation Platform
-      </p>
-
-      <p>
-        {start
-          ? destination
-            ? "Start and destination selected."
-            : "Now select your destination."
-          : "Click the map to select a start location."}
       </p>
 
       {/* ROUTE BUTTON */}
@@ -650,6 +715,8 @@ function App() {
       {start && destination && (
         <button
           onClick={triggerEmergency}
+          disabled={!routeInfo}
+          title={routeInfo ? "" : "Calculate a route first"}
           style={{ marginLeft: "10px" }}
         >
           🚑 Trigger Ambulance Emergency
@@ -660,6 +727,8 @@ function App() {
       {start && destination && (
         <button
           onClick={triggerIncident}
+          disabled={!routeInfo}
+          title={routeInfo ? "" : "Calculate a route first"}
           style={{ marginLeft: "10px" }}
         >
           🚧 Cause Road Closure & Reroute
@@ -678,31 +747,63 @@ function App() {
           </button>
         )}
 
-      {/* EMERGENCY RESPONSE STATUS */}
-      {emergencyStatus && (
-        <div style={{ margin: "10px 0" }}>
-          <strong>🚑 Emergency response:</strong>{" "}
-          {emergencyStatus.state === "arrived"
-            ? `Arrived. Response time ${Math.round(
-                emergencyStatus.response_time_seconds ?? 0
-              )} s`
-            : emergencyStatus.state === "blocked"
-              ? "Stopped by a closed road"
-              : emergencyStatus.state === "waiting"
-                ? "Waiting for an ambulance"
-                : `En route | ETA ${Math.round(
-                    emergencyStatus.eta_seconds
-                  )} s | ${Math.round(
-                    emergencyStatus.remaining_metres
-                  )} m to go`}
-          {" | "}
-          {emergencyStatus.reroutes === 0
-            ? "not rerouted"
-            : `rerouted ${emergencyStatus.reroutes}x`}
-          {" | "}
-          {Math.round(emergencyStatus.elapsed_seconds)} s elapsed
+      {/* STATUS PANEL: simulation state, route numbers, emergency progress, last action */}
+      <div
+        style={{
+          border: "1px solid var(--border)",
+          borderRadius: "6px",
+          padding: "8px 12px",
+          margin: "10px 0",
+          textAlign: "left",
+        }}
+      >
+        <div>
+          <strong style={{ color: simulationState.colour }}>
+            ● {simulationState.label}
+          </strong>
+          {" - "}
+          {simulationState.hint}
         </div>
-      )}
+
+        {routeInfo && (
+          <div>
+            Route: {Math.round(routeInfo.distance).toLocaleString()} m
+            {" ("}A*, {routeInfo.nodesExplored.toLocaleString()} nodes
+            explored{")"}
+            {" | "}
+            Vehicles: {vehicles.length} ({finishedVehicles} finished)
+            {" | "}
+            Simulation time: {simulationTime ?? 0} s
+          </div>
+        )}
+
+        {emergencyStatus && (
+          <div>
+            <strong>🚑 Emergency response:</strong>{" "}
+            {emergencyStatus.state === "arrived"
+              ? `Arrived. Response time ${Math.round(
+                  emergencyStatus.response_time_seconds ?? 0
+                )} s`
+              : emergencyStatus.state === "blocked"
+                ? "Stopped by a closed road"
+                : emergencyStatus.state === "waiting"
+                  ? "Waiting for an ambulance"
+                  : `En route | ETA ${Math.round(
+                      emergencyStatus.eta_seconds
+                    )} s | ${Math.round(
+                      emergencyStatus.remaining_metres
+                    )} m to go`}
+            {" | "}
+            {emergencyStatus.reroutes === 0
+              ? "not rerouted"
+              : `rerouted ${emergencyStatus.reroutes}x`}
+            {" | "}
+            {Math.round(emergencyStatus.elapsed_seconds)} s elapsed
+          </div>
+        )}
+
+        {result && <div>{result}</div>}
+      </div>
 
       {/* LIVE CONGESTION LEGEND */}
       <div style={{ margin: "10px 0" }}>
@@ -850,9 +951,6 @@ function App() {
           )
         })}
       </MapContainer>
-
-      {/* RESULT */}
-      {result && <p>{result}</p>}
     </div>
   )
 }
