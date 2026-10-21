@@ -2,220 +2,217 @@
 
 [![Tests](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml)
 
-A traffic and emergency-response simulator built on Norwich's real road network.
-Vehicles drive around the city, roads can be closed, ambulances are dispatched to
-emergencies, and an **optimiser** works out where a new ambulance station should go.
+NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing and simulation, and a React/TypeScript map shows vehicles, congestion, road closures and emergency response live.
 
-<!-- Add a screen recording here once you have one:
-![NORWICH//SIM demo](docs/demo.gif)
--->
+I built it as a computer science project to practise graph algorithms, simulation design, API design and testing on a realistic dataset. The main question it explores is: **what happens to traffic, and to ambulance response times, when roads get busy or close?**
 
-**Why I built it:** I wanted a project where the interesting part is the algorithms,
-not the web page. The road map is real data (5,058 junctions and 10,980 road
-segments from OpenStreetMap), the routing is written from scratch, and the optimiser
-answers a real question: *which station location gets help to people fastest?*
+> **Screenshots / demo video:** none yet. See the [demo guide](docs/DEMO.md) to try it yourself.
 
-## What it does
+## Features
 
-- **Real road network:** Norwich's drivable roads, downloaded from OpenStreetMap and
-  turned into a graph (junctions are nodes, road segments are edges).
-- **Routing from scratch:** Dijkstra and A* (both written by hand), with
-  congestion-aware costs and road closures.
-- **Vehicle simulation:** vehicles follow routes at realistic speeds, one second per step.
-- **Road closures with automatic rerouting:** close a road and the vehicles whose
-  route uses it get new routes around it automatically. Vehicles in the middle of a
-  road finish that road first, then detour. If a closure cuts a place off completely,
-  the vehicle waits and the API says so instead of crashing.
-- **Emergency response:** stations, ambulances, dispatch, and response times measured
-  in simulated seconds. A live status panel shows the ambulance's ETA, whether it has
-  been rerouted, and the final response time (see the demo below).
-- **Emergency Station Optimiser:** simulates hundreds of random emergencies and ranks
-  candidate station locations by average response time, worst case, and the percentage
-  of emergencies reached within a target time.
-- **Interactive map:** React + TypeScript + Leaflet front end to pick a route, watch
-  vehicles move, close a road, and dispatch an ambulance.
+- **Real Norwich road network.** Downloaded from OpenStreetMap (drivable roads) and converted into a custom graph. The benchmark report records it as 5,058 junctions and 10,980 road segments.
+- **A\* routing** with a great-circle (haversine) distance heuristic. Dijkstra is also implemented, and is used to check A\* gives the same optimal distance.
+- **Live vehicle simulation.** Vehicles drive along their routes in one-second simulation steps.
+- **Congestion visualisation.** The backend counts vehicles on each road segment and reports a congestion level per segment, which the map draws.
+- **Congestion-aware routing.** Each vehicle on a road adds a 50 m penalty to its cost, so busy roads look "longer" to A\*.
+- **Road closures.** Close or reopen a road segment. Closures apply in both directions, and A\* avoids them.
+- **Automatic rerouting.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
+- **Emergency response.** Create emergency stations and ambulances, raise an emergency, and the nearest station with an available ambulance is dispatched along a route that accounts for traffic and closures. Response time is measured in simulated seconds, and you can close a road ahead of the ambulance to watch it reroute.
+- **Emergency station optimiser.** Ranks candidate station locations by average response time, worst case, and share of emergencies reached within a target time. Available from the command line and the API.
+- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, and rerouting strategies.
+- **Automated tests.** 42 backend tests, run on every push by GitHub Actions.
 
-## Benchmark: shortest path vs congestion-aware routing
+## Tech stack
 
-```bash
-python -m backend.routing.benchmark_congestion          # print the comparison
-python -m backend.routing.benchmark_congestion --save   # also write docs/congestion_benchmark.md
-```
+| Part | Technology |
+|---|---|
+| Backend | Python, FastAPI, Uvicorn |
+| Map data | OpenStreetMap via OSMnx (used once, to download the network) |
+| Frontend | React 19, TypeScript, Vite, Leaflet / react-leaflet |
+| Testing | pytest (backend), GitHub Actions CI |
+| Frontend tooling | ESLint, `tsc` |
 
-It fills the map with traffic (a fleet heading for the city centre, driven by the real
-simulation), then routes the same random journeys twice with the same A* search: once
-ignoring traffic, once congestion-aware. Both routes are measured on the same traffic
-snapshot: distance, free-flow travel time, vehicles passed, and search work. It also
-prints how congested the scenario actually was and how many journeys changed route,
-so you can see whether the traffic was heavy enough to matter. Options: `--vehicles`,
-`--journeys`, `--warmup`, `--seed`.
+## Getting started
 
-## Demo: an ambulance meets a road closure
+### Prerequisites
 
-1. Click a start and a destination on the map, then **Calculate Route**.
-2. Click **Trigger Ambulance Emergency**. The nearest ambulance is dispatched and the
-   status panel shows its ETA counting down.
-3. Click **Close Road Ahead of Ambulance**. A road on its route is closed (shown in
-   black), the ambulance is rerouted by the same code that reroutes every other
-   vehicle, and the panel shows the extra distance and time the detour costs.
-4. When it arrives, the panel shows the final response time in simulated seconds.
+- Python 3 (developed on 3.9.6; CI runs 3.11. Other versions are untested.)
+- Node.js and npm (developed with Node 24)
+- An internet connection for the first-time map download
 
-If closing a road would cut the ambulance off completely, nothing is closed and the
-app says so. The logic lives in `backend/simulation/dispatch.py` and is tested on a
-tiny map in `backend/tests/test_emergency_response.py`.
-
-## Emergency Station Optimiser: results
-
-9 candidate locations spread evenly over Norwich, 500 random emergencies, ambulance
-speed 72 km/h, target response time 8 minutes (`python -m backend.optimiser.run`,
-seed 1):
-
-| Rank | Latitude | Longitude | Average | Worst case | Reached in 8 min |
-|------|----------|-----------|---------|------------|------------------|
-| 1 | 52.6356 | 1.2732 | 2.7 min | 5.2 min | 100% |
-| 2 | 52.6156 | 1.3112 | 3.7 min | 8.1 min | 99% |
-| 3 | 52.6124 | 1.2726 | 3.7 min | 7.3 min | 100% |
-| 4 | 52.6358 | 1.3190 | 3.9 min | 8.3 min | 98% |
-| 5 | 52.6276 | 1.2322 | 4.0 min | 7.5 min | 100% |
-| 6 | 52.6426 | 1.2282 | 4.0 min | 7.7 min | 100% |
-| 7 | 52.6515 | 1.3106 | 4.1 min | 8.3 min | 98% |
-| 8 | 52.6560 | 1.2753 | 4.2 min | 6.6 min | 100% |
-| 9 | 52.6346 | 1.2289 | 4.2 min | 7.9 min | 100% |
-
-The best location is clearly ahead of the others on average response time and on
-worst case. The run takes about 0.3 seconds.
-
-**Checked against the full simulation.** The optimiser works out response time as
-driving distance / speed. `python -m backend.optimiser.validate` drives an ambulance
-through the full simulation for 150 random station-to-emergency pairs and compares:
-the simulation is on average 1.2% faster (range -6.3% to +1.1%). That's expected,
-because simulated vehicles move in straight lines between junctions, which is about
-1.5% shorter than the real road length on these routes.
-
-**Why it's fast.** Working out each emergency separately would need one A* search per
-(station, emergency) pair: 9 stations x 500 emergencies = 4,500 searches, an
-estimated 25-30 seconds (I timed 30 individual A* searches at about 6 ms each).
-Instead, the optimiser runs **one Dijkstra search from each candidate station** that
-finds the distance to every junction at once, then reuses it for all 500 emergencies:
-9 searches in total. I checked these distances match A* on every reachable pair I
-tested.
-
-**What it can't do (yet):**
-- Emergencies are spread evenly over road junctions. Real emergencies cluster where
-  more people live.
-- Response time uses road length and closures but ignores traffic.
-- It compares stations a person suggests; it doesn't search for the best possible spot.
-- A couple of junctions sit in one-way pockets that most stations can't reach. They
-  are reported as "unreached" rather than hidden.
-
-## Routing benchmark
-
-`python -m backend.routing.benchmark` compares Dijkstra and A* on 100 random routes
-across the real Norwich graph (fixed seed, so the route set is the same every run):
-
-| | Dijkstra | A* |
-|---|---|---|
-| Average junctions explored | 2,138.5 | 758.9 |
-
-A* explores **about 65% fewer junctions** and always finds the same optimal distance
-as Dijkstra. Wall-clock times depend on your machine, so run the script to see yours.
-
-## Rerouting after a closure
-
-When a road is closed the simulation doesn't recalculate every vehicle's route. It
-first checks which vehicles' remaining routes use the closed road (a cheap check) and
-only runs A* for those. `python -m backend.simulation.benchmark_rerouting` closes the
-busiest road for fleets of 100, 500 and 1,000 vehicles and compares this against
-recalculating everyone:
-
-| Vehicles | Use the closed road | A* searches, affected only | A* searches, all |
-|---|---|---|---|
-| 100 | 22 (22%) | 22 | 100 |
-| 500 | 77 (15%) | 77 | 500 |
-| 1,000 | 143 (14%) | 143 | 1,000 |
-
-That is 4.5x to 7x fewer searches. The script also measures running time and saves it
-to [docs/rerouting_benchmark.md](docs/rerouting_benchmark.md); timings depend on your
-machine, so re-run it to get yours. The searches still run one after another, so on a
-very large fleet a closure briefly pauses the server. Running them in parallel is a
-possible next step.
-
-## How it fits together
-
-```mermaid
-flowchart LR
-    OSM[OpenStreetMap] -->|osm_loader.py| G[(Road graph<br/>5,058 junctions)]
-    G --> R[Routing<br/>Dijkstra, A*]
-    G --> O[Station optimiser]
-    R --> S[Simulation<br/>vehicles, closures,<br/>emergencies]
-    S --> API[FastAPI]
-    O --> API
-    API --> UI[React + Leaflet map]
-```
-
-- `backend/routing/`: the graph, Dijkstra, A*, the OpenStreetMap loader, the benchmark.
-- `backend/simulation/`: vehicles, emergencies, stations, the simulation loop and
-  rerouting.
-- `backend/optimiser/`: the station optimiser and its command-line runner.
-- `backend/api/main.py`: the FastAPI endpoints the front end talks to.
-- `backend/tests/`: automated tests (road closures, emergencies, routing, optimiser).
-- `frontend/`: the React + TypeScript + Leaflet map.
-
-**How congestion works.** Each vehicle on a road segment adds 50 metres to that
-segment's routing cost, so busy roads look longer and routes bend around them.
-
-## Run it
-
-You need Python 3 and Node.js.
+### 1. Clone
 
 ```bash
-# 1. Python setup (from the project folder)
-python -m venv .venv
-source .venv/bin/activate          # Windows: .venv\Scripts\activate
+git clone https://github.com/samiaa10/urban-traffic-sim.git
+cd urban-traffic-sim
+```
+
+### 2. Install the backend dependencies
+
+From the project root:
+
+```bash
+python3 -m venv .venv
+source .venv/bin/activate        # Windows (PowerShell): .venv\Scripts\Activate.ps1
 pip install -r requirements.txt
+```
 
-# 2. Download the Norwich road map (first time only, needs internet, can take a few minutes)
+`requirements.txt` installs `fastapi`, `uvicorn`, `osmnx` and `pytest`. Versions are not pinned.
+
+### 3. Download the Norwich road network
+
+The backend cannot start without the road-network file, and that file is **not in the repository** (see [Road-network data](#road-network-data)). Generate it once, from the project root:
+
+```bash
 python -m backend.routing.osm_loader
+```
 
-# 3. Start the backend
+This downloads the drivable network for "Norwich, Norfolk, England, United Kingdom" from OpenStreetMap, converts it into the project's own graph, and saves it to `data/osm/norwich_graph.pkl`.
+
+### 4. Run the backend
+
+From the project root, with the virtual environment active:
+
+```bash
 uvicorn backend.api.main:app --reload
+```
 
-# 4. In a second terminal, start the front end
+The API runs at `http://127.0.0.1:8000`. FastAPI's interactive documentation is at `http://127.0.0.1:8000/docs`.
+
+### 5. Run the frontend
+
+In a second terminal:
+
+```bash
 cd frontend
 npm install
 npm run dev
 ```
 
-Then open the address Vite prints (usually http://localhost:5173).
+Open the address Vite prints, which should be **`http://localhost:5173`**. Use `localhost`, not `127.0.0.1`: the backend only allows cross-origin requests from `http://localhost:5173`, and the frontend calls the backend at `http://127.0.0.1:8000` (both are hard-coded).
 
-Other commands:
+Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm run preview`.
+
+## Road-network data
+
+| Item | Details |
+|---|---|
+| Source | OpenStreetMap, downloaded through OSMnx (`graph_from_place`, `network_type="drive"`) |
+| Generated by | `python -m backend.routing.osm_loader` |
+| Saved to | `data/osm/norwich_graph.pkl` |
+| In Git? | **No.** `data/` and `cache/` are listed in `.gitignore` |
+| Needed by | the API, the benchmarks, the optimiser command line tool |
+| Not needed by | the test suite, which builds tiny hand-made graphs |
+
+Things to know:
+
+- The loader keeps each road's length (`length`) and each junction's latitude/longitude, and stores them in the project's own `Graph` class (`backend/routing/graph.py`). It does not keep street names or speed limits.
+- A `cache/` folder may appear in the directory you ran the loader from. It looks like OSMnx's response cache, so repeated downloads are faster. It is safe to delete and is also ignored by Git.
+- OpenStreetMap data changes over time, so a graph downloaded later may differ slightly from the one used for the benchmark figures below.
+- The file is a Python pickle. Only load a `.pkl` you generated yourself, because unpickling untrusted files is unsafe.
+- Map data is © OpenStreetMap contributors, available under the [Open Database Licence](https://www.openstreetmap.org/copyright).
+
+## Running the tests
+
+From the project root:
 
 ```bash
-python -m pytest backend/tests -v        # run the tests
-python -m backend.optimiser.run          # station optimiser (add --help for options)
-python -m backend.routing.benchmark      # Dijkstra vs A*
-python -m backend.simulation.benchmark_rerouting   # cost of rerouting after a closure
-python -m backend.optimiser.validate     # optimiser vs the full simulation
+python -m pytest backend/tests -v
 ```
 
-## Tests
+This is the same command the GitHub Actions workflow runs (on Python 3.11, with only `pytest` installed). The tests use small hand-built road networks (`backend/tests/helpers.py`), so they need neither the Norwich data file nor internet access.
 
-29 automated tests cover: routes avoiding closed roads (both directions), no route
-when every road is closed, vehicles waiting at a closure until it reopens, rerouting
-only the affected vehicles, vehicles in the middle of a road not teleporting, ambulances
-resolving emergencies (even at high speed), ambulances becoming available again,
-response times in simulated seconds, and the optimiser's rankings, repeatability and
-closure handling.
+At the time of writing, 42 tests were collected and all passed locally (`42 passed`). They cover: Dijkstra/A\* agreement, road closures, rerouting, emergency dispatch and response time, the road-ahead closure scenario, the station optimiser, and the congestion benchmark's logic.
 
-## Known limitations and next steps
+Not covered by automated tests: the FastAPI endpoints and the React frontend.
 
-- The simulation lives in memory and supports one run at a time.
-- Congestion changes routes but isn't drawn on the map yet.
-- Ambulances return to base instantly after a call instead of driving back.
-- Planned: an optimiser view in the front end, running route recalculations in
-  parallel, Docker, and a deployed demo.
+## Benchmarks
 
-## Data
+All benchmark commands need the Norwich data file and are run from the project root.
 
-Road data is © OpenStreetMap contributors, available under the
-[Open Database Licence](https://www.openstreetmap.org/copyright).
+### Dijkstra vs A\*
+
+```bash
+python -m backend.routing.benchmark
+```
+
+Routes 100 random start/destination pairs (seed 42) with both algorithms, checks they find the same distance, and prints average runtime and nodes explored. Results are printed only, not saved in the repository.
+
+### Congestion-aware routing
+
+```bash
+python -m backend.routing.benchmark_congestion
+python -m backend.routing.benchmark_congestion --vehicles 2000 --journeys 100 --warmup 60 --seed 42 --save
+```
+
+Fills the map with traffic (vehicles heading for the city centre), then routes random journeys twice with the same A\* search, once ignoring traffic and once congestion-aware, and compares them on the same traffic snapshot. `--save` writes the report to [`docs/congestion_benchmark.md`](docs/congestion_benchmark.md).
+
+Results from the saved report (run 2026-10-21, Python 3.9.6, macOS arm64, seed 42, 2,000 vehicles):
+
+| Average per journey | Shortest | Congestion-aware |
+|---|---|---|
+| Route distance | 4,153 m | 4,835 m (+16.4%) |
+| Vehicles passed on route | 83.2 | 16.0 (-80.8%) |
+| Search time | 4.99 ms | 7.90 ms |
+
+In this snapshot, congestion-aware routing chose a different route for 69 of the 85 journeys, trading extra driving for far fewer vehicles passed. The simulation does not slow vehicles down in traffic, so the report measures vehicles passed and free-flow time, not real delay. The full report is in the linked file.
+
+### Rerouting after a road closure
+
+```bash
+python -m backend.simulation.benchmark_rerouting
+```
+
+Closes the busiest road and compares recalculating routes only for affected vehicles against recalculating every vehicle. This command saves its report to [`docs/rerouting_benchmark.md`](docs/rerouting_benchmark.md) automatically, overwriting the existing one. In the saved run (2026-10-18, Python 3.9.6, seed 42, fastest of 3 runs), affected-only rerouting was 2.0x faster with 100 vehicles and 3.9x faster with 1,000.
+
+### Emergency station optimiser
+
+```bash
+python -m backend.optimiser.run
+python -m backend.optimiser.run --scenarios 1000 --target 600
+python -m backend.optimiser.run --candidate 52.63,1.29 --candidate 52.62,1.31
+python -m backend.optimiser.validate
+```
+
+`run` ranks candidate stations (a 3x3 grid over the map by default). `validate` compares the optimiser's estimated response times with ambulances actually driven through the simulation. No results from these two commands are stored in the repository.
+
+## Demo
+
+[`docs/DEMO.md`](docs/DEMO.md) is a short guide to route calculation, traffic simulation, road closures and ambulance rerouting, through both the web interface and the API.
+
+## Project structure
+
+```
+.
+├── backend/
+│   ├── api/          FastAPI application (backend/api/main.py)
+│   ├── routing/      graph, Dijkstra, A*, OSM loader, routing benchmarks
+│   ├── simulation/   vehicles, traffic, closures, rerouting, emergencies, stations
+│   ├── optimiser/    emergency station optimiser (+ CLI and validation)
+│   └── tests/        pytest suite
+├── frontend/         React + TypeScript + Vite map interface
+├── docs/             architecture, demo guide, benchmark reports
+├── data/             generated Norwich graph (not in Git)
+└── .github/workflows/tests.yml
+```
+
+See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit together and the full endpoint list.
+
+## Limitations
+
+- **Vehicles do not slow down in traffic.** Congestion changes routing decisions but not vehicle speed.
+- **Everything lives in memory.** The API holds one simulation in a global variable, so there is one simulation per server process, and it is lost when the server restarts.
+- **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists). Large fleets (thousands of vehicles) are only used by the benchmark scripts.
+- **Ambulances return to base instantly** after a call rather than driving back.
+- **The optimiser ignores traffic** and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
+- **Nearest-junction lookup scans every junction**, which is simple but not optimised.
+- **No automated tests for the API or frontend, and no authentication.**
+
+## Troubleshooting
+
+| Problem | Likely cause and fix |
+|---|---|
+| `FileNotFoundError: ... norwich_graph.pkl` when starting the API | The map data has not been generated. Run `python -m backend.routing.osm_loader` from the project root. |
+| `ModuleNotFoundError: No module named 'backend'` | Run commands from the project root, using `python -m ...` and `uvicorn backend.api.main:app`. |
+| Frontend loads but requests fail | Check the backend is running on port 8000 and that you opened `http://localhost:5173` (not `127.0.0.1`). |
+| `ModuleNotFoundError: No module named 'osmnx'` or `fastapi` | Activate the virtual environment and run `pip install -r requirements.txt`. |

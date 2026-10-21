@@ -1,75 +1,34 @@
-# React + TypeScript + Vite
+# NORWICH//SIM frontend
 
-This template provides a minimal setup to get React working in Vite with HMR and some ESLint rules.
+The map interface for NORWICH//SIM, built with React, TypeScript, Vite and Leaflet (via `react-leaflet`).
 
-Currently, two official plugins are available:
+It needs the backend running. See the [main README](../README.md) for the full setup, including generating the Norwich road-network data the backend depends on.
 
-- [@vitejs/plugin-react](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react) uses [Oxc](https://oxc.rs)
-- [@vitejs/plugin-react-swc](https://github.com/vitejs/vite-plugin-react/blob/main/packages/plugin-react-swc) uses [SWC](https://swc.rs/)
+## Run it
 
-## React Compiler
-
-The React Compiler is not enabled on this template because of its impact on dev & build performances. To add it, see [this documentation](https://react.dev/learn/react-compiler/installation).
-
-## Expanding the ESLint configuration
-
-If you are developing a production application, we recommend updating the configuration to enable type-aware lint rules:
-
-```js
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-
-      // Remove tseslint.configs.recommended and replace with this
-      tseslint.configs.recommendedTypeChecked,
-      // Alternatively, use this for stricter rules
-      tseslint.configs.strictTypeChecked,
-      // Optionally, add this for stylistic rules
-      tseslint.configs.stylisticTypeChecked,
-
-      // Other configs...
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
-
+```bash
+npm install
+npm run dev
 ```
 
-You can also install [eslint-plugin-react-x](https://npmx.dev/package/eslint-plugin-react-x) and [eslint-plugin-react-dom](https://npmx.dev/package/eslint-plugin-react-dom) for React-specific lint rules:
+Then open **http://localhost:5173**. Use `localhost` rather than `127.0.0.1`: the backend only allows requests from that origin.
 
-```js
-// eslint.config.js
-import reactX from 'eslint-plugin-react-x'
-import reactDom from 'eslint-plugin-react-dom'
+## Backend address
 
-export default defineConfig([
-  globalIgnores(['dist']),
-  {
-    files: ['**/*.{ts,tsx}'],
-    extends: [
-      // Other configs...
-      // Enable lint rules for React
-      reactX.configs['recommended-typescript'],
-      // Enable lint rules for React DOM
-      reactDom.configs.recommended,
-    ],
-    languageOptions: {
-      parserOptions: {
-        project: ['./tsconfig.node.json', './tsconfig.app.json'],
-        tsconfigRootDir: import.meta.dirname,
-      },
-      // other options...
-    },
-  },
-])
+The frontend calls the backend at `http://127.0.0.1:8000`. This address is written directly in `src/App.tsx` rather than read from a configuration file, so if you run the backend on a different port you will need to change it there (and update the allowed origin in `backend/api/main.py` if you change the frontend port).
 
-```
+## Scripts
+
+| Command | What it does |
+|---|---|
+| `npm run dev` | Start the Vite development server |
+| `npm run build` | Type-check with `tsc -b`, then build with Vite |
+| `npm run lint` | Run ESLint |
+| `npm run preview` | Serve the production build locally |
+
+## Code
+
+- `src/main.tsx`: React entry point
+- `src/App.tsx`: the interface: map, controls, simulation loop and all calls to the backend
+
+The frontend has no automated tests.
