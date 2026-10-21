@@ -20,6 +20,13 @@ type Vehicle = {
   on_emergency: boolean
 }
 
+type CongestionSegment = {
+  start: { latitude: number; longitude: number }
+  end: { latitude: number; longitude: number }
+  vehicle_count: number
+  level: string
+}
+
 function MapClickHandler({
   onClick,
 }: {
@@ -41,6 +48,9 @@ function App() {
 
   const [route, setRoute] = useState<Coordinate[]>([])
 
+  const [congestion, setCongestion] =
+    useState<CongestionSegment[]>([])
+
   const [vehicles, setVehicles] =
     useState<Vehicle[]>([])
 
@@ -54,10 +64,10 @@ function App() {
     useState(false)
 
   const [incidentActive, setIncidentActive] =
-  useState(false)
+    useState(false)
 
   const [incidentRoute, setIncidentRoute] =
-  useState<Coordinate[]>([])
+    useState<Coordinate[]>([])
 
   const [result, setResult] = useState("")
 
@@ -69,17 +79,18 @@ function App() {
   // ------------------------------------------------
 
   const handleMapClick = (location: Coordinate) => {
-
     // First click = start
     if (!start) {
-
       setStart(location)
       setDestination(null)
       setRoute([])
       setVehicles([])
+      setCongestion([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
+      setIncidentActive(false)
+      setIncidentRoute([])
 
       setResult(
         "Start selected. Click another location for your destination."
@@ -88,7 +99,6 @@ function App() {
 
     // Second click = destination
     else if (!destination) {
-
       setDestination(location)
 
       setResult(
@@ -98,14 +108,16 @@ function App() {
 
     // Third click = new start
     else {
-
       setStart(location)
       setDestination(null)
       setRoute([])
       setVehicles([])
+      setCongestion([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
+      setIncidentActive(false)
+      setIncidentRoute([])
 
       setResult(
         "New start selected. Click another location for your destination."
@@ -118,21 +130,14 @@ function App() {
   // ------------------------------------------------
 
   const startSimulationPolling = () => {
-
     if (simulationInterval.current !== null) {
-
-      clearInterval(
-        simulationInterval.current
-      )
-
+      clearInterval(simulationInterval.current)
     }
 
     simulationInterval.current =
       window.setInterval(
         async () => {
-
           try {
-
             const response = await fetch(
               "http://127.0.0.1:8000/simulation/step",
               {
@@ -141,63 +146,56 @@ function App() {
             )
 
             if (!response.ok) {
-              throw new Error(
-                "Simulation step failed"
-              )
+              throw new Error("Simulation step failed")
             }
 
-            const stepData =
-              await response.json()
+            const stepData = await response.json()
 
-            setVehicles(
-              stepData.vehicles
-            )
+            setVehicles(stepData.vehicles)
+
+            // Fetch live congestion data
+            try {
+              const congestionResponse = await fetch(
+                "http://127.0.0.1:8000/simulation/congestion"
+              )
+
+              if (congestionResponse.ok) {
+                const congestionData =
+                  await congestionResponse.json()
+
+                setCongestion(
+                  congestionData.congestion ?? []
+                )
+              }
+            } catch {
+              // Keep the simulation running if congestion
+              // data is temporarily unavailable.
+            }
 
             const allFinished =
               stepData.vehicles.length > 0 &&
               stepData.vehicles.every(
-                (vehicle: Vehicle) =>
-                  vehicle.finished
+                (vehicle: Vehicle) => vehicle.finished
               )
 
             if (allFinished) {
-
-              if (
-                simulationInterval.current !== null
-              ) {
-
-                clearInterval(
-                  simulationInterval.current
-                )
-
+              if (simulationInterval.current !== null) {
+                clearInterval(simulationInterval.current)
                 simulationInterval.current = null
-
               }
 
               setResult(
                 "All vehicles reached their destinations."
               )
             }
-
           } catch {
-
-            if (
-              simulationInterval.current !== null
-            ) {
-
-              clearInterval(
-                simulationInterval.current
-              )
-
+            if (simulationInterval.current !== null) {
+              clearInterval(simulationInterval.current)
               simulationInterval.current = null
-
             }
 
-            setResult(
-              "Simulation connection lost."
-            )
+            setResult("Simulation connection lost.")
           }
-
         },
         1000
       )
@@ -208,54 +206,34 @@ function App() {
   // ------------------------------------------------
 
   const calculateRoute = async () => {
-
     if (!start || !destination) return
 
     try {
-
-      // --------------------------------
       // 1. Find nearest start road node
-      // --------------------------------
-
       const startResponse = await fetch(
         `http://127.0.0.1:8000/nearest-node?latitude=${start[0]}&longitude=${start[1]}`
       )
 
-      const startNode =
-        await startResponse.json()
+      const startNode = await startResponse.json()
 
-
-      // --------------------------------
       // 2. Find nearest destination node
-      // --------------------------------
-
-      const destinationResponse =
-        await fetch(
-          `http://127.0.0.1:8000/nearest-node?latitude=${destination[0]}&longitude=${destination[1]}`
-        )
+      const destinationResponse = await fetch(
+        `http://127.0.0.1:8000/nearest-node?latitude=${destination[0]}&longitude=${destination[1]}`
+      )
 
       const destinationNode =
         await destinationResponse.json()
 
-
-      // --------------------------------
       // 3. Calculate A* route
-      // --------------------------------
-
       const routeResponse = await fetch(
         `http://127.0.0.1:8000/route?start=${startNode.node}&destination=${destinationNode.node}`
       )
 
-      const data =
-        await routeResponse.json()
-
+      const data = await routeResponse.json()
 
       if (!routeResponse.ok) {
-        throw new Error(
-          "Could not calculate route"
-        )
+        throw new Error("Could not calculate route")
       }
-
 
       // Convert backend coordinates into Leaflet coordinates
       const coordinates: Coordinate[] =
@@ -271,40 +249,31 @@ function App() {
 
       setRoute(coordinates)
 
-      // Clear previous emergency display
+      // Clear previous emergency and incident displays
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
+      setIncidentRoute([])
+      setIncidentActive(false)
+      setCongestion([])
 
-
-      // --------------------------------
       // 4. Start backend simulation
-      // --------------------------------
-
-      const simulationResponse =
-        await fetch(
-          `http://127.0.0.1:8000/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
-          {
-            method: "POST",
-          }
-        )
+      const simulationResponse = await fetch(
+        `http://127.0.0.1:8000/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
+        {
+          method: "POST",
+        }
+      )
 
       const simulationData =
         await simulationResponse.json()
 
-
       if (!simulationResponse.ok) {
-        throw new Error(
-          "Could not start simulation"
-        )
+        throw new Error("Could not start simulation")
       }
 
-
       // Put first vehicle at starting position
-      if (
-        simulationData.vehicle_position
-      ) {
-
+      if (simulationData.vehicle_position) {
         setVehicles([
           {
             vehicle_id: 0,
@@ -318,21 +287,12 @@ function App() {
             on_emergency: false,
           },
         ])
-
       }
 
-
-      // --------------------------------
       // 5. Start simulation polling
-      // --------------------------------
-
       startSimulationPolling()
 
-
-      // --------------------------------
       // 6. Show route information
-      // --------------------------------
-
       setResult(
         `A* route: ${Math.round(
           data.distance_metres
@@ -340,222 +300,136 @@ function App() {
           data.nodes_explored
         } nodes explored | 2 vehicles`
       )
-
     } catch {
-
-      setResult(
-        "Could not calculate route."
-      )
-
+      setResult("Could not calculate route.")
     }
   }
 
-// ------------------------------------------------
-// TRIGGER ROAD CLOSURE + DYNAMIC REROUTING
-// ------------------------------------------------
+  // ------------------------------------------------
+  // TRIGGER ROAD CLOSURE + DYNAMIC REROUTING
+  // ------------------------------------------------
 
-const triggerIncident = async () => {
-
-  try {
-
-    if (route.length < 4) {
+  const triggerIncident = async () => {
+    try {
+      if (route.length < 4) {
+        setResult(
+          "Route is too short to create an incident."
+        )
+        return
+      }
 
       setResult(
-        "Route is too short to create an incident."
+        "🚧 Road closure detected. Rerouting vehicle..."
       )
 
-      return
-    }
+      // Choose a road segment ahead of the vehicle
+      const blockedStart = route[2]
+      const blockedEnd = route[3]
 
-    setResult(
-      "🚧 Road closure detected. Rerouting vehicle..."
-    )
-
-
-    // --------------------------------
-    // Choose a road segment ahead
-    // of the vehicle
-    // --------------------------------
-
-    const blockedStart =
-      route[2]
-
-    const blockedEnd =
-      route[3]
-
-
-    // --------------------------------
-    // Find graph node for first point
-    // --------------------------------
-
-    const startResponse =
-      await fetch(
+      // Find graph node for first point
+      const startResponse = await fetch(
         `http://127.0.0.1:8000/nearest-node?latitude=${blockedStart[0]}&longitude=${blockedStart[1]}`
       )
 
-    const startNode =
-      await startResponse.json()
+      const startNode = await startResponse.json()
 
-
-    // --------------------------------
-    // Find graph node for second point
-    // --------------------------------
-
-    const endResponse =
-      await fetch(
+      // Find graph node for second point
+      const endResponse = await fetch(
         `http://127.0.0.1:8000/nearest-node?latitude=${blockedEnd[0]}&longitude=${blockedEnd[1]}`
       )
 
-    const endNode =
-      await endResponse.json()
+      const endNode = await endResponse.json()
 
-
-    // --------------------------------
-    // Block road segment
-    // --------------------------------
-
-    const blockResponse =
-      await fetch(
+      // Block road segment
+      const blockResponse = await fetch(
         `http://127.0.0.1:8000/incident/block?start=${startNode.node}&destination=${endNode.node}`,
         {
           method: "POST",
         }
       )
 
-    if (!blockResponse.ok) {
+      if (!blockResponse.ok) {
+        throw new Error("Could not block road segment")
+      }
 
-      throw new Error(
-        "Could not block road segment"
-      )
-
-    }
-
-
-    // --------------------------------
-    // Reroute vehicle 0
-    // --------------------------------
-
-    const rerouteResponse =
-      await fetch(
+      // Reroute vehicle 0
+      const rerouteResponse = await fetch(
         "http://127.0.0.1:8000/simulation/reroute?vehicle_id=0",
         {
           method: "POST",
         }
       )
 
-    const rerouteData =
-      await rerouteResponse.json()
+      const rerouteData = await rerouteResponse.json()
 
+      if (!rerouteResponse.ok) {
+        throw new Error(
+          rerouteData.detail ||
+          "Could not reroute vehicle"
+        )
+      }
 
-    if (!rerouteResponse.ok) {
+      // Convert new route to Leaflet coordinates
+      const newRoute: Coordinate[] =
+        rerouteData.route.map(
+          (point: {
+            latitude: number
+            longitude: number
+          }) => [
+            point.latitude,
+            point.longitude,
+          ]
+        )
 
-      throw new Error(
-        rerouteData.detail ||
-        "Could not reroute vehicle"
-      )
-
-    }
-
-
-    // --------------------------------
-    // Convert new route to Leaflet
-    // --------------------------------
-
-    const newRoute: Coordinate[] =
-      rerouteData.route.map(
-        (point: {
-          latitude: number
-          longitude: number
-        }) => [
-          point.latitude,
-          point.longitude,
-        ]
-      )
-
-
-    setIncidentRoute(newRoute)
-
-    setIncidentActive(true)
-
-
-    setResult(
-      `🚧 Road blocked | 🔄 Vehicle rerouted | ${Math.round(
-        rerouteData.distance_metres
-      )} m new route | ${
-        rerouteData.nodes_explored
-      } nodes explored`
-    )
-
-  } catch (error) {
-
-    if (error instanceof Error) {
+      setIncidentRoute(newRoute)
+      setIncidentActive(true)
 
       setResult(
-        `Incident failed: ${error.message}`
+        `🚧 Road blocked | 🔄 Vehicle rerouted | ${Math.round(
+          rerouteData.distance_metres
+        )} m new route | ${
+          rerouteData.nodes_explored
+        } nodes explored`
       )
-
-    } else {
-
-      setResult(
-        "Incident failed."
-      )
-
+    } catch (error) {
+      if (error instanceof Error) {
+        setResult(`Incident failed: ${error.message}`)
+      } else {
+        setResult("Incident failed.")
+      }
     }
-
   }
-}
 
   // ------------------------------------------------
   // TRIGGER EMERGENCY
   // ------------------------------------------------
 
   const triggerEmergency = async () => {
-
     try {
+      setResult("Setting up ambulance response...")
 
-      setResult(
-        "Setting up ambulance response..."
-      )
-
-
-      // --------------------------------
       // Emergency location
-      // --------------------------------
-
       if (!destination) {
-        setResult("Please select a destination first.")
+        setResult(
+          "Please select a destination first."
+        )
         return
       }
 
-      const emergencyLatitude =
-        destination[0]
+      const emergencyLatitude = destination[0]
+      const emergencyLongitude = destination[1]
 
-      const emergencyLongitude =
-        destination[1]
-
-
-      // --------------------------------
       // Ambulance station location
-      // --------------------------------
+      const stationLatitude = 52.63143
+      const stationLongitude = 1.2970518
 
-      const stationLatitude =
-        52.63143
-
-      const stationLongitude =
-        1.2970518
-
-
-      // --------------------------------
       // 1. Create ambulance station
-      // --------------------------------
-
-      const stationResponse =
-        await fetch(
-          `http://127.0.0.1:8000/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
-          {
-            method: "POST",
-          }
-        )
+      const stationResponse = await fetch(
+        `http://127.0.0.1:8000/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
+        {
+          method: "POST",
+        }
+      )
 
       if (!stationResponse.ok) {
         throw new Error(
@@ -563,56 +437,37 @@ const triggerIncident = async () => {
         )
       }
 
-
-      // --------------------------------
       // 2. Add ambulance to station
-      // --------------------------------
-
-      const vehicleResponse =
-        await fetch(
-          "http://127.0.0.1:8000/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance",
-          {
-            method: "POST",
-          }
-        )
+      const vehicleResponse = await fetch(
+        "http://127.0.0.1:8000/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance",
+        {
+          method: "POST",
+        }
+      )
 
       if (!vehicleResponse.ok) {
-        throw new Error(
-          "Could not add ambulance"
-        )
+        throw new Error("Could not add ambulance")
       }
 
-
-      // --------------------------------
-      // 3. Create emergency + dispatch
-      // --------------------------------
-
-      const emergencyResponse =
-        await fetch(
-          `http://127.0.0.1:8000/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
-          {
-            method: "POST",
-          }
-        )
+      // 3. Create emergency and dispatch ambulance
+      const emergencyResponse = await fetch(
+        `http://127.0.0.1:8000/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
+        {
+          method: "POST",
+        }
+      )
 
       const emergencyData =
         await emergencyResponse.json()
 
-
       if (!emergencyResponse.ok) {
-
         throw new Error(
           emergencyData.detail ||
           "Could not dispatch ambulance"
         )
-
       }
 
-
-      // --------------------------------
       // 4. Show emergency on map
-      // --------------------------------
-
       setEmergencyLocation([
         emergencyLatitude,
         emergencyLongitude,
@@ -629,19 +484,11 @@ const triggerIncident = async () => {
           ]
         )
 
-      setEmergencyRoute(
-        emergencyCoordinates
-      )
-
+      setEmergencyRoute(emergencyCoordinates)
       setEmergencyActive(true)
 
-
-      // --------------------------------
       // 5. Restart polling
-      // --------------------------------
-
       startSimulationPolling()
-
 
       setResult(
         `🚑 Ambulance ${emergencyData.vehicle_id} dispatched | ${Math.round(
@@ -650,49 +497,26 @@ const triggerIncident = async () => {
           emergencyData.nodes_explored
         } nodes explored`
       )
-
     } catch (error) {
-
       if (error instanceof Error) {
-
-        setResult(
-          `Emergency failed: ${error.message}`
-        )
-
+        setResult(`Emergency failed: ${error.message}`)
       } else {
-
-        setResult(
-          "Emergency dispatch failed."
-        )
-
+        setResult("Emergency dispatch failed.")
       }
-
     }
   }
-
 
   // ------------------------------------------------
   // CLEAN UP TIMER
   // ------------------------------------------------
 
   useEffect(() => {
-
     return () => {
-
-      if (
-        simulationInterval.current !== null
-      ) {
-
-        clearInterval(
-          simulationInterval.current
-        )
-
+      if (simulationInterval.current !== null) {
+        clearInterval(simulationInterval.current)
       }
-
     }
-
   }, [])
-
 
   // ------------------------------------------------
   // UI
@@ -700,74 +524,54 @@ const triggerIncident = async () => {
 
   return (
     <div>
-
       <h1>NORWICH//SIM</h1>
 
       <p>
         Urban Traffic Simulation & Optimisation Platform
       </p>
 
-
       <p>
-
         {start
-
           ? destination
-
             ? "Start and destination selected."
-
             : "Now select your destination."
-
-          : "Click the map to select a start location."
-
-        }
-
+          : "Click the map to select a start location."}
       </p>
 
-
-      {/* --------------------------------
-          ROUTE BUTTON
-          -------------------------------- */}
-
+      {/* ROUTE BUTTON */}
       {start && destination && (
-
         <button onClick={calculateRoute}>
           Calculate Route
         </button>
-
       )}
 
-
-      {/* --------------------------------
-          EMERGENCY BUTTON
-          -------------------------------- */}
-
+      {/* EMERGENCY BUTTON */}
       {start && destination && (
-
         <button
           onClick={triggerEmergency}
-          style={{
-            marginLeft: "10px",
-          }}
+          style={{ marginLeft: "10px" }}
         >
           🚑 Trigger Ambulance Emergency
         </button>
-
       )}
 
+      {/* ROAD CLOSURE BUTTON */}
       {start && destination && (
-
         <button
           onClick={triggerIncident}
-          style={{
-            marginLeft: "10px",
-          }}
+          style={{ marginLeft: "10px" }}
         >
           🚧 Cause Road Closure & Reroute
         </button>
+      )}
 
-    )}
-
+      {/* LIVE CONGESTION LEGEND */}
+      <div style={{ margin: "10px 0" }}>
+        <strong>Live congestion:</strong>{" "}
+        <span>🟢 Light</span>{" "}
+        <span>🟠 Moderate</span>{" "}
+        <span>🔴 Heavy</span>
+      </div>
 
       <MapContainer
         center={[52.6309, 1.2974]}
@@ -777,97 +581,86 @@ const triggerIncident = async () => {
           width: "100%",
         }}
       >
-
         <TileLayer
           attribution="&copy; OpenStreetMap contributors"
           url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
         />
 
+        <MapClickHandler onClick={handleMapClick} />
 
-        <MapClickHandler
-          onClick={handleMapClick}
-        />
-
-
-        {/* --------------------------------
-            START MARKER
-            -------------------------------- */}
-
+        {/* START MARKER */}
         {start && (
-
           <CircleMarker
             center={start}
             radius={8}
           />
-
         )}
 
-
-        {/* --------------------------------
-            DESTINATION MARKER
-            -------------------------------- */}
-
+        {/* DESTINATION MARKER */}
         {destination && (
-
           <CircleMarker
             center={destination}
             radius={8}
           />
-
         )}
 
+        {/* LIVE TRAFFIC CONGESTION */}
+        {congestion.map((segment, index) => (
+          <Polyline
+            key={`congestion-${index}`}
+            positions={[
+              [
+                segment.start.latitude,
+                segment.start.longitude,
+              ],
+              [
+                segment.end.latitude,
+                segment.end.longitude,
+              ],
+            ]}
+            pathOptions={{
+              color:
+                segment.level === "heavy"
+                  ? "red"
+                  : segment.level === "moderate"
+                    ? "orange"
+                    : "green",
+              weight: 7,
+              opacity: 0.75,
+            }}
+          />
+        ))}
 
-        {/* --------------------------------
-            NORMAL A* ROUTE
-            -------------------------------- */}
+        {/* NORMAL A* ROUTE */}
+        <Polyline positions={route} />
 
-        <Polyline
-          positions={route}
-        />
-
-
-        {/* --------------------------------
-            EMERGENCY ROUTE
-            -------------------------------- */}
-
+        {/* EMERGENCY ROUTE */}
         {emergencyActive &&
           emergencyRoute.length > 0 && (
+            <Polyline
+              positions={emergencyRoute}
+              pathOptions={{
+                color: "red",
+                weight: 5,
+                dashArray: "10, 10",
+              }}
+            />
+          )}
 
-          <Polyline
-            positions={emergencyRoute}
-            pathOptions={{
-              color: "red",
-              weight: 5,
-              dashArray: "10, 10",
-            }}
-          />
-
-        )}
-
-        {/* --------------------------------
-            DYNAMIC REROUTED ROUTE
-            -------------------------------- */}
-
+        {/* DYNAMIC REROUTED ROUTE */}
         {incidentActive &&
           incidentRoute.length > 0 && (
+            <Polyline
+              positions={incidentRoute}
+              pathOptions={{
+                color: "orange",
+                weight: 5,
+              }}
+            />
+          )}
 
-          <Polyline
-            positions={incidentRoute}
-            pathOptions={{
-              color: "orange",
-              weight: 5,
-            }}
-          />
-
-        )}        
-
-
-        {/* --------------------------------
-            EMERGENCY LOCATION
-            -------------------------------- */}
-
+        {/* EMERGENCY LOCATION */}
         {emergencyLocation && (
-
           <CircleMarker
             center={emergencyLocation}
             radius={14}
@@ -877,34 +670,22 @@ const triggerIncident = async () => {
               fillOpacity: 0.8,
             }}
           />
-
         )}
 
-
-        {/* --------------------------------
-            ALL VEHICLES
-            -------------------------------- */}
-
+        {/* ALL VEHICLES */}
         {vehicles.map((vehicle) => {
-
           const isAmbulance =
-            vehicle.vehicle_type ===
-              "ambulance" ||
+            vehicle.vehicle_type === "ambulance" ||
             vehicle.on_emergency
 
           return (
-
             <CircleMarker
               key={vehicle.vehicle_id}
               center={[
                 vehicle.latitude,
                 vehicle.longitude,
               ]}
-              radius={
-                isAmbulance
-                  ? 12
-                  : 10
-              }
+              radius={isAmbulance ? 12 : 10}
               pathOptions={
                 isAmbulance
                   ? {
@@ -915,26 +696,12 @@ const triggerIncident = async () => {
                   : undefined
               }
             />
-
           )
-
         })}
-
       </MapContainer>
 
-
-      {/* --------------------------------
-          RESULT
-          -------------------------------- */}
-
-      {result && (
-
-        <p>
-          {result}
-        </p>
-
-      )}
-
+      {/* RESULT */}
+      {result && <p>{result}</p>}
     </div>
   )
 }
