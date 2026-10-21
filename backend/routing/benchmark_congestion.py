@@ -124,6 +124,8 @@ def describe_traffic(traffic):
     """A few numbers so you can see how congested the scenario really was."""
 
     return {
+        # Vehicles that have not yet finished their trip at the snapshot
+        "vehicles_on_road": sum(traffic.values()),
         "roads": len(traffic),
         "busiest": max(traffic.values(), default=0),
         "heavy": sum(1 for count in traffic.values() if count >= HEAVY_VEHICLES),
@@ -286,6 +288,27 @@ def percent_change(before, after):
 def format_report(summary, traffic_stats, settings, graph_info):
     s = summary
 
+    # How many vehicles were still driving when the snapshot was taken
+    active = traffic_stats.get("vehicles_on_road")
+    active_text = f"vehicles still driving: {active:,} | " if active is not None else ""
+
+    # Random pairs with no route (one-way streets, disconnected map pieces) are
+    # skipped, so say how many were drawn and how many were measured
+    drawn = settings.get("journeys", s["journeys"])
+    skipped = drawn - s["journeys"]
+
+    if skipped > 0:
+        journeys_line = (
+            f"Journeys: {s['journeys']} measured, from {drawn} random "
+            f"start/destination pairs (seed {settings['seed']}); "
+            f"{skipped} had no route and were skipped"
+        )
+    else:
+        journeys_line = (
+            f"Journeys: {s['journeys']} random start/destination pairs "
+            f"(seed {settings['seed']})"
+        )
+
     def row(label, shortest, aware, decimals=0, show_change=True):
         change = percent_change(shortest, aware) if show_change else ""
         return (
@@ -299,11 +322,10 @@ def format_report(summary, traffic_stats, settings, graph_info):
         f"Map:      {graph_info['nodes']:,} junctions, {graph_info['edges']:,} road segments",
         f"Traffic:  {settings['vehicles']:,} vehicles heading for the city centre, "
         f"snapshot after {settings['warmup']} simulated seconds",
-        f"          roads with traffic: {traffic_stats['roads']:,} | "
+        f"          {active_text}roads with traffic: {traffic_stats['roads']:,} | "
         f"busiest road: {traffic_stats['busiest']} vehicles | "
         f"heavy roads ({HEAVY_VEHICLES}+ vehicles): {traffic_stats['heavy']:,}",
-        f"Journeys: {s['journeys']} random start/destination pairs "
-        f"(seed {settings['seed']})",
+        journeys_line,
         f"Routing:  same A* search both times. Congestion-aware adds "
         f"{CONGESTION_PENALTY_METRES} m of cost per vehicle on a road.",
         "",
@@ -320,6 +342,7 @@ def format_report(summary, traffic_stats, settings, graph_info):
         "Free-flow time = distance / "
         f"{SPEED} m/s. The simulation does not slow vehicles in traffic, so this "
         "contains no congestion delay.",
+        "Vehicles on a road are counted per road, with both directions together.",
         "",
     ]
 
