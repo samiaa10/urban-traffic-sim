@@ -35,6 +35,21 @@ answers a real question: *which station location gets help to people fastest?*
 - **Interactive map:** React + TypeScript + Leaflet front end to pick a route, watch
   vehicles move, close a road, and dispatch an ambulance.
 
+## Benchmark: shortest path vs congestion-aware routing
+
+```bash
+python -m backend.routing.benchmark_congestion          # print the comparison
+python -m backend.routing.benchmark_congestion --save   # also write docs/congestion_benchmark.md
+```
+
+It fills the map with traffic (a fleet heading for the city centre, driven by the real
+simulation), then routes the same random journeys twice with the same A* search: once
+ignoring traffic, once congestion-aware. Both routes are measured on the same traffic
+snapshot: distance, free-flow travel time, vehicles passed, and search work. It also
+prints how congested the scenario actually was and how many journeys changed route,
+so you can see whether the traffic was heavy enough to matter. Options: `--vehicles`,
+`--journeys`, `--warmup`, `--seed`.
+
 ## Demo: an ambulance meets a road closure
 
 1. Click a start and a destination on the map, then **Calculate Route**.

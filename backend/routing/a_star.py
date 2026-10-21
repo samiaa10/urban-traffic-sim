@@ -4,6 +4,10 @@ from math import radians, sin, cos, sqrt, atan2
 
 EARTH_RADIUS_M = 6_371_000
 
+# Congestion-aware routing treats each vehicle on a road as if the road
+# were this many metres longer, so a busy road looks "further away".
+CONGESTION_PENALTY_METRES = 50
+
 
 def heuristic(graph, node, destination):
     node_data = graph.nodes[node]
@@ -117,7 +121,9 @@ def a_star(
                     0
                 )
 
-                congestion_cost = vehicle_count * 50
+                congestion_cost = (
+                    vehicle_count * CONGESTION_PENALTY_METRES
+                )
 
             # --------------------------------
             # Total routing cost
