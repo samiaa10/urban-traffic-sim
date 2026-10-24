@@ -1,6 +1,7 @@
 name: Tests
 
-# Run the tests every time code is pushed or a pull request is opened
+# Run the checks every time code is pushed or a pull request is opened
+# (this includes pushes and pull requests to main)
 on:
   push:
   pull_request:
@@ -23,3 +24,57 @@ jobs:
 
       - name: Run the tests
         run: python -m pytest backend/tests -v
+
+  # The same tests on Python 3.9, the version used for local development.
+  # The tests only need the standard library and pytest, so nothing else is
+  # installed (no fastapi/osmnx, and no Norwich road-map data file).
+  test-python-3-9:
+    name: test (Python 3.9)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Python 3.9
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.9"
+
+      - name: Install pytest
+        run: pip install pytest
+
+      - name: Run the tests
+        run: python -m pytest backend/tests -v
+
+  # Check the React/TypeScript front end: install exactly what
+  # package-lock.json says, lint it, and make sure it builds.
+  frontend:
+    name: frontend (lint and build)
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+
+    defaults:
+      run:
+        working-directory: frontend
+
+    steps:
+      - name: Get the code
+        uses: actions/checkout@v4
+
+      - name: Set up Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: npm
+          cache-dependency-path: frontend/package-lock.json
+
+      - name: Install dependencies from the lockfile
+        run: npm ci
+
+      - name: Lint
+        run: npm run lint
+
+      - name: Build
+        run: npm run build
