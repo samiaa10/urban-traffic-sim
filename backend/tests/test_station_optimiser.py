@@ -1,6 +1,8 @@
 from backend.routing.a_star import a_star, get_segment
 from backend.routing.graph import Graph
 from backend.optimiser.station_optimiser import (
+    dense_candidates,
+    explain_best,
     optimise_station_locations,
     shortest_distances,
     snap_to_road,
@@ -122,3 +124,96 @@ def test_snap_to_road_picks_the_nearest_junction():
     latitude, longitude = point_of(graph, 4)
 
     assert snap_to_road(graph, latitude + 0.0001, longitude) == 4
+
+
+def test_station_cut_off_from_most_of_the_map_does_not_rank_first():
+    """Regression test: a station that can only reach one junction used to
+    win, because its average was taken over just the emergencies it could
+    reach (a 0 second "response" to its own junction)."""
+    graph = make_line_graph()
+    closed = {get_segment(graph, 1, 2)}   # junction 1 is now an island
+
+    results = optimise_station_locations(
+        graph,
+        [point_of(graph, 1), point_of(graph, 3)],
+        scenarios=100,
+        blocked_segments=closed,
+    )
+
+    best, cut_off = results
+
+    assert best["node"] == 3
+    assert cut_off["node"] == 1
+    # Neither station can reach the island itself, but the cut-off one
+    # misses almost the whole map
+    assert cut_off["unreachable"] > best["unreachable"]
+    assert best["ranking_seconds"] < cut_off["ranking_seconds"]
+
+
+def test_candidates_on_the_same_junction_are_only_ranked_once():
+    graph = make_line_graph()
+    point = point_of(graph, 3)
+
+    results = optimise_station_locations(
+        graph, [point, point, point_of(graph, 1)], scenarios=20
+    )
+
+    assert sorted(result["node"] for result in results) == [1, 3]
+
+
+def test_dense_candidates_are_unique_and_well_connected():
+    graph = make_line_graph()
+
+    points = dense_candidates(graph, rows=3, columns=5)
+
+    assert len(points) == len(set(points))
+    assert len(points) >= 2
+
+    for latitude, longitude in points:
+        node = snap_to_road(graph, latitude, longitude)
+        assert len(shortest_distances(graph, node)) == len(graph.nodes)
+
+
+def test_dense_candidates_skip_poorly_connected_junctions():
+    # Two separate pieces of road: no junction can reach 90% of the map
+    graph = Graph()
+
+    for number in range(1, 7):
+        graph.add_node(number, 52.63, 1.29 + 0.0075 * number)
+
+    for first, second in [(1, 2), (2, 3), (4, 5), (5, 6)]:
+        graph.add_edge(first, second, 500)
+        graph.add_edge(second, first, 500)
+
+    assert dense_candidates(graph, rows=2, columns=3) == []
+
+
+def test_explanation_says_why_the_winner_won():
+    graph = make_line_graph()
+    results = optimise_station_locations(
+        graph,
+        [point_of(graph, 1), point_of(graph, 3), point_of(graph, 5)],
+        scenarios=100,
+    )
+
+    sentences = explain_best(results, scenarios=100, target_seconds=480)
+    text = " ".join(sentences)
+
+    assert "lowest average" in text
+    assert "faster than #2" in text
+    assert "within the 8.0 min target" in text
+    assert "could not reach" not in text      # nothing was cut off
+
+
+def test_explanation_mentions_emergencies_the_winner_could_not_reach():
+    graph = make_line_graph()
+    results = optimise_station_locations(
+        graph,
+        [point_of(graph, 1), point_of(graph, 3)],
+        scenarios=100,
+        blocked_segments={get_segment(graph, 1, 2)},
+    )
+
+    text = " ".join(explain_best(results, scenarios=100, target_seconds=480))
+
+    assert "could not reach" in text

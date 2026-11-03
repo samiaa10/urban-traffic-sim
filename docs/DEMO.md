@@ -14,6 +14,8 @@ The control names below describe what each action does. If the wording on a butt
 4. **Dispatch an ambulance.** Create an emergency station and an ambulance (`/station/create`, `/station/add-vehicle`), then raise an emergency at a location (`/emergency/create`). The nearest available ambulance is dispatched and its route is drawn. Emergency status (state, ETA, response time, reroutes) is polled from `/emergency/status`.
 5. **Close a road ahead of the ambulance.** While the ambulance is driving, use the control that closes the road ahead (`/emergency/block-ahead`). The ambulance is rerouted around the closure, and the extra distance and time of the detour are reported.
 
+6. **Find the best ambulance station locations.** Click *Find best ambulance station locations* (`/optimiser/stations`). After a couple of seconds the ten best candidates appear as numbered markers on the map (1 is green, the recommended one) with a ranked table underneath showing average response time, worst case, the share of emergencies reached within 8 minutes, and how many emergencies each station could not reach. A few sentences explain why #1 won. Any roads you have closed are avoided, so try it again after closing a road. *Clear results* removes the markers.
+
 Things to watch for: the route changing when a road closes, the ambulance's response time being measured in *simulated* seconds, and the detour making the response slower.
 
 ## B. Reproducing the same steps with the API
@@ -80,7 +82,11 @@ curl "http://127.0.0.1:8000/emergency/status"
 ### 5. Optional: rank candidate station locations
 
 ```bash
+# the default spread of about 38 candidates over the whole map
+curl "http://127.0.0.1:8000/optimiser/stations?scenarios=500"
+
+# or your own candidates
 curl "http://127.0.0.1:8000/optimiser/stations?candidates=52.63,1.29;52.62,1.31&scenarios=200"
 ```
 
-Candidates are `latitude,longitude` pairs separated by semicolons (2 to 20). Any roads currently closed in the simulation are avoided. The same optimiser is available from the command line (see the README).
+Candidates are optional; if you give them they are `latitude,longitude` pairs separated by semicolons (2 to 20). The response contains the ranked results and an `explanation` list in plain English. Any roads currently closed in the simulation are avoided. The same optimiser is available from the command line (see the README).

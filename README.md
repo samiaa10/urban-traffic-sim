@@ -18,9 +18,9 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Road closures.** Close or reopen a road segment. Closures apply in both directions, and A\* avoids them.
 - **Automatic rerouting.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
 - **Emergency response.** Create emergency stations and ambulances, raise an emergency, and the nearest station with an available ambulance is dispatched along a route that accounts for traffic and closures. Response time is measured in simulated seconds, and you can close a road ahead of the ambulance to watch it reroute.
-- **Emergency station optimiser.** Ranks candidate station locations by average response time, worst case, and share of emergencies reached within a target time. Available from the command line and the API.
+- **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
 - **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, and rerouting strategies.
-- **Automated tests.** 42 backend tests, run on every push by GitHub Actions.
+- **Automated tests.** 69 backend tests, run on every push by GitHub Actions.
 
 ## Tech stack
 
@@ -36,7 +36,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 
 ### Prerequisites
 
-- Python 3 (developed on 3.9.6; CI runs 3.11. Other versions are untested.)
+- Python 3 (developed on 3.9.6; CI runs 3.9 and 3.11. Other versions are untested.)
 - Node.js and npm (developed with Node 24)
 - An internet connection for the first-time map download
 
@@ -120,9 +120,9 @@ From the project root:
 python -m pytest backend/tests -v
 ```
 
-This is the same command the GitHub Actions workflow runs (on Python 3.11, with only `pytest` installed). The tests use small hand-built road networks (`backend/tests/helpers.py`), so they need neither the Norwich data file nor internet access.
+This is the same command the GitHub Actions workflow runs (on Python 3.9 and 3.11, with only `pytest` installed). The tests use small hand-built road networks (`backend/tests/helpers.py`), so they need neither the Norwich data file nor internet access.
 
-At the time of writing, 42 tests were collected and all passed locally (`42 passed`). They cover: Dijkstra/A\* agreement, road closures, rerouting, emergency dispatch and response time, the road-ahead closure scenario, the station optimiser, and the congestion benchmark's logic.
+At the time of writing, 69 tests were collected and all passed (`69 passed`). They cover: Dijkstra/A\* agreement, road closures, rerouting, emergency dispatch and response time, the road-ahead closure scenario, the station optimiser, and the congestion benchmark's logic.
 
 Not covered by automated tests: the FastAPI endpoints and the React frontend.
 
@@ -172,9 +172,24 @@ python -m backend.optimiser.run
 python -m backend.optimiser.run --scenarios 1000 --target 600
 python -m backend.optimiser.run --candidate 52.63,1.29 --candidate 52.62,1.31
 python -m backend.optimiser.validate
+python -m backend.optimiser.evaluate
 ```
 
-`run` ranks candidate stations (a 3x3 grid over the map by default). `validate` compares the optimiser's estimated response times with ambulances actually driven through the simulation. No results from these two commands are stored in the repository.
+- `run` ranks candidate stations (about 38 well-connected junctions spread over the map by default).
+- `validate` compares the optimiser's estimated response times with ambulances actually driven through the simulation.
+- `evaluate` checks the optimiser's pick against baselines and across random seeds. It only reads the optimiser, so it is safe to run at any time.
+
+Results from a default run on the Norwich graph (5,058 junctions, seed 1, 500 random emergencies, 20 m/s ambulance speed, 8 minute target):
+
+| Check | Result |
+|---|---|
+| Optimiser's pick vs a typical random junction | about 25% lower mean response time (2.65 vs 3.52 min) |
+| Optimiser's pick vs the city centre | 2.65 vs 2.97 min |
+| Stability across 10 random seeds | the same junction ranked first every time |
+| Optimiser estimate vs full simulation (150 random pairs) | simulation within -6.3% to +1.1% of the estimate, mean -1.2% |
+| A plain central junction, and the best of 160 random junctions | slightly better than the pick (2.58 and 2.52 min), see Limitations |
+
+These figures were produced once with Python 3.12 and are not stored by the scripts, so re-run the commands to reproduce them.
 
 ## Demo
 
@@ -205,6 +220,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists). Large fleets (thousands of vehicles) are only used by the benchmark scripts.
 - **Ambulances return to base instantly** after a call rather than driving back.
 - **The optimiser ignores traffic** and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
+- **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. It also places one station, not a whole network of stations.
 - **Nearest-junction lookup scans every junction**, which is simple but not optimised.
 - **No automated tests for the API or frontend, and no authentication.**
 

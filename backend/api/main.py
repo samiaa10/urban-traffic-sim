@@ -1,5 +1,6 @@
 import pickle
 from pathlib import Path
+from typing import Optional
 import math
 
 from fastapi import FastAPI, HTTPException
@@ -10,6 +11,8 @@ from backend.simulation.simulation import Simulation
 from backend.simulation import rerouting
 from backend.simulation import dispatch
 from backend.optimiser.station_optimiser import (
+    dense_candidates,
+    explain_best,
     optimise_station_locations,
 )
 
@@ -40,6 +43,11 @@ with open(GRAPH_FILE, "rb") as file:
 
 # Lets us turn a route point back into its junction id (used for rerouting)
 node_by_point = rerouting.build_node_lookup(graph)
+
+
+# Candidate stations the optimiser uses when none are given (about 40
+# well-connected junctions spread over the map). Worked out once at startup.
+default_station_candidates = dense_candidates(graph)
 
 
 simulation = None
@@ -749,7 +757,7 @@ def add_station_vehicle(
 
 @app.get("/optimiser/stations")
 def optimise_stations(
-    candidates: str,
+    candidates: Optional[str] = None,
     scenarios: int = 200,
     seed: int = 1,
     target_seconds: float = 480,
@@ -758,31 +766,36 @@ def optimise_stations(
     """Rank candidate station locations by emergency response time.
 
     candidates looks like "52.63,1.29;52.62,1.31" (latitude,longitude
-    pairs separated by semicolons). Any roads closed in the running
-    simulation are avoided.
+    pairs separated by semicolons). Leave it out to use a spread of
+    about 40 locations over the whole map. Any roads closed in the
+    running simulation are avoided.
     """
 
-    try:
-        points = [
-            tuple(float(value) for value in pair.split(","))
-            for pair in candidates.split(";")
-            if pair.strip()
-        ]
+    if candidates is None:
+        points = default_station_candidates
 
-        if any(len(point) != 2 for point in points):
-            raise ValueError
+    else:
+        try:
+            points = [
+                tuple(float(value) for value in pair.split(","))
+                for pair in candidates.split(";")
+                if pair.strip()
+            ]
 
-    except ValueError:
-        raise HTTPException(
-            status_code=400,
-            detail="candidates must look like 52.63,1.29;52.62,1.31"
-        )
+            if any(len(point) != 2 for point in points):
+                raise ValueError
 
-    if len(points) < 2 or len(points) > 20:
-        raise HTTPException(
-            status_code=400,
-            detail="Give between 2 and 20 candidate locations"
-        )
+        except ValueError:
+            raise HTTPException(
+                status_code=400,
+                detail="candidates must look like 52.63,1.29;52.62,1.31"
+            )
+
+        if len(points) < 2 or len(points) > 20:
+            raise HTTPException(
+                status_code=400,
+                detail="Give between 2 and 20 candidate locations"
+            )
 
     if scenarios < 1 or scenarios > 5000:
         raise HTTPException(
@@ -815,6 +828,8 @@ def optimise_stations(
         "scenarios": scenarios,
         "seed": seed,
         "target_seconds": target_seconds,
+        "speed": speed,
         "closed_roads": len(blocked_segments),
+        "explanation": explain_best(results, scenarios, target_seconds),
         "results": results
     }

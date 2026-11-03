@@ -16,6 +16,9 @@ How it works (simple version):
     3. Response time = driving distance / ambulance speed.
     4. Compare candidates on average, worst case and the percentage
        of emergencies reached within the target time.
+    5. Rank by average response time. An emergency a station cannot
+       reach at all counts as the slowest response seen in the run, so a
+       station cut off from most of the map can never rank well.
 
 Limitations (worth stating in your README):
     - Emergencies are spread evenly over road junctions. Real
@@ -26,6 +29,7 @@ Limitations (worth stating in your README):
 
 import heapq
 import random
+import statistics
 
 from backend.routing.a_star import get_segment
 
@@ -64,13 +68,12 @@ def shortest_distances(graph, source, blocked_segments=None):
     return distances
 
 
-def snap_to_road(graph, latitude, longitude, min_reach=0.9, tries=50):
-    """Find the junction nearest to a point.
+def snap_with_check(graph, latitude, longitude, min_reach=0.9, tries=50):
+    """Like snap_to_road, but also says whether the junction is well connected.
 
-    Some junctions sit in small one-way pockets that can only reach a
-    tiny part of the map. A station there would look terrible for the
-    wrong reason, so we skip those and take the nearest well-connected
-    junction instead.
+    Returns (junction, well_connected). well_connected is False when none
+    of the nearest junctions could reach at least `min_reach` of the map,
+    in which case the closest junction is returned anyway.
     """
 
     def gap(node):
@@ -85,9 +88,21 @@ def snap_to_road(graph, latitude, longitude, min_reach=0.9, tries=50):
     for node in closest:
         reach = len(shortest_distances(graph, node))
         if reach >= min_reach * len(graph.nodes):
-            return node
+            return node, True
 
-    return closest[0]
+    return closest[0], False
+
+
+def snap_to_road(graph, latitude, longitude, min_reach=0.9, tries=50):
+    """Find the junction nearest to a point.
+
+    Some junctions sit in small one-way pockets that can only reach a
+    tiny part of the map. A station there would look terrible for the
+    wrong reason, so we skip those and take the nearest well-connected
+    junction instead.
+    """
+
+    return snap_with_check(graph, latitude, longitude, min_reach, tries)[0]
 
 
 def grid_candidates(graph, rows=3, columns=3):
@@ -114,6 +129,35 @@ def grid_candidates(graph, rows=3, columns=3):
     return candidates
 
 
+def dense_candidates(graph, rows=7, columns=7, min_reach=0.9):
+    """A denser set of candidate stations: a rows x columns grid over the map.
+
+    Each grid point is snapped to the nearest well-connected junction.
+    Points that land on the same junction are only kept once, and points
+    in the countryside with no well-connected junction nearby are dropped,
+    so every candidate returned is a sensible place for a station.
+    """
+
+    chosen = []
+    seen = set()
+
+    for latitude, longitude in grid_candidates(graph, rows, columns):
+
+        node, well_connected = snap_with_check(
+            graph, latitude, longitude, min_reach
+        )
+
+        if node in seen or not well_connected:
+            continue
+
+        seen.add(node)
+
+        data = graph.nodes[node]
+        chosen.append((data["latitude"], data["longitude"]))
+
+    return chosen
+
+
 def optimise_station_locations(
     graph,
     candidates,
@@ -138,12 +182,19 @@ def optimise_station_locations(
     if not candidates:
         raise ValueError("Give at least one candidate location.")
 
-    # Step 1: snap each candidate to a junction and search from it once
+    # Step 1: snap each candidate to a junction and search from it once.
+    # Candidates that snap to the same junction are only evaluated once.
     stations = []
+    seen_nodes = set()
 
     for latitude, longitude in candidates:
 
         node = snap_to_road(graph, latitude, longitude)
+
+        if node in seen_nodes:
+            continue
+
+        seen_nodes.add(node)
 
         stations.append({
             "node": node,
@@ -162,7 +213,7 @@ def optimise_station_locations(
     emergencies = [generator.choice(pool) for _ in range(scenarios)]
 
     # Step 3: measure response times for each candidate
-    results = []
+    measured = []
 
     for station in stations:
 
@@ -178,6 +229,18 @@ def optimise_station_locations(
             else:
                 times.append(distance / speed)
 
+        measured.append((station, times, unreachable))
+
+    # An emergency a station cannot reach counts as the slowest response
+    # seen in this run (by any candidate). Without this, a station cut
+    # off from most of the map would average only the few emergencies it
+    # CAN reach and look brilliant.
+    penalty = max((max(times) for _, times, _ in measured if times), default=0)
+
+    results = []
+
+    for station, times, unreachable in measured:
+
         within_target = sum(1 for t in times if t <= target_seconds)
 
         node_data = graph.nodes[station["node"]]
@@ -192,17 +255,103 @@ def optimise_station_locations(
             "worst_seconds": max(times) if times else None,
             "within_target_percent": 100 * within_target / scenarios,
             "unreachable": unreachable,
+            # What the ranking uses: the average over ALL emergencies,
+            # with unreached ones counted at the penalty above.
+            "ranking_seconds": (
+                (sum(times) + unreachable * penalty) / scenarios
+            ),
         })
 
-    # Step 4: best first = lowest average response time
-    results.sort(
-        key=lambda result: (
-            result["average_seconds"] is None,
-            result["average_seconds"] or 0
-        )
-    )
+    # Step 4: best first = lowest ranking time (same as the plain average
+    # whenever a station reaches every emergency)
+    results.sort(key=lambda result: result["ranking_seconds"])
 
     for rank, result in enumerate(results, start=1):
         result["rank"] = rank
 
     return results
+
+
+def minutes(seconds):
+    return f"{seconds / 60:.1f} min"
+
+
+def explain_best(results, scenarios, target_seconds):
+    """Say, in plain English, why the top-ranked station won.
+
+    `results` is the list returned by optimise_station_locations.
+    Returns a short list of sentences for the frontend to display.
+    """
+
+    measured = [r for r in results if r["average_seconds"] is not None]
+
+    if not measured:
+        return ["No candidate could reach any of the emergencies."]
+
+    best = results[0]
+
+    if best["average_seconds"] is None:
+        return ["The top-ranked station could not reach any emergency."]
+
+    sentences = []
+
+    if len(results) == 1:
+        sentences.append(
+            f"Candidate #1 averages {minutes(best['average_seconds'])} "
+            f"(only one candidate was compared)."
+        )
+    else:
+        runner_up = results[1]
+        typical = statistics.median(r["average_seconds"] for r in measured)
+
+        sentence = (
+            f"Candidate #1 has the lowest average response time: "
+            f"{minutes(best['average_seconds'])}"
+        )
+
+        if runner_up["average_seconds"] is not None:
+            gap = runner_up["average_seconds"] - best["average_seconds"]
+            sentence += (
+                f", {minutes(max(gap, 0))} faster than #2 "
+                f"({minutes(runner_up['average_seconds'])})"
+            )
+
+        if typical > 0:
+            percent = 100 * (typical - best["average_seconds"]) / typical
+            sentence += (
+                f" and {percent:.0f}% faster than the typical candidate "
+                f"({minutes(typical)})"
+            )
+
+        sentences.append(sentence + ".")
+
+    # Worst case: be honest if another candidate does better here
+    shorter = sum(
+        1 for r in measured
+        if r["worst_seconds"] < best["worst_seconds"]
+    )
+
+    if shorter == 0:
+        sentences.append(
+            f"It also has the best worst case: "
+            f"{minutes(best['worst_seconds'])}."
+        )
+    else:
+        sentences.append(
+            f"Its worst case is {minutes(best['worst_seconds'])}; "
+            f"{shorter} other candidate(s) have a shorter worst case, "
+            f"so the winner was chosen on the average."
+        )
+
+    sentences.append(
+        f"{best['within_target_percent']:.0f}% of emergencies were reached "
+        f"within the {minutes(target_seconds)} target."
+    )
+
+    if best["unreachable"]:
+        sentences.append(
+            f"It could not reach {best['unreachable']} of the {scenarios} "
+            f"emergencies; those count as the slowest response seen."
+        )
+
+    return sentences

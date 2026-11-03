@@ -14,7 +14,7 @@ import time
 from pathlib import Path
 
 from backend.optimiser.station_optimiser import (
-    grid_candidates,
+    dense_candidates,
     optimise_station_locations,
 )
 
@@ -37,13 +37,13 @@ def main():
                         help="ambulance speed in metres per second")
     parser.add_argument("--candidate", action="append", type=parse_point,
                         help="candidate station as LAT,LON (repeat for more). "
-                             "Default: a 3x3 grid over the map.")
+                             "Default: about 40 locations spread over the map.")
     arguments = parser.parse_args()
 
     with open(GRAPH_FILE, "rb") as file:
         graph = pickle.load(file)
 
-    candidates = arguments.candidate or grid_candidates(graph)
+    candidates = arguments.candidate or dense_candidates(graph)
 
     started = time.perf_counter()
 
@@ -59,7 +59,7 @@ def main():
     elapsed = time.perf_counter() - started
 
     print(
-        f"\n{len(candidates)} candidate stations, "
+        f"\n{len(results)} candidate stations, "
         f"{arguments.scenarios} random emergencies "
         f"(seed {arguments.seed}), "
         f"target {arguments.target / 60:.1f} min\n"
@@ -67,7 +67,7 @@ def main():
     print(f"{'Rank':<5}{'Latitude':>10}{'Longitude':>11}"
           f"{'Average':>10}{'Worst':>10}{'In target':>11}{'Unreached':>11}")
 
-    for result in results:
+    for result in results[:15]:
         average = (
             f"{result['average_seconds'] / 60:.1f} min"
             if result["average_seconds"] is not None else "n/a"
@@ -82,6 +82,9 @@ def main():
             f"{result['within_target_percent']:>10.0f}%"
             f"{result['unreachable']:>11}"
         )
+
+    if len(results) > 15:
+        print(f"... and {len(results) - 15} lower-ranked candidates")
 
     print(f"\nFinished in {elapsed:.2f} seconds.")
 

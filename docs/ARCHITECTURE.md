@@ -46,13 +46,15 @@ backend/
 │   ├── dispatch.py             Emergency status, and the "close a road ahead of the ambulance" scenario
 │   └── benchmark_rerouting.py  Affected-only vs recalculate-all rerouting benchmark
 ├── optimiser/
-│   ├── station_optimiser.py    Ranks candidate station locations
+│   ├── station_optimiser.py    Ranks candidate station locations, builds the candidate set, explains the winner
 │   ├── run.py                  Command-line interface for the optimiser
-│   └── validate.py             Compares optimiser estimates with the full simulation
+│   ├── validate.py             Compares optimiser estimates with the full simulation
+│   └── evaluate.py             Audit tool: compares the optimiser's pick with baselines and checks it is stable
 └── tests/                      pytest suite (+ helpers.py with tiny test road networks)
 
 frontend/
-├── src/App.tsx                 The whole interface: map, controls, simulation loop, API calls
+├── src/App.tsx                 The main interface: map, controls, simulation loop, API calls
+├── src/OptimiserPanel.tsx      Station optimiser: button, ranked table, explanation and numbered map markers
 ├── src/main.tsx                React entry point
 └── vite.config.ts, package.json, tsconfig*.json, eslint.config.js
 
@@ -101,7 +103,12 @@ When a road closes, `rerouting.reroute_affected_vehicles` first checks which veh
 
 ### Station optimiser
 
-For each candidate location, `station_optimiser.py` runs one Dijkstra search to get the distance to every junction. It reuses the same random emergencies for every candidate, so the comparison is fair. Response time is distance divided by ambulance speed. This is what keeps it fast: one search per candidate rather than one per emergency. `validate.py` checks the estimate against ambulances driven through the full simulation.
+For each candidate location, `station_optimiser.py` runs one Dijkstra search to get the distance to every junction. It reuses the same random emergencies for every candidate, so the comparison is fair. Response time is distance divided by ambulance speed. This is what keeps it fast: one search per candidate rather than one per emergency.
+
+- **Candidates.** `dense_candidates` lays a 7x7 grid over the map and moves each point to the nearest well-connected junction (one that can reach at least 90% of the network). Duplicates and points with no well-connected junction nearby are dropped, which leaves about 38 candidates for Norwich.
+- **Ranking.** Candidates are ranked by average response time. An emergency a station cannot reach counts as the slowest response seen in that run. Without this rule a station cut off from most of the map averaged only the few emergencies it *could* reach and ranked first (there is a regression test for this).
+- **Explanation.** `explain_best` turns the numbers into a few plain sentences (why #1 won, and whether another candidate has a better worst case). The API returns them and the frontend displays them.
+- **Checking it.** `validate.py` checks the estimate against ambulances driven through the full simulation. `evaluate.py` compares the winner with baselines (city centre, middle of the map, random junctions) on the same set of junctions and re-runs the optimiser with several seeds to check the answer is stable. It only reads the optimiser, so it is safe to run at any time.
 
 ## API endpoints
 
@@ -125,11 +132,11 @@ All defined in `backend/api/main.py`. FastAPI generates interactive docs at `/do
 | POST | `/emergency/create?latitude&longitude&emergency_type` | Create an emergency and dispatch the nearest available vehicle |
 | GET | `/emergency/status` | State, ETA, response time and reroutes for every emergency |
 | POST | `/emergency/block-ahead` | Close a road ahead of the ambulance and reroute it |
-| GET | `/optimiser/stations?candidates&scenarios&seed&target_seconds&speed` | Rank candidate station locations (2 to 20 candidates, written as `lat,lon;lat,lon`) |
+| GET | `/optimiser/stations?candidates&scenarios&seed&target_seconds&speed` | Rank candidate station locations. `candidates` is optional (2 to 20 points written as `lat,lon;lat,lon`); leave it out to use the default spread of about 38 locations. Returns the ranked results and a plain-English explanation of the winner |
 
 ## Frontend
 
-The frontend is a single React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. It calls the backend at `http://127.0.0.1:8000` (hard-coded), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. The backend's CORS setting only allows the origin `http://localhost:5173`.
+The frontend is mostly one React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. The station optimiser panel and its map markers live in `frontend/src/OptimiserPanel.tsx`. It calls the backend at `http://127.0.0.1:8000` (hard-coded), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. The backend's CORS setting only allows the origin `http://localhost:5173`.
 
 ## Testing
 

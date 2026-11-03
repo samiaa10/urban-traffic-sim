@@ -7,6 +7,11 @@ import {
   useMapEvents,
 } from "react-leaflet"
 import "leaflet/dist/leaflet.css"
+import {
+  OptimiserMarkers,
+  OptimiserPanel,
+  type OptimiserResponse,
+} from "./OptimiserPanel"
 
 type Coordinate = [number, number]
 
@@ -103,6 +108,10 @@ function App() {
 
   // Feedback about the last thing the user did
   const [result, setResult] = useState("")
+
+  // Latest answer from the emergency station optimiser
+  const [optimiser, setOptimiser] =
+    useState<OptimiserResponse | null>(null)
 
   const simulationInterval =
     useRef<number | null>(null)
@@ -813,6 +822,9 @@ function App() {
         <span>🔴 Heavy</span>
       </div>
 
+      {/* EMERGENCY STATION OPTIMISER */}
+      <OptimiserPanel data={optimiser} onResults={setOptimiser} />
+
       <MapContainer
         center={[52.6309, 1.2974]}
         zoom={13}
@@ -922,6 +934,11 @@ function App() {
               fillOpacity: 0.8,
             }}
           />
+        )}
+
+        {/* RECOMMENDED STATION LOCATIONS (numbered by rank) */}
+        {optimiser && (
+          <OptimiserMarkers results={optimiser.results} />
         )}
 
         {/* ALL VEHICLES */}
