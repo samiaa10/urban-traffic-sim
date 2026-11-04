@@ -15,7 +15,7 @@ Then open **http://localhost:5173**. Use `localhost` rather than `127.0.0.1`: th
 
 ## Backend address
 
-The frontend calls the backend at `http://127.0.0.1:8000`. This address is written directly in `src/App.tsx` rather than read from a configuration file, so if you run the backend on a different port you will need to change it there (and update the allowed origin in `backend/api/main.py` if you change the frontend port).
+The frontend calls the backend at `http://127.0.0.1:8000`. This address is written directly in `src/App.tsx` and `src/optimiser.ts` rather than read from a configuration file, so if you run the backend on a different port you will need to change it there (and update the allowed origin in `backend/api/main.py` if you change the frontend port).
 
 ## Scripts
 
@@ -24,11 +24,15 @@ The frontend calls the backend at `http://127.0.0.1:8000`. This address is writt
 | `npm run dev` | Start the Vite development server |
 | `npm run build` | Type-check with `tsc -b`, then build with Vite |
 | `npm run lint` | Run ESLint |
+| `npm test` | Compile and run the frontend tests (Node's built-in test runner, no extra dependencies) |
 | `npm run preview` | Serve the production build locally |
 
 ## Code
 
 - `src/main.tsx`: React entry point
-- `src/App.tsx`: the interface: map, controls, simulation loop and all calls to the backend
+- `src/App.tsx`: the interface: map, controls, simulation loop and the calls to the backend
+- `src/simulationHelpers.ts`: status text, emergency text, traffic summary and route conversion
+- `src/OptimiserPanel.tsx`, `src/OptimiserResults.tsx`, `src/optimiser.ts`: the station optimiser (controls and map markers, result tables, requests and types)
+- `tests/`: the frontend tests
 
-The frontend has no automated tests.
+The tests cover the logic behind the screens, the optimiser's requests and error handling, and the optimiser's result tables. They do not open a browser or click buttons.

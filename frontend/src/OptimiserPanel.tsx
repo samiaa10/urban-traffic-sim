@@ -1,34 +1,26 @@
 import { useState } from "react"
 import { CircleMarker, Popup, Tooltip } from "react-leaflet"
+import {
+  SCENARIOS,
+  describeFailure,
+  fetchRanking,
+  fetchStationSet,
+  minutes,
+  percent,
+  type OptimiserResponse,
+  type OptimiserResult,
+  type StationSetPick,
+  type StationSetResponse,
+} from "./optimiser.ts"
+import {
+  RankingResults,
+  SHOWN,
+  StationSetResults,
+} from "./OptimiserResults.tsx"
 
-// Same backend address the rest of the app uses
-const API = "http://127.0.0.1:8000"
-
-// How many of the ranked candidates to show in the table and on the map
-const SHOWN = 10
-
-export type OptimiserResult = {
-  node: number
-  latitude: number
-  longitude: number
-  average_seconds: number | null
-  worst_seconds: number | null
-  within_target_percent: number
-  unreachable: number
-  rank: number
-}
-
-export type OptimiserResponse = {
-  scenarios: number
-  target_seconds: number
-  speed: number
-  closed_roads: number
-  explanation: string[]
-  results: OptimiserResult[]
-}
-
-const minutes = (seconds: number | null) =>
-  seconds === null ? "n/a" : `${(seconds / 60).toFixed(1)} min`
+// Choices offered for the several-station search
+const STATION_COUNTS = [2, 3, 4, 5]
+const TARGET_MINUTES = [3, 4, 5, 8]
 
 // ------------------------------------------------
 // MARKERS (drawn inside the map): 1 = best station
@@ -72,48 +64,89 @@ export function OptimiserMarkers({
   )
 }
 
+// Purple markers for a chosen set of stations, numbered in pick order
+export function StationSetMarkers({
+  picks,
+}: {
+  picks: StationSetPick[]
+}) {
+  return (
+    <>
+      {picks.map((pick) => (
+        <CircleMarker
+          key={`station-set-${pick.node}`}
+          center={[pick.latitude, pick.longitude]}
+          radius={15}
+          pathOptions={{
+            color: "#6d28d9",
+            fillColor: "#7c3aed",
+            fillOpacity: 0.85,
+            bubblingMouseEvents: false,
+          }}
+        >
+          <Tooltip permanent direction="center" opacity={1}>
+            {pick.order}
+          </Tooltip>
+          <Popup>
+            <strong>Station {pick.order}</strong>
+            <br />
+            Average with stations 1-{pick.order}:{" "}
+            {minutes(pick.average_seconds_after)}
+            <br />
+            Within target: {percent(pick.within_target_percent_after)}
+          </Popup>
+        </CircleMarker>
+      ))}
+    </>
+  )
+}
+
 // ------------------------------------------------
-// PANEL: button, explanation and ranked table
+// PANEL: buttons, results
 // ------------------------------------------------
 
 export function OptimiserPanel({
   data,
   onResults,
+  setData,
+  onSetResults,
 }: {
   data: OptimiserResponse | null
   onResults: (data: OptimiserResponse | null) => void
+  setData: StationSetResponse | null
+  onSetResults: (data: StationSetResponse | null) => void
 }) {
-  const [loading, setLoading] = useState(false)
+  const [loading, setLoading] = useState<"ranking" | "set" | null>(null)
   const [error, setError] = useState("")
 
-  const runOptimiser = async () => {
-    setLoading(true)
+  const [stationCount, setStationCount] = useState(3)
+  const [targetMinutes, setTargetMinutes] = useState(8)
+
+  const runRanking = async () => {
+    setLoading("ranking")
     setError("")
 
     try {
-      const response = await fetch(
-        `${API}/optimiser/stations?scenarios=500`
-      )
-
-      const body = await response.json()
-
-      if (!response.ok) {
-        throw new Error(body.detail || "The optimiser failed")
-      }
-
-      onResults(body)
+      onResults(await fetchRanking())
     } catch (caught) {
-      setError(
-        caught instanceof Error
-          ? `Optimiser failed: ${caught.message}`
-          : "Optimiser failed."
-      )
+      setError(describeFailure(caught))
     } finally {
-      setLoading(false)
+      setLoading(null)
     }
   }
 
-  const cell = { padding: "2px 10px", textAlign: "left" as const }
+  const runStationSet = async () => {
+    setLoading("set")
+    setError("")
+
+    try {
+      onSetResults(await fetchStationSet(stationCount, targetMinutes))
+    } catch (caught) {
+      setError(describeFailure(caught))
+    } finally {
+      setLoading(null)
+    }
+  }
 
   return (
     <div
@@ -126,101 +159,74 @@ export function OptimiserPanel({
       }}
     >
       <div>
-        <button onClick={runOptimiser} disabled={loading}>
+        <button onClick={runRanking} disabled={loading !== null}>
           🏥 Find best ambulance station locations
         </button>
 
-        {data && (
+        {(data || setData) && (
           <button
-            onClick={() => onResults(null)}
+            onClick={() => {
+              onResults(null)
+              onSetResults(null)
+            }}
             style={{ marginLeft: "10px" }}
           >
             Clear results
           </button>
         )}
 
-        {loading && (
+        {loading === "ranking" && (
           <span style={{ marginLeft: "10px" }}>
-            Running 500 random emergencies from every candidate...
+            Running {SCENARIOS} random emergencies from every candidate...
           </span>
         )}
       </div>
 
-      {error && <div>{error}</div>}
+      <div style={{ marginTop: "8px" }}>
+        <label>
+          Stations:{" "}
+          <select
+            aria-label="Number of stations"
+            value={stationCount}
+            onChange={(event) => setStationCount(Number(event.target.value))}
+          >
+            {STATION_COUNTS.map((value) => (
+              <option key={value} value={value}>
+                {value}
+              </option>
+            ))}
+          </select>
+        </label>{" "}
+        <label>
+          Target:{" "}
+          <select
+            aria-label="Target response time"
+            value={targetMinutes}
+            onChange={(event) => setTargetMinutes(Number(event.target.value))}
+          >
+            {TARGET_MINUTES.map((value) => (
+              <option key={value} value={value}>
+                {value} min
+              </option>
+            ))}
+          </select>
+        </label>{" "}
+        <button onClick={runStationSet} disabled={loading !== null}>
+          🏥🏥 Find best set of {stationCount} stations
+        </button>
 
-      {data && data.results.length > 0 && (
-        <>
-          <div style={{ margin: "8px 0" }}>
-            <strong>
-              Recommended: candidate #1 at{" "}
-              {data.results[0].latitude.toFixed(4)},{" "}
-              {data.results[0].longitude.toFixed(4)}
-            </strong>{" "}
-            (green marker on the map)
-            <ul style={{ margin: "4px 0" }}>
-              {data.explanation.map((sentence) => (
-                <li key={sentence}>{sentence}</li>
-              ))}
-            </ul>
-          </div>
+        {loading === "set" && (
+          <span style={{ marginLeft: "10px" }}>
+            Choosing {stationCount} stations that work well together...
+          </span>
+        )}
+      </div>
 
-          <div style={{ overflowX: "auto" }}>
-            <table style={{ borderCollapse: "collapse", width: "100%" }}>
-              <thead>
-                <tr>
-                  <th style={cell}>Rank</th>
-                  <th style={cell}>Average</th>
-                  <th style={cell}>Worst case</th>
-                  <th style={cell}>
-                    Within {minutes(data.target_seconds)}
-                  </th>
-                  <th style={cell}>Unreached</th>
-                  <th style={cell}>Location</th>
-                </tr>
-              </thead>
-              <tbody>
-                {data.results.slice(0, SHOWN).map((result) => (
-                  <tr
-                    key={result.node}
-                    style={
-                      result.rank === 1
-                        ? {
-                            fontWeight: "bold",
-                            background: "rgba(22, 163, 74, 0.15)",
-                          }
-                        : undefined
-                    }
-                  >
-                    <td style={cell}>{result.rank}</td>
-                    <td style={cell}>{minutes(result.average_seconds)}</td>
-                    <td style={cell}>{minutes(result.worst_seconds)}</td>
-                    <td style={cell}>
-                      {result.within_target_percent.toFixed(0)}%
-                    </td>
-                    <td style={cell}>{result.unreachable}</td>
-                    <td style={cell}>
-                      {result.latitude.toFixed(4)},{" "}
-                      {result.longitude.toFixed(4)}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+      {error && <div role="alert">{error}</div>}
 
-          <div style={{ fontSize: "14px", marginTop: "6px" }}>
-            Top {Math.min(SHOWN, data.results.length)} of{" "}
-            {data.results.length} candidates, {data.scenarios} random
-            emergencies. Times are road distance at{" "}
-            {Math.round(data.speed * 3.6)} km/h, with no traffic
-            {data.closed_roads > 0
-              ? `, avoiding ${data.closed_roads} closed road segments`
-              : ""}
-            . Ranked by average response time; an emergency a station
-            cannot reach counts as the slowest response seen.
-          </div>
-        </>
-      )}
+      {setData && <StationSetResults data={setData} />}
+
+      {data && <RankingResults data={data} />}
     </div>
   )
 }

@@ -10,35 +10,30 @@ import "leaflet/dist/leaflet.css"
 import {
   OptimiserMarkers,
   OptimiserPanel,
-  type OptimiserResponse,
-} from "./OptimiserPanel"
-
-type Coordinate = [number, number]
-
-type Vehicle = {
-  vehicle_id: number
-  latitude: number
-  longitude: number
-  distance_travelled: number
-  finished: boolean
-  vehicle_type: string
-  on_emergency: boolean
-}
+  StationSetMarkers,
+} from "./OptimiserPanel.tsx"
+import type {
+  OptimiserResponse,
+  StationSetResponse,
+} from "./optimiser.ts"
+import {
+  allFinished,
+  congestionColour,
+  describeEmergency,
+  describeSimulationState,
+  describeTraffic,
+  summariseTraffic,
+  toCoordinates,
+  type Coordinate,
+  type EmergencyStatus,
+  type Vehicle,
+} from "./simulationHelpers.ts"
 
 type CongestionSegment = {
   start: { latitude: number; longitude: number }
   end: { latitude: number; longitude: number }
   vehicle_count: number
   level: string
-}
-
-type EmergencyStatus = {
-  state: "waiting" | "en_route" | "blocked" | "arrived"
-  elapsed_seconds: number
-  response_time_seconds: number | null
-  remaining_metres: number
-  eta_seconds: number
-  reroutes: number
 }
 
 type RouteInfo = {
@@ -112,6 +107,10 @@ function App() {
   // Latest answer from the emergency station optimiser
   const [optimiser, setOptimiser] =
     useState<OptimiserResponse | null>(null)
+
+  // Latest answer from the several-station optimiser
+  const [stationSet, setStationSet] =
+    useState<StationSetResponse | null>(null)
 
   const simulationInterval =
     useRef<number | null>(null)
@@ -253,13 +252,7 @@ function App() {
               // Status is optional; keep the simulation running.
             }
 
-            const allFinished =
-              stepData.vehicles.length > 0 &&
-              stepData.vehicles.every(
-                (vehicle: Vehicle) => vehicle.finished
-              )
-
-            if (allFinished) {
+            if (allFinished(stepData.vehicles)) {
               stopSimulationPolling()
             }
           } catch {
@@ -307,15 +300,7 @@ function App() {
 
       // Convert backend coordinates into Leaflet coordinates
       const coordinates: Coordinate[] =
-        data.path_coordinates.map(
-          (point: {
-            latitude: number
-            longitude: number
-          }) => [
-            point.latitude,
-            point.longitude,
-          ]
-        )
+        toCoordinates(data.path_coordinates)
 
       setRoute(coordinates)
 
@@ -450,15 +435,7 @@ function App() {
 
       // Convert new route to Leaflet coordinates
       const newRoute: Coordinate[] =
-        rerouteData.route.map(
-          (point: {
-            latitude: number
-            longitude: number
-          }) => [
-            point.latitude,
-            point.longitude,
-          ]
-        )
+        toCoordinates(rerouteData.route)
 
       setIncidentRoute(newRoute)
       setIncidentActive(true)
@@ -557,15 +534,7 @@ function App() {
       ])
 
       const emergencyCoordinates: Coordinate[] =
-        emergencyData.route.map(
-          (point: {
-            latitude: number
-            longitude: number
-          }) => [
-            point.latitude,
-            point.longitude,
-          ]
-        )
+        toCoordinates(emergencyData.route)
 
       setEmergencyRoute(emergencyCoordinates)
       setEmergencyActive(true)
@@ -613,12 +582,7 @@ function App() {
 
       // Show the ambulance's new route
       setEmergencyRoute(
-        data.route.map(
-          (point: {
-            latitude: number
-            longitude: number
-          }) => [point.latitude, point.longitude]
-        )
+        toCoordinates(data.route)
       )
 
       // Show the closed road
@@ -669,37 +633,15 @@ function App() {
     (vehicle) => vehicle.finished
   ).length
 
-  let simulationState = {
-    label: "Waiting for input",
-    hint: "Click the map to choose a start point.",
-    colour: "#d97706",
-  }
+  const simulationState = describeSimulationState({
+    connectionLost,
+    hasStart: start !== null,
+    hasDestination: destination !== null,
+    hasRoute: routeInfo !== null,
+    running,
+  })
 
-  if (connectionLost) {
-    simulationState = {
-      label: "Connection lost",
-      hint: "The backend stopped responding. Is it still running?",
-      colour: "#dc2626",
-    }
-  } else if (!start) {
-    // default state above
-  } else if (!destination) {
-    simulationState.hint = "Click the map to choose a destination."
-  } else if (!routeInfo) {
-    simulationState.hint = "Click Calculate Route to start the simulation."
-  } else if (running) {
-    simulationState = {
-      label: "Running",
-      hint: "Vehicles are moving.",
-      colour: "#16a34a",
-    }
-  } else {
-    simulationState = {
-      label: "Completed",
-      hint: "All vehicles have finished their journeys.",
-      colour: "#2563eb",
-    }
-  }
+  const traffic = summariseTraffic(vehicles)
 
   // ------------------------------------------------
   // UI
@@ -786,28 +728,12 @@ function App() {
           </div>
         )}
 
+        {routeInfo && traffic && <div>{describeTraffic(traffic)}</div>}
+
         {emergencyStatus && (
           <div>
             <strong>🚑 Emergency response:</strong>{" "}
-            {emergencyStatus.state === "arrived"
-              ? `Arrived. Response time ${Math.round(
-                  emergencyStatus.response_time_seconds ?? 0
-                )} s`
-              : emergencyStatus.state === "blocked"
-                ? "Stopped by a closed road"
-                : emergencyStatus.state === "waiting"
-                  ? "Waiting for an ambulance"
-                  : `En route | ETA ${Math.round(
-                      emergencyStatus.eta_seconds
-                    )} s | ${Math.round(
-                      emergencyStatus.remaining_metres
-                    )} m to go`}
-            {" | "}
-            {emergencyStatus.reroutes === 0
-              ? "not rerouted"
-              : `rerouted ${emergencyStatus.reroutes}x`}
-            {" | "}
-            {Math.round(emergencyStatus.elapsed_seconds)} s elapsed
+            {describeEmergency(emergencyStatus)}
           </div>
         )}
 
@@ -823,7 +749,12 @@ function App() {
       </div>
 
       {/* EMERGENCY STATION OPTIMISER */}
-      <OptimiserPanel data={optimiser} onResults={setOptimiser} />
+      <OptimiserPanel
+        data={optimiser}
+        onResults={setOptimiser}
+        setData={stationSet}
+        onSetResults={setStationSet}
+      />
 
       <MapContainer
         center={[52.6309, 1.2974]}
@@ -871,12 +802,7 @@ function App() {
               ],
             ]}
             pathOptions={{
-              color:
-                segment.level === "heavy"
-                  ? "red"
-                  : segment.level === "moderate"
-                    ? "orange"
-                    : "green",
+              color: congestionColour(segment.level),
               weight: 7,
               opacity: 0.75,
             }}
@@ -939,6 +865,11 @@ function App() {
         {/* RECOMMENDED STATION LOCATIONS (numbered by rank) */}
         {optimiser && (
           <OptimiserMarkers results={optimiser.results} />
+        )}
+
+        {/* CHOSEN SET OF STATIONS (numbered in pick order) */}
+        {stationSet && (
+          <StationSetMarkers picks={stationSet.stations} />
         )}
 
         {/* ALL VEHICLES */}

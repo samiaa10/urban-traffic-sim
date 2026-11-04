@@ -15,8 +15,9 @@ What it does:
     2. Take random journeys and route each one TWICE with the same A*
        search: once ignoring traffic (the plain shortest path) and once
        congestion-aware (every vehicle on a road adds a penalty).
-    3. Measure both routes on the same traffic snapshot: distance, free-flow
-       travel time, how many vehicles they pass, and how much search work
+    3. Measure both routes on the same traffic snapshot: distance, travel
+       time (free-flow, and with the slowdown the simulation applies on
+       busy roads), how many vehicles they pass, and how much search work
        each approach needed.
 
 Only the cost function differs between the two routes, so any difference
@@ -37,6 +38,7 @@ from backend.routing.a_star import (
 )
 from backend.routing.benchmark import benchmark_algorithm, load_graph
 from backend.simulation.benchmark_rerouting import build_simulation
+from backend.simulation.simulation import speed_factor_for_count
 from backend.simulation.vehicle import Vehicle
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -150,14 +152,21 @@ def describe_route(graph, path, traffic):
     """Measure a route against a traffic snapshot."""
 
     distance = 0.0
+    congested_seconds = 0.0
     vehicles = 0
     heavy_roads = 0
 
     for node_a, node_b in zip(path, path[1:]):
 
-        distance += cheapest_road_length(graph, node_a, node_b)
+        length = cheapest_road_length(graph, node_a, node_b)
+
+        distance += length
 
         count = traffic.get(get_segment(graph, node_a, node_b), 0)
+
+        # The simulation slows vehicles on busy roads, so a road with
+        # traffic takes longer to drive than the same road empty.
+        congested_seconds += length / (SPEED * speed_factor_for_count(count))
 
         vehicles += count
 
@@ -166,8 +175,11 @@ def describe_route(graph, path, traffic):
 
     return {
         "distance": distance,
-        # Free-flow: the simulation does not slow vehicles down in traffic
+        # Free-flow: no traffic at all
         "seconds": distance / SPEED,
+        # The same journey with the speed the simulation allows on each
+        # road given the snapshot's traffic (estimate: traffic is frozen)
+        "congested_seconds": congested_seconds,
         "vehicles": vehicles,
         "heavy_roads": heavy_roads,
         # The cost the congestion-aware router tries to minimise
@@ -241,7 +253,10 @@ def summarise(rows):
     summary = {"journeys": len(rows), "changed": len(changed)}
 
     for name in ("shortest", "aware"):
-        for field in ("distance", "seconds", "vehicles", "heavy_roads"):
+        for field in (
+            "distance", "seconds", "congested_seconds",
+            "vehicles", "heavy_roads",
+        ):
             summary[f"{name}_{field}"] = average(row[name][field] for row in rows)
 
         summary[f"{name}_explored"] = average(row[f"{name}_explored"] for row in rows)
@@ -332,6 +347,8 @@ def format_report(summary, traffic_stats, settings, graph_info):
         f"{'Average per journey':<38}{'Shortest':>12}{'Congestion-aware':>18}",
         row("Route distance (m)", s["shortest_distance"], s["aware_distance"]),
         row("Free-flow travel time (s)", s["shortest_seconds"], s["aware_seconds"]),
+        row("Travel time with traffic (s)", s["shortest_congested_seconds"],
+            s["aware_congested_seconds"]),
         row("Vehicles passed on the route", s["shortest_vehicles"],
             s["aware_vehicles"], decimals=1),
         row(f"Heavy roads on the route ({HEAVY_VEHICLES}+)", s["shortest_heavy_roads"],
@@ -340,8 +357,9 @@ def format_report(summary, traffic_stats, settings, graph_info):
         row("Search time (ms)", s["shortest_ms"], s["aware_ms"], decimals=2),
         "",
         "Free-flow time = distance / "
-        f"{SPEED} m/s. The simulation does not slow vehicles in traffic, so this "
-        "contains no congestion delay.",
+        f"{SPEED} m/s, as if the roads were empty. Time with traffic drives each "
+        "road at the speed the simulation allows for the vehicles on it "
+        "(estimated from the frozen snapshot).",
         "Vehicles on a road are counted per road, with both directions together.",
         "",
     ]

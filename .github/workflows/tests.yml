@@ -19,15 +19,15 @@ jobs:
         with:
           python-version: "3.11"
 
-      - name: Install pytest
-        run: pip install pytest
+      # fastapi and httpx are for the API tests (osmnx and the Norwich
+      # road-map data file are not needed: the tests use a tiny map)
+      - name: Install test dependencies
+        run: pip install pytest fastapi httpx
 
       - name: Run the tests
         run: python -m pytest backend/tests -v
 
   # The same tests on Python 3.9, the version used for local development.
-  # The tests only need the standard library and pytest, so nothing else is
-  # installed (no fastapi/osmnx, and no Norwich road-map data file).
   test-python-3-9:
     name: test (Python 3.9)
     runs-on: ubuntu-latest
@@ -42,16 +42,16 @@ jobs:
         with:
           python-version: "3.9"
 
-      - name: Install pytest
-        run: pip install pytest
+      - name: Install test dependencies
+        run: pip install pytest fastapi httpx
 
       - name: Run the tests
         run: python -m pytest backend/tests -v
 
   # Check the React/TypeScript front end: install exactly what
-  # package-lock.json says, lint it, and make sure it builds.
+  # package-lock.json says, lint it, build it and run its tests.
   frontend:
-    name: frontend (lint and build)
+    name: frontend (lint, build and test)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -78,3 +78,6 @@ jobs:
 
       - name: Build
         run: npm run build
+
+      - name: Test
+        run: npm test

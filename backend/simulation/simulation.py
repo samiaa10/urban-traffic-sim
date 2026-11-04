@@ -3,6 +3,47 @@ from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
 
 
+# How busy a road is, from the number of vehicles on it. The map colours
+# roads by these levels, and the same levels set how fast vehicles can go.
+def congestion_level(vehicle_count):
+
+    if vehicle_count <= 0:
+        return "clear"
+
+    if vehicle_count == 1:
+        return "light"
+
+    if vehicle_count == 2:
+        return "moderate"
+
+    return "heavy"
+
+
+# Fraction of full speed a vehicle can drive at on a road of each level.
+# A lone vehicle drives freely; a crowded road is a crawl.
+SPEED_FACTORS = {
+    "clear": 1.0,
+    "light": 1.0,
+    "moderate": 0.6,
+    "heavy": 0.3,
+}
+
+
+def speed_factor_for_count(vehicle_count):
+    """Fraction of full speed on a road with this many vehicles on it."""
+
+    return SPEED_FACTORS[congestion_level(vehicle_count)]
+
+
+def segment_between(point_a, point_b):
+    """Road segment key for two route points (direction does not matter)."""
+
+    return tuple(sorted((
+        (point_a["latitude"], point_a["longitude"]),
+        (point_b["latitude"], point_b["longitude"])
+    )))
+
+
 class Simulation:
 
     def __init__(self, route):
@@ -280,33 +321,41 @@ class Simulation:
 
     def step(self):
 
+        # Measure traffic ONCE, before anybody moves, so every vehicle
+        # sees the same roads and the order of the list does not matter.
+        # (A vehicle that crosses several short roads in one second keeps
+        # using this snapshot; the speed is re-read every second.)
+        traffic = self.get_traffic_density()
+
+        def speed_factor(point_a, point_b):
+            return speed_factor_for_count(
+                traffic.get(segment_between(point_a, point_b), 0)
+            )
+
         for vehicle in self.vehicles:
 
             if vehicle.finished:
                 continue
+
+            # The trip clock runs while the vehicle is on its way, so
+            # slow traffic and closed roads both make the journey longer.
+            vehicle.journey_seconds += 1
 
             if vehicle.position < len(vehicle.route) - 1:
 
                 current_point = vehicle.route[vehicle.position]
                 next_point = vehicle.route[vehicle.position + 1]
 
-                segment = (
-                    (
-                        current_point["latitude"],
-                        current_point["longitude"]
-                    ),
-                    (
-                        next_point["latitude"],
-                        next_point["longitude"]
-                    )
-                )
-
-                segment = tuple(sorted(segment))
-
-                if segment in self.blocked_segments:
+                if segment_between(
+                    current_point, next_point
+                ) in self.blocked_segments:
                     continue
 
-            vehicle.move(1, is_blocked=self.is_road_closed)
+            vehicle.move(
+                1,
+                is_blocked=self.is_road_closed,
+                speed_factor=speed_factor
+            )
 
         self.time += 1
 
@@ -372,18 +421,9 @@ class Simulation:
 
         for segment, vehicle_count in traffic.items():
 
-            if vehicle_count == 1:
-                level = "light"
-            elif vehicle_count == 2:
-                level = "moderate"
-            elif vehicle_count >= 3:
-                level = "heavy"
-            else:
-                level = "clear"
-
             congestion[segment] = {
                 "vehicle_count": vehicle_count,
-                "level": level
+                "level": congestion_level(vehicle_count)
             }
 
         return congestion

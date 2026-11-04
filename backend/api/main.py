@@ -1,3 +1,4 @@
+import os
 import pickle
 from pathlib import Path
 from typing import Optional
@@ -13,12 +14,22 @@ from backend.simulation import dispatch
 from backend.optimiser.station_optimiser import (
     dense_candidates,
     explain_best,
+    explain_station_set,
     optimise_station_locations,
+    optimise_station_set,
 )
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
-GRAPH_FILE = PROJECT_ROOT / "data" / "osm" / "norwich_graph.pkl"
+
+# The Norwich road network. NORWICH_SIM_GRAPH can point at a different
+# graph file; the API tests use this to run against a tiny map.
+GRAPH_FILE = Path(
+    os.environ.get(
+        "NORWICH_SIM_GRAPH",
+        PROJECT_ROOT / "data" / "osm" / "norwich_graph.pkl"
+    )
+)
 
 
 app = FastAPI(
@@ -273,7 +284,10 @@ def simulation_step():
             "distance_travelled": vehicle.distance_travelled,
             "finished": vehicle.finished,
             "vehicle_type": vehicle.vehicle_type,
-            "on_emergency": vehicle.on_emergency
+            "on_emergency": vehicle.on_emergency,
+            # Traffic: 1.0 = free flowing, lower = held up by other vehicles
+            "speed_factor": vehicle.speed_factor,
+            "journey_seconds": vehicle.journey_seconds
         })
 
     return {
@@ -728,6 +742,14 @@ def add_station_vehicle(
             detail="Station not found"
         )
 
+    # A vehicle that cannot move would never arrive (and used to crash
+    # /emergency/status with a division by zero)
+    if not math.isfinite(speed) or speed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="speed must be above 0"
+        )
+
     station = simulation.stations[station_id]
 
     station_location = station.get_location()
@@ -755,6 +777,66 @@ def add_station_vehicle(
 
 
 
+def optimiser_points(candidates):
+    """Candidate locations for the optimiser, from the ?candidates= text.
+
+    candidates looks like "52.63,1.29;52.62,1.31" (latitude,longitude
+    pairs separated by semicolons). None means "use the default spread".
+    """
+
+    if candidates is None:
+        return default_station_candidates
+
+    try:
+        points = [
+            tuple(float(value) for value in pair.split(","))
+            for pair in candidates.split(";")
+            if pair.strip()
+        ]
+
+        if any(len(point) != 2 for point in points):
+            raise ValueError
+
+        if not all(math.isfinite(value) for point in points for value in point):
+            raise ValueError
+
+    except ValueError:
+        raise HTTPException(
+            status_code=400,
+            detail="candidates must look like 52.63,1.29;52.62,1.31"
+        )
+
+    if len(points) < 2 or len(points) > 20:
+        raise HTTPException(
+            status_code=400,
+            detail="Give between 2 and 20 candidate locations"
+        )
+
+    return points
+
+
+def check_optimiser_settings(scenarios, target_seconds, speed):
+    """Turn bad optimiser settings into a 400 error."""
+
+    if scenarios < 1 or scenarios > 5000:
+        raise HTTPException(
+            status_code=400,
+            detail="scenarios must be between 1 and 5000"
+        )
+
+    if not math.isfinite(speed) or speed <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="speed must be above 0"
+        )
+
+    if not math.isfinite(target_seconds) or target_seconds <= 0:
+        raise HTTPException(
+            status_code=400,
+            detail="target_seconds must be above 0"
+        )
+
+
 @app.get("/optimiser/stations")
 def optimise_stations(
     candidates: Optional[str] = None,
@@ -771,43 +853,9 @@ def optimise_stations(
     running simulation are avoided.
     """
 
-    if candidates is None:
-        points = default_station_candidates
+    points = optimiser_points(candidates)
 
-    else:
-        try:
-            points = [
-                tuple(float(value) for value in pair.split(","))
-                for pair in candidates.split(";")
-                if pair.strip()
-            ]
-
-            if any(len(point) != 2 for point in points):
-                raise ValueError
-
-        except ValueError:
-            raise HTTPException(
-                status_code=400,
-                detail="candidates must look like 52.63,1.29;52.62,1.31"
-            )
-
-        if len(points) < 2 or len(points) > 20:
-            raise HTTPException(
-                status_code=400,
-                detail="Give between 2 and 20 candidate locations"
-            )
-
-    if scenarios < 1 or scenarios > 5000:
-        raise HTTPException(
-            status_code=400,
-            detail="scenarios must be between 1 and 5000"
-        )
-
-    if speed <= 0:
-        raise HTTPException(
-            status_code=400,
-            detail="speed must be above 0"
-        )
+    check_optimiser_settings(scenarios, target_seconds, speed)
 
     blocked_segments = set()
 
@@ -832,4 +880,68 @@ def optimise_stations(
         "closed_roads": len(blocked_segments),
         "explanation": explain_best(results, scenarios, target_seconds),
         "results": results
+    }
+
+
+@app.get("/optimiser/station-set")
+def optimise_station_group(
+    stations: int = 3,
+    candidates: Optional[str] = None,
+    scenarios: int = 200,
+    seed: int = 1,
+    target_seconds: float = 480,
+    speed: float = 20
+):
+    """Choose several stations that work well together.
+
+    stations is how many to pick (1 to 10). The other settings are the
+    same as /optimiser/stations. The answer includes how the chosen set
+    performs and how it compares with baselines (the best single
+    station, the best stations ranked one by one, and random stations).
+    """
+
+    if stations < 1 or stations > 10:
+        raise HTTPException(
+            status_code=400,
+            detail="stations must be between 1 and 10"
+        )
+
+    points = optimiser_points(candidates)
+
+    check_optimiser_settings(scenarios, target_seconds, speed)
+
+    blocked_segments = set()
+
+    if simulation is not None:
+        blocked_segments = simulation.get_blocked_segments()
+
+    try:
+        outcome = optimise_station_set(
+            graph,
+            points,
+            stations,
+            scenarios=scenarios,
+            seed=seed,
+            target_seconds=target_seconds,
+            speed=speed,
+            blocked_segments=blocked_segments
+        )
+
+    except ValueError as error:
+        # e.g. more stations asked for than there are candidate junctions
+        raise HTTPException(
+            status_code=400,
+            detail=str(error)
+        )
+
+    return {
+        "scenarios": scenarios,
+        "seed": seed,
+        "target_seconds": target_seconds,
+        "speed": speed,
+        "closed_roads": len(blocked_segments),
+        "explanation": explain_station_set(
+            outcome, scenarios, target_seconds
+        ),
+        **outcome
     }

@@ -20,6 +20,10 @@ Nothing here talks to FastAPI, so all of it can be tested on a tiny map.
 
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
+from backend.simulation.simulation import (
+    segment_between,
+    speed_factor_for_count,
+)
 
 
 def remaining_distance(vehicle):
@@ -39,6 +43,46 @@ def remaining_distance(vehicle):
     # ...then every full segment after that
     for index in range(vehicle.position + 1, len(route) - 1):
         total += vehicle.calculate_distance(route[index], route[index + 1])
+
+    return total
+
+
+def remaining_seconds(simulation, vehicle):
+    """Seconds the vehicle still needs, given the traffic on its route NOW.
+
+    Same idea as remaining_distance, but each road is driven at the speed
+    that road's current traffic allows (the same speed factors the
+    simulation uses), so a congested route has a longer ETA.
+    """
+
+    route = vehicle.route
+
+    if vehicle.finished or vehicle.position >= len(route) - 1:
+        return 0.0
+
+    traffic = simulation.get_traffic_density()
+
+    def seconds_on(point_a, point_b, road_a, road_b):
+        # Distance is measured from point_a to point_b, but the traffic
+        # that matters is on the whole road road_a -> road_b.
+        count = traffic.get(segment_between(road_a, road_b), 0)
+        speed = vehicle.speed * speed_factor_for_count(count)
+        return vehicle.calculate_distance(point_a, point_b) / speed
+
+    # From where it is now to the next point on the route...
+    here = route[vehicle.position]
+    ahead = route[vehicle.position + 1]
+
+    total = seconds_on(
+        vehicle.get_current_location(), ahead, here, ahead
+    )
+
+    # ...then every full segment after that
+    for index in range(vehicle.position + 1, len(route) - 1):
+        total += seconds_on(
+            route[index], route[index + 1],
+            route[index], route[index + 1]
+        )
 
     return total
 
@@ -83,7 +127,7 @@ def emergency_status(simulation, emergency):
     else:
         elapsed = simulation.time - emergency.created_at
         remaining = remaining_distance(vehicle) if vehicle else 0.0
-        eta = remaining / vehicle.speed if vehicle else 0.0
+        eta = remaining_seconds(simulation, vehicle) if vehicle else 0.0
 
     vehicle_id = None
     if vehicle is not None and vehicle in simulation.vehicles:

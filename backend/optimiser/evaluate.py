@@ -15,6 +15,10 @@ nothing), so it is safe to run at any time. It answers three questions:
      junctions? (a sample, so "best found", not a proof of the optimum)
   3. Would a different random seed give a different answer? (stability)
 
+It also checks the several-station chooser: how close greedy picking, and
+greedy picking followed by swaps, get to the best possible set found by
+trying EVERY set (only practical for 2 and 3 stations).
+
 All stations are compared on the SAME demand: every junction that all the
 compared stations can reach, each counted once. That is exact (no random
 sampling) and it never flatters a station that can't reach part of the map.
@@ -29,9 +33,18 @@ from pathlib import Path
 
 from backend.optimiser.station_optimiser import (
     dense_candidates,
+    exhaustive_selection,
+    greedy_selection,
+    measure_set,
     optimise_station_locations,
+    prepare_stations,
+    refine_by_swapping,
+    response_table,
+    sample_emergencies,
+    set_score,
     shortest_distances,
     snap_to_road,
+    unreachable_penalty,
 )
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -163,6 +176,29 @@ def main():
     print(f"  different stations picked as rank 1: {len(counts)}")
     print(f"  most common pick won {counts.most_common(1)[0][1]} of {arguments.seeds} runs")
     print(f"  the exact-demand best grid candidate won {counts[exact_best]} of {arguments.seeds} runs")
+
+    # --- Several stations: greedy vs swaps vs trying every set --------------
+    stations_table = prepare_stations(graph, candidates)
+    emergencies = sample_emergencies(stations_table, arguments.scenarios, 1)
+    times = response_table(stations_table, emergencies, SPEED)
+    penalty = unreachable_penalty(times)
+
+    def average_minutes(members):
+        return measure_set(times, members, penalty, TARGET_SECONDS)["ranking_seconds"] / 60
+
+    print(f"\nSeveral stations ({len(stations_table)} candidates, "
+          f"{arguments.scenarios} emergencies): mean response, unreached emergencies "
+          f"counted as the slowest response")
+    print(f"  {'stations':<10}{'greedy':>9}{'+ swaps':>9}{'best possible':>15}  swaps reach the best?")
+
+    for count in (2, 3):
+        greedy = greedy_selection(times, count, penalty)
+        swapped = refine_by_swapping(times, greedy, penalty)
+        best = exhaustive_selection(times, count, penalty)
+
+        print(f"  {count:<10}{average_minutes(greedy):>6.2f} min"
+              f"{average_minutes(swapped):>6.2f} min{average_minutes(best):>12.2f} min"
+              f"  {'yes' if set_score(times, swapped, penalty) == set_score(times, best, penalty) else 'no'}")
 
 
 if __name__ == "__main__":

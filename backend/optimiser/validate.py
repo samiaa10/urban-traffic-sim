@@ -42,7 +42,12 @@ def simulated_response_time(graph, path):
 
     start, end = graph.nodes[path[0]], graph.nodes[path[-1]]
 
-    simulation = Simulation(to_points(graph, path))
+    # The Simulation needs a first vehicle, so use a car parked at the
+    # station (a route of length zero). It must NOT share the ambulance's
+    # route: two vehicles on one road count as traffic and slow each other
+    # down, and this check is about an ambulance with the road to itself.
+    parked = {"latitude": start["latitude"], "longitude": start["longitude"]}
+    simulation = Simulation([parked, parked])
 
     station = simulation.add_station(start["latitude"], start["longitude"])
     simulation.add_emergency_vehicle(
