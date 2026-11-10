@@ -16,6 +16,7 @@ import type {
   OptimiserResponse,
   StationSetResponse,
 } from "./optimiser.ts"
+import { API_URL } from "./config.ts"
 import {
   allFinished,
   congestionColour,
@@ -195,7 +196,7 @@ function App() {
         async () => {
           try {
             const response = await fetch(
-              "http://127.0.0.1:8000/simulation/step",
+              `${API_URL}/simulation/step`,
               {
                 method: "POST",
               }
@@ -212,7 +213,7 @@ function App() {
             // Fetch live congestion data
             try {
               const congestionResponse = await fetch(
-                "http://127.0.0.1:8000/simulation/congestion"
+                `${API_URL}/simulation/congestion`
               )
 
               if (congestionResponse.ok) {
@@ -231,7 +232,7 @@ function App() {
             // Fetch the emergency response status (ETA, response time)
             try {
               const statusResponse = await fetch(
-                "http://127.0.0.1:8000/emergency/status"
+                `${API_URL}/emergency/status`
               )
 
               if (statusResponse.ok) {
@@ -274,14 +275,14 @@ function App() {
     try {
       // 1. Find nearest start road node
       const startResponse = await fetch(
-        `http://127.0.0.1:8000/nearest-node?latitude=${start[0]}&longitude=${start[1]}`
+        `${API_URL}/nearest-node?latitude=${start[0]}&longitude=${start[1]}`
       )
 
       const startNode = await startResponse.json()
 
       // 2. Find nearest destination node
       const destinationResponse = await fetch(
-        `http://127.0.0.1:8000/nearest-node?latitude=${destination[0]}&longitude=${destination[1]}`
+        `${API_URL}/nearest-node?latitude=${destination[0]}&longitude=${destination[1]}`
       )
 
       const destinationNode =
@@ -289,7 +290,7 @@ function App() {
 
       // 3. Calculate A* route
       const routeResponse = await fetch(
-        `http://127.0.0.1:8000/route?start=${startNode.node}&destination=${destinationNode.node}`
+        `${API_URL}/route?start=${startNode.node}&destination=${destinationNode.node}`
       )
 
       const data = await routeResponse.json()
@@ -318,7 +319,7 @@ function App() {
 
       // 4. Start backend simulation
       const simulationResponse = await fetch(
-        `http://127.0.0.1:8000/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
+        `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
         {
           method: "POST",
         }
@@ -385,21 +386,21 @@ function App() {
 
       // Find graph node for first point
       const startResponse = await fetch(
-        `http://127.0.0.1:8000/nearest-node?latitude=${blockedStart[0]}&longitude=${blockedStart[1]}`
+        `${API_URL}/nearest-node?latitude=${blockedStart[0]}&longitude=${blockedStart[1]}`
       )
 
       const startNode = await startResponse.json()
 
       // Find graph node for second point
       const endResponse = await fetch(
-        `http://127.0.0.1:8000/nearest-node?latitude=${blockedEnd[0]}&longitude=${blockedEnd[1]}`
+        `${API_URL}/nearest-node?latitude=${blockedEnd[0]}&longitude=${blockedEnd[1]}`
       )
 
       const endNode = await endResponse.json()
 
       // Block road segment
       const blockResponse = await fetch(
-        `http://127.0.0.1:8000/incident/block?start=${startNode.node}&destination=${endNode.node}`,
+        `${API_URL}/incident/block?start=${startNode.node}&destination=${endNode.node}`,
         {
           method: "POST",
         }
@@ -418,7 +419,7 @@ function App() {
 
       // Reroute vehicle 0
       const rerouteResponse = await fetch(
-        "http://127.0.0.1:8000/simulation/reroute?vehicle_id=0",
+        `${API_URL}/simulation/reroute?vehicle_id=0`,
         {
           method: "POST",
         }
@@ -485,7 +486,7 @@ function App() {
 
       // 1. Create ambulance station
       const stationResponse = await fetch(
-        `http://127.0.0.1:8000/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
+        `${API_URL}/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
         {
           method: "POST",
         }
@@ -499,7 +500,7 @@ function App() {
 
       // 2. Add ambulance to station
       const vehicleResponse = await fetch(
-        "http://127.0.0.1:8000/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance",
+        `${API_URL}/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance`,
         {
           method: "POST",
         }
@@ -511,7 +512,7 @@ function App() {
 
       // 3. Create emergency and dispatch ambulance
       const emergencyResponse = await fetch(
-        `http://127.0.0.1:8000/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
+        `${API_URL}/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
         {
           method: "POST",
         }
@@ -565,7 +566,7 @@ function App() {
   const blockRoadAheadOfAmbulance = async () => {
     try {
       const response = await fetch(
-        "http://127.0.0.1:8000/emergency/block-ahead",
+        `${API_URL}/emergency/block-ahead`,
         {
           method: "POST",
         }

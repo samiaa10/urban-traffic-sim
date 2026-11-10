@@ -1,0 +1,8 @@
+# What the deployed backend (Render) needs, and nothing more.
+# requirements.txt also has osmnx and pytest: osmnx is only used once, to
+# download the map, and the map is already committed (data/osm/).
+fastapi
+uvicorn
+# The saved map stores numpy numbers, so it cannot be opened without numpy
+# (2.x: the map was saved with numpy 2).
+numpy>=2

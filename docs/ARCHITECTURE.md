@@ -10,15 +10,48 @@ The project has two parts that talk over HTTP:
 - **Frontend** (`frontend/`): React + TypeScript. It draws the map and calls the backend.
 
 ```mermaid
-flowchart LR
-    OSM[(OpenStreetMap)] -->|osm_loader.py, run once| PKL[data/osm/norwich_graph.pkl]
-    PKL -->|loaded at API start-up| API[FastAPI app<br/>backend/api/main.py]
-    API --> ROUTING[routing/<br/>A*, Dijkstra, Graph]
-    API --> SIM[simulation/<br/>vehicles, closures, rerouting,<br/>emergencies, stations]
-    API --> OPT[optimiser/<br/>station optimiser]
-    SIM --> ROUTING
-    OPT --> ROUTING
-    FE[React + Leaflet map<br/>frontend/src/App.tsx] <-->|HTTP + JSON<br/>127.0.0.1:8000| API
+flowchart TB
+    OSM[(OpenStreetMap)] -->|"osm_loader.py (run once)"| PKL[("Norwich road graph<br/>data/osm/norwich_graph.pkl<br/>5,058 junctions, 10,980 segments")]
+
+    subgraph FE["Frontend: React + TypeScript + Vite"]
+        APP["App.tsx + OptimiserPanel<br/>controls, status panel, polling"]
+        MAP["Leaflet map (react-leaflet)<br/>routes, vehicles, congestion, markers"]
+        APP --> MAP
+    end
+
+    subgraph BE["Backend: FastAPI (backend/api/main.py)"]
+        API["HTTP endpoints + CORS"]
+        ROUTING["Routing engine<br/>Graph, A*, Dijkstra"]
+        SIM["Simulation engine<br/>vehicles, directional congestion,<br/>closures, rerouting"]
+        EMER["Emergency response<br/>stations, dispatch, ETA,<br/>ambulance priority"]
+        OPT["Optimisation engine<br/>single + multi-station optimiser"]
+        API --> SIM
+        API --> ROUTING
+        API --> EMER
+        API --> OPT
+        SIM --> ROUTING
+        EMER --> SIM
+        OPT --> ROUTING
+    end
+
+    PKL -->|"loaded at start-up"| API
+    APP <-->|"HTTP + JSON<br/>127.0.0.1:8000"| API
+    TILES[OpenStreetMap tile server] -->|map tiles| MAP
+
+    subgraph QA["Testing and benchmarking"]
+        PYT["pytest: routing, simulation,<br/>emergency, optimiser, API"]
+        BEN["Benchmark scripts -> docs/*.md"]
+        FET["Frontend: node:test logic tests<br/>+ Vitest / React Testing Library"]
+        CI["GitHub Actions CI"]
+    end
+
+    PYT -.-> BE
+    BEN -.-> ROUTING
+    BEN -.-> SIM
+    BEN -.-> OPT
+    FET -.-> FE
+    CI -.-> PYT
+    CI -.-> FET
 ```
 
 The Norwich data is downloaded once and saved as a pickle file. The API loads it when it starts, and the benchmark and optimiser scripts load it themselves. See [Road-network data](../README.md#road-network-data).
@@ -44,7 +77,8 @@ backend/
 │   ├── emergency.py            Emergency (location, state, response time)
 │   ├── station.py              EmergencyStation (holds available emergency vehicles)
 │   ├── dispatch.py             Emergency status (congestion-aware ETA), and the "close a road ahead of the ambulance" scenario
-│   └── benchmark_rerouting.py  Affected-only vs recalculate-all rerouting benchmark
+│   ├── benchmark_rerouting.py  Affected-only vs recalculate-all rerouting benchmark
+│   └── benchmark_performance.py Throughput, memory, several closures, optimiser runtime (writes docs/performance_benchmark.md)
 ├── optimiser/
 │   ├── station_optimiser.py    Ranks candidate station locations, chooses SETS of stations, baselines, explanations
 │   ├── run.py                  Command-line interface for the optimiser (--stations N for a set)
@@ -59,10 +93,13 @@ frontend/
 ├── src/OptimiserResults.tsx    The optimiser's result tables and text (no Leaflet, so testable)
 ├── src/optimiser.ts            Optimiser response types, requests, error handling, number formatting
 ├── src/main.tsx                React entry point
-├── tests/                      Frontend tests (run with `npm test`)
-└── vite.config.ts, package.json, tsconfig*.json, eslint.config.js
+├── tests/                      Logic tests (Node's test runner, `npm run test:unit`)
+├── ui-tests/                   Interaction tests (Vitest + jsdom + React Testing Library, `npm run test:ui`)
+├── Dockerfile                  Frontend image (Vite dev server)
+└── vite.config.ts, vitest.config.ts, package.json, tsconfig*.json, eslint.config.js
 
-docs/                           This file, the demo guide, and saved benchmark reports
+docs/                           This file, the demo guide, saved benchmark reports, portfolio notes
+docker-compose.yml, backend/Dockerfile   Optional: run both servers in containers
 .github/workflows/tests.yml     CI: backend tests (Python 3.9 and 3.11), frontend lint, build and tests
 ```
 
@@ -99,9 +136,9 @@ Congestion is not only drawn on the map, it changes how vehicles move:
 2. `congestion_level(count)` turns a count into a level (`clear`, `light`, `moderate`, `heavy`). The map colours roads by this level, and `SPEED_FACTORS` turns the same level into a fraction of full speed: 1.0 for clear or light (a lone vehicle is never slowed), 0.6 for moderate, 0.3 for heavy.
 3. `Vehicle.move(time, is_blocked, speed_factor)` takes an optional function giving the speed factor for the road it is on. Movement is time-based: it works out how long the rest of the current road takes at the reduced speed, and carries any leftover time on to the next road. Without the function a vehicle drives at full speed, as before.
 4. Each vehicle keeps `journey_seconds`, a clock that runs every step until it arrives, including time stuck behind a closed road. Congestion and closures both lengthen a journey, and `/simulation/step` reports `speed_factor` and `journey_seconds` per vehicle.
-5. `dispatch.remaining_seconds` computes an ambulance's ETA the same way, using each remaining road's current speed factor, so the ETA shown in the status panel grows when the route is congested.
+5. `dispatch.remaining_seconds` computes an ambulance's ETA the same way, using each remaining road's current speed factor, so the ETA shown in the status panel grows when the route is congested. It counts only traffic going the same way, and for an ambulance on a call it ignores traffic (ambulance priority), matching how `step()` moves it.
 
-Simplifications: vehicles in both directions on a road count together (the same segment key is used for the map, routing and speed); ambulances get no priority; a vehicle that crosses several short roads in one second keeps using that second's snapshot. Routing still uses the flat 50 m per vehicle penalty rather than predicted travel time.
+Speed is driven by `get_directional_traffic`, which counts each direction of a road separately (`directed_segment`), while the map colours and routing penalty still use the merged `segment_between` key. Ambulances with `on_emergency` set ignore traffic. Simplifications: a vehicle that crosses several short roads in one second keeps using that second's snapshot. Routing still uses the flat 50 m per vehicle penalty rather than predicted travel time.
 
 ### Rerouting
 
@@ -172,12 +209,19 @@ The frontend is mostly one React component file, `frontend/src/App.tsx`, using `
 
 `test_api.py` drives the real FastAPI app through `TestClient`. `main.py` reads the `NORWICH_SIM_GRAPH` environment variable (default: the Norwich pickle), and the test file points it at a small 4x4 grid map with a one-way dead end and an unconnected junction, so the endpoints are tested without the Norwich data. The file is skipped if `fastapi` or `httpx` is not installed. The simulation is a module-level variable in `main.py`, so a fixture resets it before every test.
 
-**Frontend.** `frontend/tests/` holds tests run by `npm test`. Because the project had no frontend test tool, they use Node's built-in test runner: `tsconfig.test.json` compiles the tests and the few source files they import (`simulationHelpers.ts`, `optimiser.ts`, `OptimiserResults.tsx`) into `.test-build/`, then `node --test` runs them. Components are rendered to HTML with `react-dom/server`; `fetch` is replaced by a fake. Anything that needs a real browser (Leaflet, clicks) is not covered, which is why `OptimiserResults.tsx` and `simulationHelpers.ts` are kept free of Leaflet. Source files that tests import must write their relative imports with the extension (`./optimiser.ts`).
+**Frontend logic tests.** `frontend/tests/` holds tests run by `npm run test:unit`. They use Node's built-in test runner: `tsconfig.test.json` compiles the tests and the few source files they import (`simulationHelpers.ts`, `optimiser.ts`, `OptimiserResults.tsx`) into `.test-build/`, then `node --test` runs them. Components are rendered to HTML with `react-dom/server`; `fetch` is replaced by a fake. Source files that tests import must write their relative imports with the extension (`./optimiser.ts`).
 
-GitHub Actions runs `python -m pytest backend/tests -v` on Python 3.9 and 3.11, and `npm run lint`, `npm run build` and `npm test` for the frontend.
+**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time). Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures). Real Leaflet and real browser layout are not covered.
+
+`npm test` runs both kinds.
+
+GitHub Actions runs `python -m pytest backend/tests -v` on Python 3.9 and 3.11, and `npm run lint`, `npm run build` and `npm test` (both kinds of frontend test) for the frontend.
 
 ## Known design trade-offs
 
 - The simulation is a module-level variable in `main.py`, which keeps the code simple but means one simulation per server process.
 - The pickle format is quick to load but couples the data file to the `Graph` class and is not safe to load from untrusted sources.
 - `frontend/src/App.tsx` holds all the UI logic in one file. Splitting it into components and a small API client would be a natural clean-up.
+- The frontend has no pause or reset button: a simulation starts when a route is calculated and a new map click starts over.
+- Routing still adds a flat 50 m per vehicle on a road instead of using predicted travel time. The congestion benchmark shows it helps (see `docs/congestion_benchmark.md`); predicted travel time would be a larger change.
+- **Deployment (Render).** `render.yaml` describes a free Python web service (the backend, started with `uvicorn ... --port $PORT`) and a static site (the frontend, built with `npm run build`). The frontend learns the backend's address from `VITE_API_URL` at build time (`frontend/src/config.ts`), and the backend allows only the origins listed in `CORS_ORIGINS` (`backend/api/settings.py`). The Norwich graph is committed to Git so the backend can start without downloading anything. Because the simulation lives in one in-memory variable, a deployed instance is shared by everyone who uses it.

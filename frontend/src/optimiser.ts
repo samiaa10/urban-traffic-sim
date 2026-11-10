@@ -3,7 +3,17 @@
 // tested on its own (see tests/optimiser.test.ts).
 
 // Same backend address the rest of the app uses
+// The default backend address for local development. main.tsx calls
+// setApiBase() with the configured address (see config.ts). It is set
+// from outside, rather than read here, so this file also works under
+// Node's test runner, where Vite's settings do not exist.
 export const API = "http://127.0.0.1:8000"
+
+let apiBase = API
+
+export function setApiBase(url: string) {
+  apiBase = url.replace(/\/+$/, "")
+}
 
 // ------------------------------------------------
 // One-station ranking: /optimiser/stations
@@ -99,7 +109,7 @@ export async function requestJson<T>(
   fetchImpl: FetchLike = (url) => fetch(url),
   fallback = "The optimiser failed"
 ): Promise<T> {
-  const response = await fetchImpl(`${API}${path}`)
+  const response = await fetchImpl(`${apiBase}${path}`)
 
   let body: unknown
 

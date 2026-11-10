@@ -22,7 +22,7 @@ jobs:
       # fastapi and httpx are for the API tests (osmnx and the Norwich
       # road-map data file are not needed: the tests use a tiny map)
       - name: Install test dependencies
-        run: pip install pytest fastapi httpx
+        run: pip install pytest fastapi httpx pyyaml
 
       - name: Run the tests
         run: python -m pytest backend/tests -v
@@ -43,7 +43,7 @@ jobs:
           python-version: "3.9"
 
       - name: Install test dependencies
-        run: pip install pytest fastapi httpx
+        run: pip install pytest fastapi httpx pyyaml
 
       - name: Run the tests
         run: python -m pytest backend/tests -v

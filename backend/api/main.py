@@ -7,6 +7,7 @@ import math
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
+from backend.api.settings import allowed_origins
 from backend.routing.a_star import a_star
 from backend.simulation.simulation import Simulation
 from backend.simulation import rerouting
@@ -39,9 +40,11 @@ app = FastAPI(
 )
 
 
+# Which websites may call this API from a browser. Locally that is the
+# Vite dev server; when deployed, set CORS_ORIGINS to the frontend's URL.
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["http://localhost:5173"],
+    allow_origins=allowed_origins(os.environ.get("CORS_ORIGINS")),
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],

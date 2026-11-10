@@ -5,8 +5,12 @@
 __pycache__/
 *.pyc
 
-# Generated data
-data/
+# Generated data (but the Norwich graph IS committed: the deployed
+# backend on Render builds from Git and has no other way to get it)
+data/*
+!data/osm/
+data/osm/*
+!data/osm/norwich_graph.pkl
 cache/
 
 # Virtual environments

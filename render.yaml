@@ -1,0 +1,34 @@
+# Render Blueprint: creates both services from this repository.
+# Step-by-step instructions are in the README ("Deploying to Render").
+services:
+  # ---- Backend: FastAPI ----
+  - type: web
+    name: norwich-sim-api
+    runtime: python
+    plan: free
+    buildCommand: pip install -r requirements-deploy.txt
+    # Render tells the app which port to use through $PORT
+    startCommand: uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT
+    healthCheckPath: /
+    envVars:
+      - key: PYTHON_VERSION
+        value: 3.12.3
+      # The frontend's address, for example https://norwich-sim.onrender.com
+      # Render asks for this when the Blueprint is created.
+      - key: CORS_ORIGINS
+        sync: false
+
+  # ---- Frontend: React + Vite, built to static files ----
+  - type: web
+    name: norwich-sim
+    runtime: static
+    rootDir: frontend
+    buildCommand: npm ci && npm run build
+    staticPublishPath: dist
+    envVars:
+      - key: NODE_VERSION
+        value: "22"
+      # The backend's address, for example https://norwich-sim-api.onrender.com
+      # Render asks for this when the Blueprint is created.
+      - key: VITE_API_URL
+        sync: false
