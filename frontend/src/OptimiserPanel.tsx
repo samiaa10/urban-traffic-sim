@@ -1,4 +1,4 @@
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { CircleMarker, Popup, Tooltip } from "react-leaflet"
 import {
   SCENARIOS,
@@ -17,6 +17,8 @@ import {
   SHOWN,
   StationSetResults,
 } from "./OptimiserResults.tsx"
+import { Icon, Panel, Spinner } from "./components.tsx"
+import { COLOURS } from "./mapStyles.ts"
 
 // Choices offered for the several-station search
 const STATION_COUNTS = [2, 3, 4, 5]
@@ -39,14 +41,20 @@ export function OptimiserMarkers({
           center={[result.latitude, result.longitude]}
           radius={13}
           pathOptions={{
-            color: result.rank === 1 ? "#15803d" : "#1d4ed8",
-            fillColor: result.rank === 1 ? "#16a34a" : "#2563eb",
-            fillOpacity: 0.85,
+            color: result.rank === 1 ? COLOURS.rankBest : COLOURS.rank,
+            fillColor: result.rank === 1 ? COLOURS.rankBest : COLOURS.rank,
+            weight: 2,
+            fillOpacity: 0.92,
             // Clicking a marker should not also pick a route start point
             bubblingMouseEvents: false,
           }}
         >
-          <Tooltip permanent direction="center" opacity={1}>
+          <Tooltip
+            permanent
+            direction="center"
+            opacity={1}
+            className="marker-number"
+          >
             {result.rank}
           </Tooltip>
           <Popup>
@@ -64,7 +72,7 @@ export function OptimiserMarkers({
   )
 }
 
-// Purple markers for a chosen set of stations, numbered in pick order
+// Navy markers for a chosen set of stations, numbered in pick order
 export function StationSetMarkers({
   picks,
 }: {
@@ -78,13 +86,19 @@ export function StationSetMarkers({
           center={[pick.latitude, pick.longitude]}
           radius={15}
           pathOptions={{
-            color: "#6d28d9",
-            fillColor: "#7c3aed",
-            fillOpacity: 0.85,
+            color: COLOURS.chosen,
+            fillColor: COLOURS.chosen,
+            weight: 2,
+            fillOpacity: 0.92,
             bubblingMouseEvents: false,
           }}
         >
-          <Tooltip permanent direction="center" opacity={1}>
+          <Tooltip
+            permanent
+            direction="center"
+            opacity={1}
+            className="marker-number"
+          >
             {pick.order}
           </Tooltip>
           <Popup>
@@ -102,7 +116,7 @@ export function StationSetMarkers({
 }
 
 // ------------------------------------------------
-// PANEL: buttons, results
+// PANEL: the controls (shown in the sidebar)
 // ------------------------------------------------
 
 export function OptimiserPanel({
@@ -110,17 +124,24 @@ export function OptimiserPanel({
   onResults,
   setData,
   onSetResults,
+  onLoadingChange,
 }: {
   data: OptimiserResponse | null
   onResults: (data: OptimiserResponse | null) => void
   setData: StationSetResponse | null
   onSetResults: (data: StationSetResponse | null) => void
+  // Lets the screen show a placeholder while a search is running
+  onLoadingChange?: (loading: boolean) => void
 }) {
   const [loading, setLoading] = useState<"ranking" | "set" | null>(null)
   const [error, setError] = useState("")
 
   const [stationCount, setStationCount] = useState(3)
   const [targetMinutes, setTargetMinutes] = useState(8)
+
+  useEffect(() => {
+    onLoadingChange?.(loading !== null)
+  }, [loading, onLoadingChange])
 
   const runRanking = async () => {
     setLoading("ranking")
@@ -149,45 +170,37 @@ export function OptimiserPanel({
   }
 
   return (
-    <div
-      style={{
-        border: "1px solid var(--border)",
-        borderRadius: "6px",
-        padding: "8px 12px",
-        margin: "10px 0",
-        textAlign: "left",
-      }}
+    <Panel
+      id="optimiser"
+      title="Station optimiser"
+      caption="Where should ambulance stations go?"
+      icon="stations"
     >
-      <div>
-        <button onClick={runRanking} disabled={loading !== null}>
-          🏥 Find best ambulance station locations
-        </button>
+      <button
+        className="btn btn--primary btn--block"
+        onClick={runRanking}
+        disabled={loading !== null}
+        aria-busy={loading === "ranking"}
+      >
+        {loading === "ranking" ? <Spinner /> : <Icon name="stations" size={16} />}
+        Find best ambulance station locations
+      </button>
 
-        {(data || setData) && (
-          <button
-            onClick={() => {
-              onResults(null)
-              onSetResults(null)
-            }}
-            style={{ marginLeft: "10px" }}
-          >
-            Clear results
-          </button>
-        )}
+      {loading === "ranking" && (
+        <p className="hint">
+          Running {SCENARIOS} random emergencies from every candidate...
+        </p>
+      )}
 
-        {loading === "ranking" && (
-          <span style={{ marginLeft: "10px" }}>
-            Running {SCENARIOS} random emergencies from every candidate...
-          </span>
-        )}
-      </div>
+      <div className="divider" />
 
-      <div style={{ marginTop: "8px" }}>
-        <label>
-          Stations:{" "}
+      <div className="fields">
+        <label className="field">
+          Stations
           <select
             aria-label="Number of stations"
             value={stationCount}
+            disabled={loading !== null}
             onChange={(event) => setStationCount(Number(event.target.value))}
           >
             {STATION_COUNTS.map((value) => (
@@ -196,12 +209,13 @@ export function OptimiserPanel({
               </option>
             ))}
           </select>
-        </label>{" "}
-        <label>
-          Target:{" "}
+        </label>
+        <label className="field">
+          Target
           <select
             aria-label="Target response time"
             value={targetMinutes}
+            disabled={loading !== null}
             onChange={(event) => setTargetMinutes(Number(event.target.value))}
           >
             {TARGET_MINUTES.map((value) => (
@@ -210,23 +224,90 @@ export function OptimiserPanel({
               </option>
             ))}
           </select>
-        </label>{" "}
-        <button onClick={runStationSet} disabled={loading !== null}>
-          🏥🏥 Find best set of {stationCount} stations
-        </button>
-
-        {loading === "set" && (
-          <span style={{ marginLeft: "10px" }}>
-            Choosing {stationCount} stations that work well together...
-          </span>
-        )}
+        </label>
       </div>
 
-      {error && <div role="alert">{error}</div>}
+      <button
+        className="btn btn--block"
+        onClick={runStationSet}
+        disabled={loading !== null}
+        aria-busy={loading === "set"}
+      >
+        {loading === "set" ? <Spinner /> : <Icon name="chart" size={16} />}
+        Find best set of {stationCount} stations
+      </button>
+
+      {loading === "set" && (
+        <p className="hint">
+          Choosing {stationCount} stations that work well together...
+        </p>
+      )}
+
+      {error && (
+        <div role="alert" className="notice notice--error">
+          <Icon name="alert" size={17} />
+          <span>{error}</span>
+        </div>
+      )}
+
+      {(data || setData) && (
+        <button
+          className="btn btn--quiet"
+          onClick={() => {
+            onResults(null)
+            onSetResults(null)
+          }}
+        >
+          <Icon name="close" size={15} />
+          Clear results
+        </button>
+      )}
+    </Panel>
+  )
+}
+
+// ------------------------------------------------
+// OUTPUT: the results (shown under the map)
+// ------------------------------------------------
+
+export function OptimiserOutput({
+  data,
+  setData,
+  loading,
+}: {
+  data: OptimiserResponse | null
+  setData: StationSetResponse | null
+  loading: boolean
+}) {
+  const hasResults = data !== null || setData !== null
+
+  return (
+    <section
+      className="results"
+      id="optimiser-results"
+      aria-label="Optimiser results"
+    >
+      {!hasResults && loading && (
+        <div className="card skeleton" aria-hidden="true">
+          <span />
+          <span />
+          <span />
+          <span />
+        </div>
+      )}
+
+      {!hasResults && !loading && (
+        <div className="empty">
+          <Icon name="chart" size={26} />
+          <strong>No optimisation results yet</strong>
+          Run a search from the Station optimiser panel to compare candidate
+          locations. Results appear here and as numbered markers on the map.
+        </div>
+      )}
 
       {setData && <StationSetResults data={setData} />}
 
       {data && <RankingResults data={data} />}
-    </div>
+    </section>
   )
 }

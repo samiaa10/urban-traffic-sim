@@ -1,7 +1,8 @@
-// The optimiser's results as tables and text. Nothing here touches
-// Leaflet or the network, so it can be rendered and tested without a
-// browser (see tests/optimiserResults.test.tsx).
+// The optimiser's results as summaries, charts and tables. Nothing here
+// touches Leaflet or the network, so it can be rendered and tested without
+// a browser (see tests/optimiserResults.test.tsx).
 
+import { Icon } from "./components.tsx"
 import {
   count,
   minutes,
@@ -14,10 +15,65 @@ import {
 // How many of the ranked candidates to show in the table and on the map
 export const SHOWN = 10
 
-const cell = { padding: "2px 10px", textAlign: "left" as const }
+// ------------------------------------------------
+// A simple bar chart made of HTML (no chart library).
+// Each bar is also written out as text, so it can be read without seeing it.
+// ------------------------------------------------
+
+type Bar = {
+  label: string
+  // null = no value (for example, nothing was reachable)
+  value: number | null
+  text: string
+  best?: boolean
+}
+
+function BarChart({
+  title,
+  bars,
+  max,
+  note,
+}: {
+  title: string
+  bars: Bar[]
+  // The value that fills a whole bar. Defaults to the largest value.
+  max?: number
+  note?: string
+}) {
+  const values = bars.flatMap((bar) => (bar.value === null ? [] : [bar.value]))
+  const scale = max ?? Math.max(...values, 0)
+
+  return (
+    <div className="chart">
+      <h3>{title}</h3>
+      <ul className="bars">
+        {bars.map((bar) => {
+          const width =
+            bar.value === null || scale <= 0
+              ? 0
+              : Math.max(2, Math.min(100, (bar.value / scale) * 100))
+
+          return (
+            <li
+              key={bar.label}
+              className={`bar-row${bar.best ? " bar-row--best" : ""}`}
+            >
+              <span className="bar-label">{bar.label}</span>
+              <span className="bar-track" aria-hidden="true">
+                <span className="bar-fill" style={{ width: `${width}%` }} />
+              </span>
+              <span className="bar-value">{bar.text}</span>
+            </li>
+          )
+        })}
+      </ul>
+      {note && <p className="chart-note">{note}</p>}
+    </div>
+  )
+}
 
 // ------------------------------------------------
-// One-station ranking: explanation, table, footnote
+// One-station ranking: explanation, charts, table, footnote
 // ------------------------------------------------
 
 export function RankingResults({ data }: { data: OptimiserResponse }) {
@@ -25,63 +81,85 @@ export function RankingResults({ data }: { data: OptimiserResponse }) {
     return <div>No candidate stations were found.</div>
   }
 
+  const shown = data.results.slice(0, SHOWN)
+
   return (
-    <>
-      <div style={{ margin: "8px 0" }}>
-        <strong>
-          Recommended: candidate #1 at{" "}
-          {place(data.results[0].latitude, data.results[0].longitude)}
-        </strong>{" "}
-        (green marker on the map)
-        <ul style={{ margin: "4px 0" }}>
+    <div className="card results-card">
+      <h2 className="results-title">
+        <Icon name="stations" size={18} />
+        Single-station ranking
+      </h2>
+
+      <div className="results-summary">
+        <div>
+          <strong>
+            Recommended: candidate #1 at{" "}
+            {place(data.results[0].latitude, data.results[0].longitude)}
+          </strong>{" "}
+          (green marker on the map)
+        </div>
+        <ul>
           {data.explanation.map((sentence) => (
             <li key={sentence}>{sentence}</li>
           ))}
         </ul>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <div className="chart-grid">
+        <BarChart
+          title="Average response by candidate"
+          bars={shown.map((result) => ({
+            label: `Candidate ${result.rank}`,
+            value: result.average_seconds,
+            text: minutes(result.average_seconds),
+            best: result.rank === 1,
+          }))}
+          note="Shorter is better."
+        />
+        <BarChart
+          title={`Emergencies reached within ${minutes(data.target_seconds)}`}
+          bars={shown.map((result) => ({
+            label: `Candidate ${result.rank}`,
+            value: result.within_target_percent,
+            text: `${result.within_target_percent.toFixed(0)}%`,
+            best: result.rank === 1,
+          }))}
+          max={100}
+          note="Longer is better."
+        />
+      </div>
+
+      <div className="table-wrap">
+        <table className="data-table">
           <thead>
             <tr>
-              <th style={cell}>Rank</th>
-              <th style={cell}>Average</th>
-              <th style={cell}>Worst case</th>
-              <th style={cell}>Within {minutes(data.target_seconds)}</th>
-              <th style={cell}>Unreached</th>
-              <th style={cell}>Location</th>
+              <th>Rank</th>
+              <th>Average</th>
+              <th>Worst case</th>
+              <th>Within {minutes(data.target_seconds)}</th>
+              <th>Unreached</th>
+              <th>Location</th>
             </tr>
           </thead>
           <tbody>
-            {data.results.slice(0, SHOWN).map((result) => (
+            {shown.map((result) => (
               <tr
                 key={result.node}
-                style={
-                  result.rank === 1
-                    ? {
-                        fontWeight: "bold",
-                        background: "rgba(22, 163, 74, 0.15)",
-                      }
-                    : undefined
-                }
+                className={result.rank === 1 ? "is-highlight" : undefined}
               >
-                <td style={cell}>{result.rank}</td>
-                <td style={cell}>{minutes(result.average_seconds)}</td>
-                <td style={cell}>{minutes(result.worst_seconds)}</td>
-                <td style={cell}>
-                  {result.within_target_percent.toFixed(0)}%
-                </td>
-                <td style={cell}>{result.unreachable}</td>
-                <td style={cell}>
-                  {place(result.latitude, result.longitude)}
-                </td>
+                <td>{result.rank}</td>
+                <td>{minutes(result.average_seconds)}</td>
+                <td>{minutes(result.worst_seconds)}</td>
+                <td>{result.within_target_percent.toFixed(0)}%</td>
+                <td>{result.unreachable}</td>
+                <td>{place(result.latitude, result.longitude)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div style={{ fontSize: "14px", marginTop: "6px" }}>
+      <div className="method-note">
         Top {Math.min(SHOWN, data.results.length)} of {data.results.length}{" "}
         candidates, {data.scenarios} random emergencies. Times are road
         distance at {Math.round(data.speed * 3.6)} km/h, with no traffic
@@ -91,13 +169,20 @@ export function RankingResults({ data }: { data: OptimiserResponse }) {
         . Ranked by average response time; an emergency a station cannot
         reach counts as the slowest response seen.
       </div>
-    </>
+    </div>
   )
 }
 
 // ------------------------------------------------
 // Several stations: chosen set, comparison with baselines
 // ------------------------------------------------
+
+// Short names for the charts (the table keeps the full labels)
+const SHORT_LABELS: Record<string, string> = {
+  best_single: "Best single",
+  top_individual: "Top ranked",
+  random: "Random",
+}
 
 export function StationSetResults({ data }: { data: StationSetResponse }) {
   if (data.stations.length === 0) {
@@ -111,25 +196,34 @@ export function StationSetResults({ data }: { data: StationSetResponse }) {
     {
       key: "chosen",
       label: `Chosen ${data.count} station${data.count === 1 ? "" : "s"}`,
+      short: "Chosen set",
       metrics: data.result,
       highlight: true,
     },
     ...data.baselines.map((baseline) => ({
       key: baseline.name,
       label: baseline.label,
+      short: SHORT_LABELS[baseline.name] ?? baseline.label,
       metrics: baseline,
       highlight: false,
     })),
   ]
 
   return (
-    <>
-      <div style={{ margin: "8px 0" }}>
-        <strong>
-          Recommended: {data.count} station{data.count === 1 ? "" : "s"}
-        </strong>{" "}
-        (purple markers on the map, numbered in the order they add value)
-        <ol style={{ margin: "4px 0" }}>
+    <div className="card results-card">
+      <h2 className="results-title">
+        <Icon name="chart" size={18} />
+        Multi-station placement
+      </h2>
+
+      <div className="results-summary">
+        <div>
+          <strong>
+            Recommended: {data.count} station{data.count === 1 ? "" : "s"}
+          </strong>{" "}
+          (navy markers on the map, numbered in the order they add value)
+        </div>
+        <ol>
           {data.stations.map((pick) => (
             <li key={pick.node}>
               {place(pick.latitude, pick.longitude)}
@@ -141,51 +235,78 @@ export function StationSetResults({ data }: { data: StationSetResponse }) {
             </li>
           ))}
         </ol>
-        <ul style={{ margin: "4px 0" }}>
+        <ul>
           {data.explanation.map((sentence) => (
             <li key={sentence}>{sentence}</li>
           ))}
         </ul>
       </div>
 
-      <div style={{ overflowX: "auto" }}>
-        <table style={{ borderCollapse: "collapse", width: "100%" }}>
+      <div className="chart-grid">
+        <BarChart
+          title="Average response time"
+          bars={rows.map((row) => ({
+            label: row.short,
+            value: row.metrics.average_seconds,
+            text: minutes(row.metrics.average_seconds),
+            best: row.highlight,
+          }))}
+          note="Shorter is better."
+        />
+        <BarChart
+          title={`Emergencies reached within ${target}`}
+          bars={rows.map((row) => ({
+            label: row.short,
+            value: row.metrics.within_target_percent,
+            text: percent(row.metrics.within_target_percent),
+            best: row.highlight,
+          }))}
+          max={100}
+          note="Longer is better."
+        />
+        {data.stations.length > 1 && (
+          <BarChart
+            title="Average response as stations are added"
+            bars={data.stations.map((pick) => ({
+              label: `${pick.order} ${pick.order === 1 ? "station" : "stations"}`,
+              value: pick.average_seconds_after,
+              text: minutes(pick.average_seconds_after),
+              best: pick.order === data.stations.length,
+            }))}
+            note="Each added station helps less than the one before."
+          />
+        )}
+      </div>
+
+      <div className="table-wrap">
+        <table className="data-table">
           <thead>
             <tr>
-              <th style={cell}>Comparison</th>
-              <th style={cell}>Average</th>
-              <th style={cell}>Worst case</th>
-              <th style={cell}>Within {target}</th>
-              <th style={cell}>Unreached</th>
+              <th>Comparison</th>
+              <th>Average</th>
+              <th>Worst case</th>
+              <th>Within {target}</th>
+              <th>Unreached</th>
             </tr>
           </thead>
           <tbody>
             {rows.map((row) => (
               <tr
                 key={row.key}
-                style={
-                  row.highlight
-                    ? {
-                        fontWeight: "bold",
-                        background: "rgba(124, 58, 237, 0.15)",
-                      }
-                    : undefined
-                }
+                className={row.highlight ? "is-highlight" : undefined}
               >
-                <td style={cell}>{row.label}</td>
-                <td style={cell}>{minutes(row.metrics.average_seconds)}</td>
-                <td style={cell}>{minutes(row.metrics.worst_seconds)}</td>
-                <td style={cell}>
-                  {percent(row.metrics.within_target_percent)}
-                </td>
-                <td style={cell}>{count(row.metrics.unreachable)}</td>
+                <td>{row.label}</td>
+                <td>{minutes(row.metrics.average_seconds)}</td>
+                <td>{minutes(row.metrics.worst_seconds)}</td>
+                <td>{percent(row.metrics.within_target_percent)}</td>
+                <td>{count(row.metrics.unreachable)}</td>
               </tr>
             ))}
           </tbody>
         </table>
       </div>
 
-      <div style={{ fontSize: "14px", marginTop: "6px" }}>
+      <div className="method-note">
         {data.count} of {data.candidates_considered} candidate junctions,{" "}
         {data.scenarios} random emergencies, each answered by the nearest
         chosen station. Times are road distance at{" "}
@@ -198,6 +319,6 @@ export function StationSetResults({ data }: { data: StationSetResponse }) {
         response seen when choosing; the Unreached column shows how many
         there were.
       </div>
-    </>
+    </div>
   )
 }

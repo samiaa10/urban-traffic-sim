@@ -34,9 +34,9 @@ export const toCoordinates = (points: ApiPoint[]): Coordinate[] =>
 
 // Colour of a road on the congestion layer
 export function congestionColour(level: string): string {
-  if (level === "heavy") return "red"
-  if (level === "moderate") return "orange"
-  return "green"
+  if (level === "heavy") return "#c0392b"
+  if (level === "moderate") return "#e0932f"
+  return "#2e9e6b"
 }
 
 // ------------------------------------------------
@@ -102,14 +102,14 @@ export function describeSimulationState(input: {
     return {
       label: "Connection lost",
       hint: "The backend stopped responding. Is it still running?",
-      colour: "#dc2626",
+      colour: "#b4423a",
     }
   }
 
   const waiting = {
     label: "Waiting for input",
     hint: "Click the map to choose a start point.",
-    colour: "#d97706",
+    colour: "#b7791f",
   }
 
   if (!input.hasStart) return waiting
@@ -129,14 +129,14 @@ export function describeSimulationState(input: {
     return {
       label: "Running",
       hint: "Vehicles are moving.",
-      colour: "#16a34a",
+      colour: "#2f7d6b",
     }
   }
 
   return {
     label: "Completed",
     hint: "All vehicles have finished their journeys.",
-    colour: "#2563eb",
+    colour: "#2a5d8f",
   }
 }
 

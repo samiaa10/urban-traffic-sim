@@ -72,15 +72,15 @@ describe("toCoordinates", () => {
 
 describe("congestionColour", () => {
   it("maps each level to its map colour", () => {
-    assert.equal(congestionColour("heavy"), "red")
-    assert.equal(congestionColour("moderate"), "orange")
-    assert.equal(congestionColour("light"), "green")
+    assert.equal(congestionColour("heavy"), "#c0392b")
+    assert.equal(congestionColour("moderate"), "#e0932f")
+    assert.equal(congestionColour("light"), "#2e9e6b")
   })
 
   it("draws anything else as green rather than crashing", () => {
-    assert.equal(congestionColour("clear"), "green")
-    assert.equal(congestionColour("something new"), "green")
-    assert.equal(congestionColour(""), "green")
+    assert.equal(congestionColour("clear"), "#2e9e6b")
+    assert.equal(congestionColour("something new"), "#2e9e6b")
+    assert.equal(congestionColour(""), "#2e9e6b")
   })
 })
 
@@ -201,7 +201,7 @@ describe("describeSimulationState", () => {
     })
 
     assert.equal(state.label, "Running")
-    assert.equal(state.colour, "#16a34a")
+    assert.equal(state.colour, "#2f7d6b")
   })
 
   it("is Completed once a route exists and polling has stopped", () => {
@@ -225,7 +225,7 @@ describe("describeSimulationState", () => {
     })
 
     assert.equal(state.label, "Connection lost")
-    assert.equal(state.colour, "#dc2626")
+    assert.equal(state.colour, "#b4423a")
   })
 
   it("ignores a destination when there is no start", () => {

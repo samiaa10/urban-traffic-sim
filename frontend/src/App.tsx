@@ -9,6 +9,7 @@ import {
 import "leaflet/dist/leaflet.css"
 import {
   OptimiserMarkers,
+  OptimiserOutput,
   OptimiserPanel,
   StationSetMarkers,
 } from "./OptimiserPanel.tsx"
@@ -17,6 +18,8 @@ import type {
   StationSetResponse,
 } from "./optimiser.ts"
 import { API_URL } from "./config.ts"
+import { Icon, KpiCard, Logo, Panel, Spinner } from "./components.tsx"
+import { COLOURS } from "./mapStyles.ts"
 import {
   allFinished,
   congestionColour,
@@ -104,6 +107,22 @@ function App() {
 
   // Feedback about the last thing the user did
   const [result, setResult] = useState("")
+
+  // Which button is waiting for the backend (it shows a spinner)
+  const [busy, setBusy] = useState<string | null>(null)
+
+  const run = async (name: string, action: () => Promise<void>) => {
+    setBusy(name)
+
+    try {
+      await action()
+    } finally {
+      setBusy(null)
+    }
+  }
+
+  // Is the station optimiser waiting for the backend?
+  const [optimiserLoading, setOptimiserLoading] = useState(false)
 
   // Latest answer from the emergency station optimiser
   const [optimiser, setOptimiser] =
@@ -377,7 +396,7 @@ function App() {
       }
 
       setResult(
-        "🚧 Closing a road on the route and rerouting..."
+        "Closing a road on the route and rerouting..."
       )
 
       // Choose a road segment ahead of the vehicle
@@ -442,13 +461,13 @@ function App() {
       setIncidentActive(true)
 
       setResult(
-        `🚧 Road closed: ${stats.affected} of ${
+        `Road closed: ${stats.affected} of ${
           stats.vehicles_checked
         } active vehicles used it, ${stats.rerouted} rerouted${
           stats.stranded > 0
             ? `, ${stats.stranded} stranded`
             : ""
-        } | 🔄 Vehicle 0 new route cost ${Math.round(
+        } | Vehicle 0 new route cost ${Math.round(
           rerouteData.distance_metres
         )} m (${rerouteData.nodes_explored} nodes explored)`
       )
@@ -544,7 +563,7 @@ function App() {
       startSimulationPolling()
 
       setResult(
-        `🚑 Ambulance ${emergencyData.vehicle_id} dispatched | ${Math.round(
+        `Ambulance ${emergencyData.vehicle_id} dispatched | ${Math.round(
           emergencyData.route_distance_metres
         )} m response route cost | ${
           emergencyData.nodes_explored
@@ -599,7 +618,7 @@ function App() {
       ])
 
       setResult(
-        `🚧 Road ahead closed | 🔄 Ambulance rerouted: +${Math.round(
+        `Road ahead closed | Ambulance rerouted: +${Math.round(
           data.extra_metres
         )} m (about +${Math.round(
           data.extra_seconds
@@ -648,258 +667,563 @@ function App() {
   // UI
   // ------------------------------------------------
 
+  // Short description of a point on the map, for the route steps
+  const formatPoint = (point: Coordinate) =>
+    `${point[0].toFixed(4)}, ${point[1].toFixed(4)}`
+
+  // What the last action told the user: an error or plain information
+  const resultIsError = /failed|could not/i.test(result)
+
+  // The state of the three route-planning steps
+  const bothPointsChosen = start !== null && destination !== null
+
+  const emergencyBadge: Record<
+    EmergencyStatus["state"],
+    { label: string; tone: string }
+  > = {
+    waiting: { label: "Waiting", tone: "badge--warn" },
+    en_route: { label: "En route", tone: "" },
+    blocked: { label: "Blocked", tone: "badge--err" },
+    arrived: { label: "Arrived", tone: "badge--ok" },
+  }
+
   return (
-    <div>
-      <h1>NORWICH//SIM</h1>
+    <div className="app">
+      <a className="sr-only skip" href="#map">
+        Skip to the map
+      </a>
 
-      <p>
-        Urban Traffic Simulation & Optimisation Platform
-      </p>
-
-      {/* ROUTE BUTTON */}
-      {start && destination && (
-        <button onClick={calculateRoute}>
-          Calculate Route
-        </button>
-      )}
-
-      {/* EMERGENCY BUTTON */}
-      {start && destination && (
-        <button
-          onClick={triggerEmergency}
-          disabled={!routeInfo}
-          title={routeInfo ? "" : "Calculate a route first"}
-          style={{ marginLeft: "10px" }}
-        >
-          🚑 Trigger Ambulance Emergency
-        </button>
-      )}
-
-      {/* ROAD CLOSURE BUTTON */}
-      {start && destination && (
-        <button
-          onClick={triggerIncident}
-          disabled={!routeInfo}
-          title={routeInfo ? "" : "Calculate a route first"}
-          style={{ marginLeft: "10px" }}
-        >
-          🚧 Cause Road Closure & Reroute
-        </button>
-      )}
-
-      {/* CLOSE ROAD AHEAD OF AMBULANCE BUTTON */}
-      {emergencyStatus &&
-        (emergencyStatus.state === "en_route" ||
-          emergencyStatus.state === "blocked") && (
-          <button
-            onClick={blockRoadAheadOfAmbulance}
-            style={{ marginLeft: "10px" }}
-          >
-            🚧 Close Road Ahead of Ambulance
-          </button>
-        )}
-
-      {/* STATUS PANEL: simulation state, route numbers, emergency progress, last action */}
-      <div
-        style={{
-          border: "1px solid var(--border)",
-          borderRadius: "6px",
-          padding: "8px 12px",
-          margin: "10px 0",
-          textAlign: "left",
-        }}
-      >
-        <div>
-          <strong style={{ color: simulationState.colour }}>
-            ● {simulationState.label}
-          </strong>
-          {" - "}
-          {simulationState.hint}
+      {/* ---------------- HEADER ---------------- */}
+      <header className="topbar">
+        <div className="brand">
+          <Logo />
+          <div>
+            <h1>
+              NORWICH<span className="slashes">//</span>SIM
+            </h1>
+            <p>Urban Traffic Simulation &amp; Optimisation Platform</p>
+          </div>
         </div>
 
-        {routeInfo && (
-          <div>
-            Route: {Math.round(routeInfo.distance).toLocaleString()} m
-            {" ("}A*, {routeInfo.nodesExplored.toLocaleString()} nodes
-            explored{")"}
-            {" | "}
-            Vehicles: {vehicles.length} ({finishedVehicles} finished)
-            {" | "}
-            Simulation time: {simulationTime ?? 0} s
-          </div>
-        )}
+        <nav className="nav" aria-label="Sections">
+          <a href="#simulation">
+            <Icon name="route" size={16} />
+            <span>Simulation</span>
+          </a>
+          <a href="#emergency">
+            <Icon name="siren" size={16} />
+            <span>Emergency</span>
+          </a>
+          <a href="#optimiser">
+            <Icon name="stations" size={16} />
+            <span>Optimiser</span>
+          </a>
+          <a
+            href="https://github.com/samiaa10/urban-traffic-sim"
+            target="_blank"
+            rel="noreferrer"
+            aria-label="Source code on GitHub"
+          >
+            <Icon name="github" size={16} />
+            <span>Source</span>
+          </a>
+        </nav>
+      </header>
 
-        {routeInfo && traffic && <div>{describeTraffic(traffic)}</div>}
+      <main className="workspace">
+        {/* ---------------- CONTROLS ---------------- */}
+        <aside className="sidebar" aria-label="Controls">
+          <Panel
+            id="simulation"
+            title="Route simulation"
+            caption="Plan a journey and watch traffic respond"
+            icon="route"
+          >
+            <ol className="steps">
+              <li
+                className={`step ${start ? "step--done" : "step--current"}`}
+              >
+                <span className="step-dot">
+                  {start ? <Icon name="check" size={13} /> : "1"}
+                </span>
+                <span className="step-text">
+                  Start point
+                  {start && <small>{formatPoint(start)}</small>}
+                </span>
+              </li>
+              <li
+                className={`step ${
+                  destination
+                    ? "step--done"
+                    : start
+                      ? "step--current"
+                      : ""
+                }`}
+              >
+                <span className="step-dot">
+                  {destination ? <Icon name="check" size={13} /> : "2"}
+                </span>
+                <span className="step-text">
+                  Destination
+                  {destination && <small>{formatPoint(destination)}</small>}
+                </span>
+              </li>
+              <li
+                className={`step ${
+                  routeInfo
+                    ? "step--done"
+                    : bothPointsChosen
+                      ? "step--current"
+                      : ""
+                }`}
+              >
+                <span className="step-dot">
+                  {routeInfo ? <Icon name="check" size={13} /> : "3"}
+                </span>
+                <span className="step-text">Run the simulation</span>
+              </li>
+            </ol>
 
-        {emergencyStatus && (
-          <div>
-            <strong>🚑 Emergency response:</strong>{" "}
-            {describeEmergency(emergencyStatus)}
-          </div>
-        )}
+            {/* ROUTE BUTTON */}
+            {start && destination && (
+              <button
+                className="btn btn--primary btn--block"
+                onClick={() => run("route", calculateRoute)}
+                disabled={busy === "route"}
+                aria-busy={busy === "route"}
+              >
+                {busy === "route" ? <Spinner /> : <Icon name="route" size={16} />}
+                Calculate Route
+              </button>
+            )}
 
-        {result && <div>{result}</div>}
-      </div>
+            <p className="hint">
+              Click the map to place points. Once both are set, another click
+              starts over.
+            </p>
+          </Panel>
 
-      {/* LIVE CONGESTION LEGEND */}
-      <div style={{ margin: "10px 0" }}>
-        <strong>Live congestion:</strong>{" "}
-        <span>🟢 Light</span>{" "}
-        <span>🟠 Moderate</span>{" "}
-        <span>🔴 Heavy</span>
-      </div>
+          <Panel
+            title="Road closure"
+            caption="Block a road on the route and reroute traffic"
+            icon="barrier"
+          >
+            {/* ROAD CLOSURE BUTTON */}
+            {start && destination ? (
+              <button
+                className="btn btn--block"
+                onClick={() => run("incident", triggerIncident)}
+                disabled={!routeInfo || busy === "incident"}
+                aria-busy={busy === "incident"}
+                title={routeInfo ? "" : "Calculate a route first"}
+              >
+                {busy === "incident" ? (
+                  <Spinner />
+                ) : (
+                  <Icon name="barrier" size={16} />
+                )}
+                Cause Road Closure &amp; Reroute
+              </button>
+            ) : (
+              <div className="empty">
+                <strong>No route yet</strong>
+                Plan a route to test how the network copes with a closed road.
+              </div>
+            )}
+          </Panel>
 
-      {/* EMERGENCY STATION OPTIMISER */}
-      <OptimiserPanel
-        data={optimiser}
-        onResults={setOptimiser}
-        setData={stationSet}
-        onSetResults={setStationSet}
-      />
+          <Panel
+            id="emergency"
+            title="Emergency response"
+            caption="Dispatch an ambulance to the destination"
+            icon="siren"
+          >
+            {/* EMERGENCY BUTTON */}
+            {start && destination ? (
+              <button
+                className="btn btn--emergency btn--block"
+                onClick={() => run("emergency", triggerEmergency)}
+                disabled={!routeInfo || busy === "emergency"}
+                aria-busy={busy === "emergency"}
+                title={routeInfo ? "" : "Calculate a route first"}
+              >
+                {busy === "emergency" ? (
+                  <Spinner />
+                ) : (
+                  <Icon name="siren" size={16} />
+                )}
+                Trigger Ambulance Emergency
+              </button>
+            ) : (
+              <div className="empty">
+                <strong>No active emergency</strong>
+                Plan a route, then dispatch an ambulance to the destination.
+              </div>
+            )}
 
-      <MapContainer
-        center={[52.6309, 1.2974]}
-        zoom={13}
-        style={{
-          height: "600px",
-          width: "100%",
-        }}
-      >
-        <TileLayer
-          attribution="&copy; OpenStreetMap contributors"
-          url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
-        />
+            {/* EMERGENCY PROGRESS */}
+            {emergencyStatus && (
+              <>
+                <div className="emergency-head">
+                  <span className="eyebrow">Ambulance status</span>
+                  <span
+                    className={`badge ${emergencyBadge[emergencyStatus.state].tone}`}
+                  >
+                    {emergencyBadge[emergencyStatus.state].label}
+                  </span>
+                </div>
 
-        <MapClickHandler onClick={handleMapClick} />
+                <dl className="stat-grid stats-list">
+                  {emergencyStatus.state === "arrived" ? (
+                    <div className="stat">
+                      <dt>Response time</dt>
+                      <dd>
+                        {Math.round(emergencyStatus.response_time_seconds ?? 0)}
+                        <small>s</small>
+                      </dd>
+                    </div>
+                  ) : (
+                    <>
+                      <div className="stat">
+                        <dt>ETA</dt>
+                        <dd>
+                          {Math.round(emergencyStatus.eta_seconds)}
+                          <small>s</small>
+                        </dd>
+                      </div>
+                      <div className="stat">
+                        <dt>To go</dt>
+                        <dd>
+                          {Math.round(emergencyStatus.remaining_metres)}
+                          <small>m</small>
+                        </dd>
+                      </div>
+                    </>
+                  )}
+                  <div className="stat">
+                    <dt>Elapsed</dt>
+                    <dd>
+                      {Math.round(emergencyStatus.elapsed_seconds)}
+                      <small>s</small>
+                    </dd>
+                  </div>
+                  <div className="stat">
+                    <dt>Reroutes</dt>
+                    <dd>{emergencyStatus.reroutes}</dd>
+                  </div>
+                </dl>
 
-        {/* START MARKER */}
-        {start && (
-          <CircleMarker
-            center={start}
-            radius={8}
+                {/* The same information as one sentence, for screen readers */}
+                <p className="sr-only">{describeEmergency(emergencyStatus)}</p>
+              </>
+            )}
+
+            {/* CLOSE ROAD AHEAD OF AMBULANCE BUTTON */}
+            {emergencyStatus &&
+              (emergencyStatus.state === "en_route" ||
+                emergencyStatus.state === "blocked") && (
+                <button
+                  className="btn btn--block"
+                  onClick={() => run("block", blockRoadAheadOfAmbulance)}
+                  disabled={busy === "block"}
+                  aria-busy={busy === "block"}
+                >
+                  {busy === "block" ? (
+                    <Spinner />
+                  ) : (
+                    <Icon name="barrier" size={16} />
+                  )}
+                  Close Road Ahead of Ambulance
+                </button>
+              )}
+          </Panel>
+
+          {/* EMERGENCY STATION OPTIMISER */}
+          <OptimiserPanel
+            data={optimiser}
+            onResults={setOptimiser}
+            setData={stationSet}
+            onSetResults={setStationSet}
+            onLoadingChange={setOptimiserLoading}
           />
-        )}
+        </aside>
 
-        {/* DESTINATION MARKER */}
-        {destination && (
-          <CircleMarker
-            center={destination}
-            radius={8}
+        {/* ---------------- STATUS CARDS ---------------- */}
+        <section className="kpis" aria-label="Simulation metrics">
+          <KpiCard label="Status" icon="pulse" sub={simulationState.hint}>
+            <div className="kpi-status" role="status">
+              <span
+                className="dot"
+                style={{ background: simulationState.colour }}
+                aria-hidden="true"
+              />
+              {simulationState.label}
+            </div>
+          </KpiCard>
+
+          <KpiCard
+            label="Route length"
+            icon="route"
+            value={
+              routeInfo ? (
+                <>
+                  {Math.round(routeInfo.distance).toLocaleString()}
+                  <small>m</small>
+                </>
+              ) : (
+                "-"
+              )
+            }
+            sub={
+              routeInfo
+                ? `A*, ${routeInfo.nodesExplored.toLocaleString()} nodes explored`
+                : "No route calculated"
+            }
           />
-        )}
 
-        {/* LIVE TRAFFIC CONGESTION */}
-        {congestion.map((segment, index) => (
-          <Polyline
-            key={`congestion-${index}`}
-            positions={[
-              [
-                segment.start.latitude,
-                segment.start.longitude,
-              ],
-              [
-                segment.end.latitude,
-                segment.end.longitude,
-              ],
-            ]}
-            pathOptions={{
-              color: congestionColour(segment.level),
-              weight: 7,
-              opacity: 0.75,
-            }}
+          <KpiCard
+            label="Vehicles"
+            icon="car"
+            value={vehicles.length}
+            sub={`${finishedVehicles} finished`}
           />
-        ))}
 
-        {/* NORMAL A* ROUTE */}
-        <Polyline positions={route} />
+          <KpiCard
+            label="Simulation time"
+            icon="clock"
+            value={
+              <>
+                {simulationTime ?? 0}
+                <small>s</small>
+              </>
+            }
+            sub="Simulated seconds"
+          />
 
-        {/* EMERGENCY ROUTE */}
-        {emergencyActive &&
-          emergencyRoute.length > 0 && (
-            <Polyline
-              positions={emergencyRoute}
-              pathOptions={{
-                color: "red",
-                weight: 5,
-                dashArray: "10, 10",
-              }}
-            />
+          <KpiCard
+            label="Traffic flow"
+            icon="gauge"
+            value={traffic ? `${traffic.averageSpeedPercent}%` : "-"}
+            sub={
+              traffic
+                ? `of free-flow speed, ${traffic.heldUp} of ${traffic.driving} held up`
+                : "No vehicles driving"
+            }
+          />
+
+          {/* The same numbers as plain sentences, for screen readers */}
+          {routeInfo && (
+            <p className="sr-only">
+              {`Route: ${Math.round(routeInfo.distance).toLocaleString()} m (A*, ${routeInfo.nodesExplored.toLocaleString()} nodes explored) | Vehicles: ${vehicles.length} (${finishedVehicles} finished) | Simulation time: ${simulationTime ?? 0} s`}
+            </p>
           )}
-
-        {/* ROAD CLOSED AHEAD OF THE AMBULANCE */}
-        {blockedAhead.length > 0 && (
-          <Polyline
-            positions={blockedAhead}
-            pathOptions={{
-              color: "black",
-              weight: 10,
-              opacity: 0.85,
-            }}
-          />
-        )}
-
-        {/* DYNAMIC REROUTED ROUTE */}
-        {incidentActive &&
-          incidentRoute.length > 0 && (
-            <Polyline
-              positions={incidentRoute}
-              pathOptions={{
-                color: "orange",
-                weight: 5,
-              }}
-            />
+          {routeInfo && traffic && (
+            <p className="sr-only">{describeTraffic(traffic)}</p>
           )}
+        </section>
 
-        {/* EMERGENCY LOCATION */}
-        {emergencyLocation && (
-          <CircleMarker
-            center={emergencyLocation}
-            radius={14}
-            pathOptions={{
-              color: "red",
-              fillColor: "red",
-              fillOpacity: 0.8,
-            }}
-          />
-        )}
+        {/* ---------------- MAP ---------------- */}
+        <section className="map-card" id="map" aria-label="Norwich map">
+          <div className="map-toolbar">
+            <div>
+              <h2>Norwich road network</h2>
+              <p>Select two points on the map to plan a route</p>
+            </div>
+          </div>
 
-        {/* RECOMMENDED STATION LOCATIONS (numbered by rank) */}
-        {optimiser && (
-          <OptimiserMarkers results={optimiser.results} />
-        )}
+          <div className="map-stage">
+            {/* WHAT THE LAST ACTION TOLD THE USER (floats over the map) */}
+            {result && (
+              <div
+                className={`notice map-notice ${
+                  resultIsError ? "notice--error" : "notice--info"
+                }`}
+                role="status"
+              >
+                <Icon name={resultIsError ? "alert" : "info"} size={17} />
+                <span>{result}</span>
+              </div>
+            )}
 
-        {/* CHOSEN SET OF STATIONS (numbered in pick order) */}
-        {stationSet && (
-          <StationSetMarkers picks={stationSet.stations} />
-        )}
+            <MapContainer
+              className="map"
+              center={[52.6309, 1.2974]}
+              zoom={13}
+            >
+              <TileLayer
+                attribution="&copy; OpenStreetMap contributors"
+                url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
+              />
 
-        {/* ALL VEHICLES */}
-        {vehicles.map((vehicle) => {
-          const isAmbulance =
-            vehicle.vehicle_type === "ambulance" ||
-            vehicle.on_emergency
+              <MapClickHandler onClick={handleMapClick} />
 
-          return (
-            <CircleMarker
-              key={vehicle.vehicle_id}
-              center={[
-                vehicle.latitude,
-                vehicle.longitude,
-              ]}
-              radius={isAmbulance ? 12 : 10}
-              pathOptions={
-                isAmbulance
-                  ? {
-                      color: "red",
-                      fillColor: "red",
-                      fillOpacity: 0.9,
+              {/* START MARKER */}
+              {start && (
+                <CircleMarker
+                  center={start}
+                  radius={8}
+                  pathOptions={{
+                    color: "#ffffff",
+                    weight: 2,
+                    fillColor: COLOURS.start,
+                    fillOpacity: 1,
+                  }}
+                />
+              )}
+
+              {/* DESTINATION MARKER */}
+              {destination && (
+                <CircleMarker
+                  center={destination}
+                  radius={8}
+                  pathOptions={{
+                    color: "#ffffff",
+                    weight: 2,
+                    fillColor: COLOURS.destination,
+                    fillOpacity: 1,
+                  }}
+                />
+              )}
+
+              {/* LIVE TRAFFIC CONGESTION */}
+              {congestion.map((segment, index) => (
+                <Polyline
+                  key={`congestion-${index}`}
+                  positions={[
+                    [segment.start.latitude, segment.start.longitude],
+                    [segment.end.latitude, segment.end.longitude],
+                  ]}
+                  pathOptions={{
+                    color: congestionColour(segment.level),
+                    weight: 7,
+                    opacity: 0.75,
+                  }}
+                />
+              ))}
+
+              {/* NORMAL A* ROUTE */}
+              <Polyline
+                positions={route}
+                pathOptions={{
+                  color: COLOURS.route,
+                  weight: 4,
+                  opacity: 0.9,
+                }}
+              />
+
+              {/* EMERGENCY ROUTE */}
+              {emergencyActive && emergencyRoute.length > 0 && (
+                <Polyline
+                  positions={emergencyRoute}
+                  pathOptions={{
+                    color: COLOURS.emergency,
+                    weight: 5,
+                    dashArray: "10, 10",
+                  }}
+                />
+              )}
+
+              {/* ROAD CLOSED AHEAD OF THE AMBULANCE */}
+              {blockedAhead.length > 0 && (
+                <Polyline
+                  positions={blockedAhead}
+                  pathOptions={{
+                    color: COLOURS.closure,
+                    weight: 10,
+                    opacity: 0.85,
+                  }}
+                />
+              )}
+
+              {/* DYNAMIC REROUTED ROUTE */}
+              {incidentActive && incidentRoute.length > 0 && (
+                <Polyline
+                  positions={incidentRoute}
+                  pathOptions={{
+                    color: COLOURS.reroute,
+                    weight: 5,
+                  }}
+                />
+              )}
+
+              {/* EMERGENCY LOCATION */}
+              {emergencyLocation && (
+                <CircleMarker
+                  center={emergencyLocation}
+                  radius={14}
+                  pathOptions={{
+                    color: COLOURS.emergency,
+                    fillColor: COLOURS.emergency,
+                    fillOpacity: 0.8,
+                  }}
+                />
+              )}
+
+              {/* RECOMMENDED STATION LOCATIONS (numbered by rank) */}
+              {optimiser && <OptimiserMarkers results={optimiser.results} />}
+
+              {/* CHOSEN SET OF STATIONS (numbered in pick order) */}
+              {stationSet && <StationSetMarkers picks={stationSet.stations} />}
+
+              {/* ALL VEHICLES */}
+              {vehicles.map((vehicle) => {
+                const isAmbulance =
+                  vehicle.vehicle_type === "ambulance" || vehicle.on_emergency
+
+                return (
+                  <CircleMarker
+                    key={vehicle.vehicle_id}
+                    center={[vehicle.latitude, vehicle.longitude]}
+                    radius={isAmbulance ? 12 : 10}
+                    pathOptions={
+                      isAmbulance
+                        ? {
+                            color: "#ffffff",
+                            weight: 2,
+                            fillColor: COLOURS.emergency,
+                            fillOpacity: 1,
+                          }
+                        : {
+                            color: "#ffffff",
+                            weight: 2,
+                            fillColor: COLOURS.route,
+                            fillOpacity: 1,
+                          }
                     }
-                  : undefined
-              }
-            />
-          )
-        })}
-      </MapContainer>
+                  />
+                )
+              })}
+            </MapContainer>
+
+            {/* LIVE CONGESTION LEGEND */}
+            <div className="legend">
+              <strong>Live congestion</strong>
+              <div className="legend-items">
+                {[
+                  ["light", "Light"],
+                  ["moderate", "Moderate"],
+                  ["heavy", "Heavy"],
+                ].map(([level, label]) => (
+                  <span className="legend-item" key={level}>
+                    <span
+                      className="legend-swatch"
+                      style={{ background: congestionColour(level) }}
+                    />
+                    {label}
+                  </span>
+                ))}
+              </div>
+            </div>
+          </div>
+        </section>
+
+        {/* ---------------- OPTIMISER RESULTS ---------------- */}
+        <OptimiserOutput
+          data={optimiser}
+          setData={stationSet}
+          loading={optimiserLoading}
+        />
+      </main>
     </div>
   )
 }

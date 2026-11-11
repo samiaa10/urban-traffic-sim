@@ -108,7 +108,7 @@ describe("RankingResults (one station)", () => {
   it("highlights only the top-ranked row", () => {
     const page = html(<RankingResults data={ranking(3)} />)
 
-    assert.equal(page.match(/font-weight:bold/g)?.length, 1)
+    assert.equal(page.match(/is-highlight/g)?.length, 1)
   })
 
   it(`lists at most ${SHOWN} candidates but says how many there were`, () => {
@@ -199,7 +199,7 @@ describe("StationSetResults (several stations)", () => {
   it("highlights only the chosen set", () => {
     const page = html(<StationSetResults data={stationSet()} />)
 
-    assert.equal(page.match(/font-weight:bold/g)?.length, 1)
+    assert.equal(page.match(/is-highlight/g)?.length, 1)
   })
 
   it("shows the explanation sentences", () => {

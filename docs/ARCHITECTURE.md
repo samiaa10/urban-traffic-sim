@@ -89,8 +89,12 @@ backend/
 frontend/
 ├── src/App.tsx                 The main interface: map, controls, simulation loop, API calls
 ├── src/simulationHelpers.ts    Plain functions App uses: status text, emergency text, traffic summary, route conversion
-├── src/OptimiserPanel.tsx      Station optimiser controls and map markers (single-station and station-set)
-├── src/OptimiserResults.tsx    The optimiser's result tables and text (no Leaflet, so testable)
+├── src/OptimiserPanel.tsx      Station optimiser controls, results area and map markers (single-station and station-set)
+├── src/OptimiserResults.tsx    The optimiser's summaries, bar charts and tables (no Leaflet, so testable)
+├── src/components.tsx          Shared pieces: inline icons, logo, panel and KPI card, spinner
+├── src/mapStyles.ts            Colours used on the map (shared by the map, legend and tests)
+├── src/config.ts               Backend address: VITE_API_URL at build time, else http://127.0.0.1:8000
+├── src/index.css               The whole design system: colour tokens, layout, components, responsive rules
 ├── src/optimiser.ts            Optimiser response types, requests, error handling, number formatting
 ├── src/main.tsx                React entry point
 ├── tests/                      Logic tests (Node's test runner, `npm run test:unit`)
@@ -201,7 +205,17 @@ All defined in `backend/api/main.py`. FastAPI generates interactive docs at `/do
 
 ## Frontend
 
-The frontend is mostly one React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. The station optimiser panel and its map markers live in `frontend/src/OptimiserPanel.tsx`; the result tables are in `OptimiserResults.tsx` and the requests and types in `optimiser.ts`. Logic that does not need React (status messages, traffic summary, route conversion) lives in `simulationHelpers.ts`. It calls the backend at `http://127.0.0.1:8000` (hard-coded), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. The backend's CORS setting only allows the origin `http://localhost:5173`.
+The frontend is mostly one React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. The station optimiser panel and its map markers live in `frontend/src/OptimiserPanel.tsx`; the result tables are in `OptimiserResults.tsx` and the requests and types in `optimiser.ts`. Logic that does not need React (status messages, traffic summary, route conversion) lives in `simulationHelpers.ts`. It calls the backend at the address in `config.ts` (the `VITE_API_URL` build setting, defaulting to `http://127.0.0.1:8000` for local development), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. The backend's CORS setting only allows the origin `http://localhost:5173`.
+
+## Interface design
+
+The screen is one workspace: a fixed navy header, a controls column on the left, and on the right a row of five metric cards, the Norwich map (the largest element), and an analysis area for optimiser results. On narrow screens it becomes a single column in the order metrics, map, controls, results.
+
+- **Design system.** `index.css` defines colour, spacing, radius and shadow tokens as CSS variables (navy and blue-grey for structure, a muted green for positive/optimal results, amber and red only for warnings and emergencies) and the components built from them (panels, buttons, KPI cards, badges, notices, tables, bar charts). There are no UI or icon libraries: icons are inline SVG (`components.tsx`) and the charts are plain HTML bars.
+- **Map.** The OpenStreetMap tiles are desaturated with a CSS filter so routes, congestion and markers stand out. Map colours live in `mapStyles.ts`. The latest action's message floats over the map instead of moving the layout.
+- **Meaning of colour.** Route = blue, reroute = orange, ambulance and emergency = red, closed road = near-black, best/optimal = green, chosen station set = navy. Congestion uses green, amber and red.
+- **Accessibility.** Every group of controls is a named region, the header navigation and a skip link work with the keyboard, the simulation state is announced as a status, charts are written out as text beside each bar, the metric cards have a plain-sentence version for screen readers, and animations are switched off for people who ask for reduced motion.
+- **What did not change.** All logic, requests and button labels are as before; the redesign only changed markup and styling (plus a loading spinner and disabled state on the button that was just clicked).
 
 ## Testing
 
@@ -211,7 +225,7 @@ The frontend is mostly one React component file, `frontend/src/App.tsx`, using `
 
 **Frontend logic tests.** `frontend/tests/` holds tests run by `npm run test:unit`. They use Node's built-in test runner: `tsconfig.test.json` compiles the tests and the few source files they import (`simulationHelpers.ts`, `optimiser.ts`, `OptimiserResults.tsx`) into `.test-build/`, then `node --test` runs them. Components are rendered to HTML with `react-dom/server`; `fetch` is replaced by a fake. Source files that tests import must write their relative imports with the extension (`./optimiser.ts`).
 
-**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time). Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures). Real Leaflet and real browser layout are not covered.
+**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time). Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures), `layout.test.tsx` (page structure and landmarks, navigation, empty states, route steps, metric cards, the busy state of Calculate Route). Real Leaflet and real browser layout are not covered.
 
 `npm test` runs both kinds.
 
