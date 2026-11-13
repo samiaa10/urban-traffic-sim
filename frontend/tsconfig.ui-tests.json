@@ -1,0 +1,18 @@
+{
+  // Type-checks the interaction tests (npm run test:ui). Vitest itself
+  // runs them without checking types.
+  "compilerOptions": {
+    "target": "es2023",
+    "lib": ["ES2023", "DOM"],
+    "module": "esnext",
+    "moduleResolution": "bundler",
+    "types": ["vite/client"],
+    "allowImportingTsExtensions": true,
+    "skipLibCheck": true,
+    "strict": true,
+    "verbatimModuleSyntax": true,
+    "jsx": "react-jsx",
+    "noEmit": true
+  },
+  "include": ["ui-tests", "vitest.config.ts"]
+}

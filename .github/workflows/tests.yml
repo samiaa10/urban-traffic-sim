@@ -79,5 +79,11 @@ jobs:
       - name: Build
         run: npm run build
 
-      - name: Test
-        run: npm test
+      # Node's built-in test runner: helpers, requests, result tables
+      - name: Logic tests
+        run: npm run test:unit
+
+      # Vitest + jsdom + React Testing Library: render the real App and
+      # click through it (type-checked first)
+      - name: Interaction tests
+        run: npm run test:ui

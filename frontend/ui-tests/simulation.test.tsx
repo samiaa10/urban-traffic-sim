@@ -15,6 +15,7 @@ import App from "../src/App.tsx"
 import { COLOURS } from "../src/mapStyles.ts"
 import {
   DESTINATION,
+  POINT,
   START,
   VEHICLE,
   car,
@@ -68,7 +69,7 @@ describe("choosing a route on the map", () => {
     clickMap(DESTINATION)
 
     expect(
-      markers(8).map((marker) => marker.getAttribute("data-center"))
+      markers(POINT).map((marker) => marker.getAttribute("data-center"))
     ).toEqual(["52.63,1.29", "52.65,1.31"])
   })
 })

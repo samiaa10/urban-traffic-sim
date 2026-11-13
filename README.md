@@ -16,14 +16,14 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Congestion visualisation.** The backend counts vehicles on each road segment and reports a congestion level per segment, which the map draws.
 - **Congestion slows vehicles down.** The same levels set vehicle speed: a lone vehicle drives at full speed, a road with 2 vehicles runs at 60% and a road with 3 or more at 30%. Journeys therefore take longer in traffic, ambulance response times and ETAs include the delay, and the status panel shows how many vehicles are held up.
 - **Congestion-aware routing.** Each vehicle on a road adds a 50 m penalty to its cost, so busy roads look "longer" to A\*.
-- **Direction-aware traffic and ambulance priority.** Vehicles driving opposite ways on the same road are counted separately and do not slow each other. An ambulance on a call is not slowed by traffic, and its ETA matches that.
 - **Road closures.** Close or reopen a road segment. Closures apply in both directions, and A\* avoids them.
 - **Automatic rerouting.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
-- **Emergency response.** Create emergency stations and ambulances, raise an emergency, and the nearest station with an available ambulance is dispatched along a route that accounts for traffic and closures. Response time is measured in simulated seconds, and you can close a road ahead of the ambulance to watch it reroute.
+- **Emergency response.** Create emergency stations and ambulances, raise an emergency, and an ambulance from the nearest station with one available (nearest in a straight line) is dispatched along an A\* route that accounts for traffic and closures. Response time is measured in simulated seconds, and you can close a road ahead of the ambulance to watch it reroute.
 - **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
-- **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as purple markers, a comparison table and a plain-English summary.
+- **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
 - **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, and rerouting strategies.
-- **Automated tests.** Backend tests (routing, simulation, optimiser and the FastAPI endpoints) and frontend tests, run on every push by GitHub Actions.
+- **Automated tests.** Backend tests (routing, simulation, optimiser and the FastAPI endpoints), frontend logic tests and frontend interaction tests, all run on every push by GitHub Actions.
+- **Logging.** The API logs start-up and each emergency dispatch through Python's `logging` module; `LOG_LEVEL` controls how much.
 
 ## Tech stack
 
@@ -60,7 +60,7 @@ source .venv/bin/activate        # Windows (PowerShell): .venv\Scripts\Activate.
 pip install -r requirements.txt
 ```
 
-`requirements.txt` installs `fastapi`, `uvicorn`, `osmnx`, `pytest` and `httpx` (which FastAPI's test client needs). Versions are not pinned.
+`requirements.txt` installs `fastapi`, `uvicorn`, `osmnx`, `pytest`, `httpx` (which FastAPI's test client needs) and `pyyaml` (which the tests that check `render.yaml` need). Versions are not pinned.
 
 ### 3. Download the Norwich road network
 
@@ -82,6 +82,14 @@ uvicorn backend.api.main:app --reload
 
 The API runs at `http://127.0.0.1:8000`. FastAPI's interactive documentation is at `http://127.0.0.1:8000/docs`.
 
+The backend reads three optional environment variables:
+
+| Variable | Default | What it does |
+|---|---|---|
+| `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated list of websites allowed to call the API from a browser |
+| `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. `INFO` logs start-up and a one-line summary of each emergency dispatch; `DEBUG` also logs every dispatched route point by point. Any other value stops the server at start-up |
+| `NORWICH_SIM_GRAPH` | `data/osm/norwich_graph.pkl` | A different road-graph file (the API tests use a tiny one) |
+
 ### 5. Run the frontend
 
 In a second terminal:
@@ -92,19 +100,13 @@ npm install
 npm run dev
 ```
 
-Open the address Vite prints, which should be **`http://localhost:5173`**. Use `localhost`, not `127.0.0.1`: the backend only allows cross-origin requests from `http://localhost:5173`, and the frontend calls the backend at `http://127.0.0.1:8000` (both are hard-coded).
+Open the address Vite prints, which should be **`http://localhost:5173`**. Use `localhost`, not `127.0.0.1`: by default the backend only allows cross-origin requests from `http://localhost:5173` (change it with `CORS_ORIGINS`). The frontend calls the backend at `http://127.0.0.1:8000` unless `VITE_API_URL` is set when it is built or started (see `frontend/src/config.ts`).
 
-Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (all frontend tests), `npm run test:unit`, `npm run test:ui`, `npm run preview`.
+Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (all frontend tests: `test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run preview`.
 
-### Optional: run with Docker
+### Docker
 
-If you have Docker installed, after generating the map (step 3) you can start both servers with one command instead of steps 4 and 5:
-
-```bash
-docker compose up --build
-```
-
-Then open http://localhost:5173. The backend container reads the map from your local `data/` folder (it is mounted rather than copied into the image). *Note: these Docker files were written to match the project but could not be run in the environment they were created in, so test them once on your machine.*
+There is no Docker setup yet (no `Dockerfile` or `docker-compose.yml`); run the two servers as in steps 4 and 5. Containerising the backend, frontend and a database is planned.
 
 ## Road-network data
 
@@ -137,7 +139,7 @@ python -m pytest backend/tests -v
 
 The tests use small hand-built road networks (`backend/tests/helpers.py`, and a tiny grid map inside `test_api.py`), so they need neither the Norwich data file nor internet access.
 
-`backend/tests/test_api.py` tests the HTTP endpoints through FastAPI's `TestClient`, so it needs `fastapi` and `httpx` (both in `requirements.txt`). If either is missing the file is skipped and everything else still runs. Without them, 155 tests run; `test_api.py` adds 127 more.
+`backend/tests/test_api.py` tests the HTTP endpoints through FastAPI's `TestClient`, so it needs `fastapi` and `httpx` (both in `requirements.txt`). If either is missing the file is skipped and everything else still runs. Without them, 173 tests run; `test_api.py` adds 128 more (301 in total). The five checks of `render.yaml` in `test_deployment_files.py` need `pyyaml` and are skipped without it.
 
 What they cover: Dijkstra/A\* agreement, road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places.
 
@@ -152,11 +154,11 @@ npm test           # runs both kinds of test below
 There are two kinds of frontend test:
 
 - **Logic tests** (`frontend/tests/`, `npm run test:unit`) use Node's built-in test runner and add no dependencies. They test the logic behind the simulation screen (status messages, traffic summary, route conversion), the optimiser's requests and error handling (with `fetch` replaced by a fake), and the optimiser result tables (rendered to HTML).
-- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 53 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards).
+- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 53 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards). The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
 
 The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
 
-CI (`.github/workflows/tests.yml`) runs the backend tests on Python 3.9 and 3.11, and lint, build and `npm test` (logic and interaction tests) for the frontend.
+CI (`.github/workflows/tests.yml`) runs the backend tests on Python 3.9 and 3.11, and for the frontend: lint, build, the logic tests (`npm run test:unit`) and the interaction tests (`npm run test:ui`), as separate steps.
 
 ## Benchmarks
 
@@ -170,6 +172,8 @@ python -m backend.routing.benchmark
 
 Routes 100 random start/destination pairs (seed 42) with both algorithms, checks they find the same distance, and prints average runtime and nodes explored. Results are printed only, not saved in the repository.
 
+One run (2026-11-13, Python 3.9.6, macOS on Apple silicon): A\* explored 64.5% fewer nodes (759 vs 2,139 on average) but took longer in wall-clock time (5.30 ms vs 4.32 ms, 0.82x). In this pure-Python implementation each A\* step costs more (a haversine estimate for every node it pushes), and both searches set up a table over all 5,058 junctions on every call, so exploring fewer nodes does not yet make A\* faster. Timings vary between machines and runs; the node counts do not.
+
 ### Congestion-aware routing
 
 ```bash
@@ -179,7 +183,7 @@ python -m backend.routing.benchmark_congestion --vehicles 2000 --journeys 100 --
 
 Fills the map with traffic (vehicles heading for the city centre), then routes random journeys twice with the same A\* search, once ignoring traffic and once congestion-aware, and compares them on the same traffic snapshot. `--save` writes the report to [`docs/congestion_benchmark.md`](docs/congestion_benchmark.md).
 
-Results from the saved report (run 2026-11-04, Python 3.12.3, Linux x86-64, seed 42, 2,000 vehicles):
+Results from the saved report (run 2026-11-03, Python 3.12.3, Linux x86-64, seed 42, 2,000 vehicles):
 
 | Average per journey | Shortest | Congestion-aware |
 |---|---|---|
@@ -188,7 +192,7 @@ Results from the saved report (run 2026-11-04, Python 3.12.3, Linux x86-64, seed
 | Vehicles passed on route | 59.4 | 23.3 (-60.7%) |
 | Search time | 4.74 ms | 7.66 ms |
 
-In this snapshot, congestion-aware routing chose a different route for 68 of the 85 journeys. The routes are longer, but because vehicles now slow down on busy roads they are also quicker. "Travel time with traffic" drives each road at the speed the simulation allows for the vehicles on it in a frozen snapshot, so it is an estimate rather than a full simulation of each journey. (This report counts both directions of a road together, as the routing penalty does; the simulation itself now counts each direction separately.) The full report is in the linked file. The earlier report (2026-10-21) was made before vehicles slowed down, so its figures are not comparable.
+In this snapshot, congestion-aware routing chose a different route for 68 of the 85 journeys. The routes are longer, but because vehicles now slow down on busy roads they are also quicker. "Travel time with traffic" drives each road at the speed the simulation allows for the vehicles on it in a frozen snapshot, so it is an estimate rather than a full simulation of each journey. (Both directions of a road are counted together, as they are everywhere in the simulation and in the routing penalty.) The full report is in the linked file. The earlier report (2026-10-21) was made before vehicles slowed down, so its figures are not comparable.
 
 ### Rerouting after a road closure
 
@@ -198,22 +202,9 @@ python -m backend.simulation.benchmark_rerouting
 
 Closes the busiest road and compares recalculating routes only for affected vehicles against recalculating every vehicle. This command saves its report to [`docs/rerouting_benchmark.md`](docs/rerouting_benchmark.md) automatically, overwriting the existing one. In the saved run (2026-10-18, Python 3.9.6, seed 42, fastest of 3 runs), affected-only rerouting was 2.0x faster with 100 vehicles and 3.9x faster with 1,000.
 
-### Simulation throughput, memory, multiple incidents and optimiser runtime
+### Simulation throughput, memory and optimiser runtime
 
-```bash
-python -m backend.simulation.benchmark_performance
-```
-
-Saves [`docs/performance_benchmark.md`](docs/performance_benchmark.md). Results measured on one Linux machine (Python 3.12.3, seed 42, fastest of 3 runs); yours will differ:
-
-| Measurement | Result |
-|---|---|
-| Simulation speed, 100 / 500 / 1,000 / 2,000 vehicles | about 4,700 / 970 / 420 / 190 steps per second (roughly 385,000-485,000 vehicle updates per second) |
-| Extra memory for 2,000 vehicles | about 0.7 MB (routes are shared); loading the map peaks at about 12.5 MB |
-| Rerouting, 500 vehicles, 1 / 3 / 5 roads closed | 81 / 126 / 126 vehicles rerouted in about 0.7-1.0 s (roughly 7-8 ms per A* search) |
-| Station optimiser, 38 candidates, 200 emergencies | 0.4 s to rank all candidates; 0.5 s to choose a set of 2-5 stations |
-
-The Dijkstra vs A* result is in [`docs/routing_benchmark.md`](docs/routing_benchmark.md): A* explores about 65% fewer nodes but is not faster in wall-clock time in this pure-Python implementation (0.91x).
+There is no benchmark script for simulation throughput, memory use or several simultaneous closures yet, so no figures are given for them here. The optimiser command line (below) prints how long each run took.
 
 ### Emergency station optimiser
 
@@ -240,7 +231,7 @@ Results from a default run on the Norwich graph (5,058 junctions, seed 1, 500 ra
 | Optimiser estimate vs full simulation (150 random pairs) | simulation within -6.3% to +1.1% of the estimate, mean -1.2% |
 | A plain central junction, and the best of 160 random junctions | slightly better than the pick (2.58 and 2.52 min), see Limitations |
 
-These figures were produced with Python 3.12 and are not stored by the scripts, so re-run the commands to reproduce them (`validate` and `evaluate` were re-run after the congestion change and give the same numbers).
+These figures are not stored by the scripts, so re-run the commands to reproduce them. They were first produced with Python 3.12, and re-running `evaluate`, `validate` and `run --stations 3 --target 240` on 2026-11-13 (Python 3.9.6, macOS) gave exactly the numbers in these tables. They are deterministic for a given map and seed.
 
 #### Choosing several stations
 
@@ -265,10 +256,11 @@ This puts the app on the internet for free: the React frontend as a **static sit
 
 | | |
 |---|---|
-| Memory | 512 MB per service. The backend uses roughly 50 MB with the map loaded (measured: about 48 MB peak even running a 5,000-scenario station search, before the web server itself) |
+| Memory | 512 MB per service. Measured locally (peak resident memory of the Python process, Python 3.9.6 on macOS, 2026-11-13): about 52 MB once the API has started with the map loaded, and about 74 MB after a 5,000-scenario station ranking plus a 5-station set search. Render's Linux figures will differ a little, but there is plenty of headroom |
 | Speed | 0.1 CPU. Everything works but is slower than on your computer, so optimiser searches may take several seconds |
 | Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"NORWICH//SIM","status":"online"}`, then use the site |
 | Map data | The map file is committed in Git, so the deployed backend has it. Nothing is written to disk, so the free plan's temporary filesystem is not a problem |
+| Logs | The backend's start-up and dispatch log lines appear in the service's **Logs** tab. Add a `LOG_LEVEL` environment variable (for example `DEBUG`) to change how much is logged; it is optional and not in `render.yaml` |
 
 *These figures are Render's free-plan limits at the time of writing; check [render.com/pricing](https://render.com/pricing) if they matter to you.*
 
@@ -368,7 +360,6 @@ Every push to the deployed branch redeploys both services automatically.
 ├── docs/             architecture, demo guide, benchmark reports
 ├── data/osm/         the Norwich graph (committed so it can be deployed)
 ├── render.yaml, requirements-deploy.txt   Render deployment
-├── docker-compose.yml  optional: run backend + frontend in containers
 └── .github/workflows/tests.yml
 ```
 
@@ -376,13 +367,15 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 
 ## Limitations
 
-- **The traffic model is simple.** Speed depends only on how many vehicles are on a road segment (full speed alone, 60% with two, 30% with three or more). Each direction of a road is counted separately, so vehicles passing in opposite directions do not slow each other (the map colours still show both directions together). Ambulances on a call have priority and are not slowed by traffic; an ambulance that is not on a call slows down like everyone else. A vehicle that crosses several short roads in one second uses the traffic from the start of that second. Congestion-aware routing still adds a flat 50 m per vehicle rather than predicting travel time.
+- **The traffic model is simple.** Speed depends only on how many vehicles are on a road segment (full speed alone, 60% with two, 30% with three or more). Both directions of a road are counted together, so two vehicles passing each other in opposite directions slow each other down. Ambulances get no priority: an ambulance on a call is slowed by traffic like any other vehicle, and its ETA includes that. A vehicle that crosses several short roads in one second uses the traffic from the start of that second. Congestion-aware routing still adds a flat 50 m per vehicle rather than predicting travel time.
+- **Dispatch picks the station in a straight line.** The station is the nearest one (by latitude/longitude) that has an ambulance free, not the one with the shortest drive; only the ambulance's route itself uses the road network. If no ambulance is free the emergency is refused rather than queued.
 - **Everything lives in memory.** The API holds one simulation in a global variable, so there is one simulation per server process, and it is lost when the server restarts.
 - **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists). Large fleets (thousands of vehicles) are only used by the benchmark scripts.
 - **Ambulances return to base instantly** after a call rather than driving back.
 - **The optimiser ignores traffic** (it uses free-flowing road distance) and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
 - **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser is a heuristic (greedy plus swaps) that is only checked against the true best set for 2 and 3 stations. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.
-- **Nearest-junction lookup scans every junction**, which is simple but not optimised.
+- **Nearest-junction lookup scans every junction**, which is simple but not optimised. There is no caching, spatial index or parallel processing yet.
+- **No database and no Docker.** Nothing is persisted, and there are no container files yet.
 - **Frontend tests do not use real Leaflet or a real browser.** The interaction tests run in jsdom with a stand-in for the map, so map rendering, tile loading and real mouse behaviour on the map are not covered. There are no pause or reset buttons, and no authentication.
 
 ## Troubleshooting

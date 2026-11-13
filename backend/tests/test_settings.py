@@ -1,6 +1,6 @@
 import pytest
 
-from backend.api.settings import DEFAULT_ORIGINS, allowed_origins
+from backend.api.settings import DEFAULT_ORIGINS, allowed_origins, log_level
 
 
 def test_only_the_local_dev_server_is_allowed_by_default():
@@ -52,3 +52,23 @@ def test_wildcards_are_refused(bad):
 def test_origins_must_include_http_or_https(bad):
     with pytest.raises(ValueError):
         allowed_origins(bad)
+
+
+def test_log_level_defaults_to_info():
+    assert log_level(None) == "INFO"
+    assert log_level("") == "INFO"
+    assert log_level("   ") == "INFO"
+
+
+@pytest.mark.parametrize(
+    "value, expected",
+    [("DEBUG", "DEBUG"), ("debug", "DEBUG"), (" warning ", "WARNING"), ("Error", "ERROR")],
+)
+def test_log_level_accepts_standard_names_in_any_case(value, expected):
+    assert log_level(value) == expected
+
+
+@pytest.mark.parametrize("bad", ["verbose", "INFOO", "10"])
+def test_unknown_log_levels_are_refused(bad):
+    with pytest.raises(ValueError):
+        log_level(bad)
