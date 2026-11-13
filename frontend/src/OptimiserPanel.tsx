@@ -18,7 +18,7 @@ import {
   StationSetResults,
 } from "./OptimiserResults.tsx"
 import { Icon, Panel, Spinner } from "./components.tsx"
-import { COLOURS } from "./mapStyles.ts"
+import { COLOURS, MARKER } from "./mapStyles.ts"
 
 // Choices offered for the several-station search
 const STATION_COUNTS = [2, 3, 4, 5]
@@ -39,12 +39,13 @@ export function OptimiserMarkers({
         <CircleMarker
           key={`optimiser-${result.node}`}
           center={[result.latitude, result.longitude]}
-          radius={13}
+          radius={MARKER.candidate}
           pathOptions={{
             color: result.rank === 1 ? COLOURS.rankBest : COLOURS.rank,
             fillColor: result.rank === 1 ? COLOURS.rankBest : COLOURS.rank,
             weight: 2,
-            fillOpacity: 0.92,
+            opacity: 0.35,
+            fillOpacity: 1,
             // Clicking a marker should not also pick a route start point
             bubblingMouseEvents: false,
           }}
@@ -84,12 +85,13 @@ export function StationSetMarkers({
         <CircleMarker
           key={`station-set-${pick.node}`}
           center={[pick.latitude, pick.longitude]}
-          radius={15}
+          radius={MARKER.chosenStation}
           pathOptions={{
             color: COLOURS.chosen,
             fillColor: COLOURS.chosen,
-            weight: 2,
-            fillOpacity: 0.92,
+            weight: 4,
+            opacity: 0.25,
+            fillOpacity: 1,
             bubblingMouseEvents: false,
           }}
         >
@@ -174,7 +176,6 @@ export function OptimiserPanel({
       id="optimiser"
       title="Station optimiser"
       caption="Where should ambulance stations go?"
-      icon="stations"
     >
       <button
         className="btn btn--primary btn--block"
@@ -298,10 +299,11 @@ export function OptimiserOutput({
 
       {!hasResults && !loading && (
         <div className="empty">
-          <Icon name="chart" size={26} />
           <strong>No optimisation results yet</strong>
-          Run a search from the Station optimiser panel to compare candidate
-          locations. Results appear here and as numbered markers on the map.
+          <span>
+            Run a search from the Station optimiser panel to compare candidate
+            locations. Results appear here and as numbered markers on the map.
+          </span>
         </div>
       )}
 

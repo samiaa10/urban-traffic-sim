@@ -92,7 +92,7 @@ frontend/
 ├── src/OptimiserPanel.tsx      Station optimiser controls, results area and map markers (single-station and station-set)
 ├── src/OptimiserResults.tsx    The optimiser's summaries, bar charts and tables (no Leaflet, so testable)
 ├── src/components.tsx          Shared pieces: inline icons, logo, panel and KPI card, spinner
-├── src/mapStyles.ts            Colours used on the map (shared by the map, legend and tests)
+├── src/mapStyles.ts            Colours, marker sizes and line weights used on the map (shared by the map, legend and tests)
 ├── src/config.ts               Backend address: VITE_API_URL at build time, else http://127.0.0.1:8000
 ├── src/index.css               The whole design system: colour tokens, layout, components, responsive rules
 ├── src/optimiser.ts            Optimiser response types, requests, error handling, number formatting
@@ -209,11 +209,11 @@ The frontend is mostly one React component file, `frontend/src/App.tsx`, using `
 
 ## Interface design
 
-The screen is one workspace: a fixed navy header, a controls column on the left, and on the right a row of five metric cards, the Norwich map (the largest element), and an analysis area for optimiser results. On narrow screens it becomes a single column in the order metrics, map, controls, results.
+The screen is one workspace: a fixed navy header, a controls column on the left, and on the right a five-metric strip, the Norwich map (the largest element), and an analysis area for optimiser results. On narrow screens it becomes a single column in the order metrics, map, controls, results.
 
-- **Design system.** `index.css` defines colour, spacing, radius and shadow tokens as CSS variables (navy and blue-grey for structure, a muted green for positive/optimal results, amber and red only for warnings and emergencies) and the components built from them (panels, buttons, KPI cards, badges, notices, tables, bar charts). There are no UI or icon libraries: icons are inline SVG (`components.tsx`) and the charts are plain HTML bars.
-- **Map.** The OpenStreetMap tiles are desaturated with a CSS filter so routes, congestion and markers stand out. Map colours live in `mapStyles.ts`. The latest action's message floats over the map instead of moving the layout.
-- **Meaning of colour.** Route = blue, reroute = orange, ambulance and emergency = red, closed road = near-black, best/optimal = green, chosen station set = navy. Congestion uses green, amber and red.
+- **Design system.** `index.css` defines colour, type-scale, control-height, radius and elevation tokens as CSS variables (navy and slate for structure, a muted teal for positive/optimal results, amber and red only for warnings and emergencies) and the components built from them (panels, buttons, selects, the metrics strip, badges, notices, tables, bar charts). Hierarchy comes from surface contrast and spacing rather than outlines: the controls column is one surface split by hairlines, the metrics are one strip, and borders are kept for places that need them (secondary buttons, table rules). Buttons come in four variants (primary, secondary, destructive, quiet) with one shared disabled style. There are no UI or icon libraries: icons are inline SVG (`components.tsx`) and the charts are plain HTML bars.
+- **Map.** The OpenStreetMap tiles are desaturated with a CSS filter so routes, congestion and markers stand out. Map colours, marker sizes and line weights live in `mapStyles.ts`: point markers share a white keyline, congestion is drawn as a wide translucent band under the thinner route line, and closures are the widest line. The toolbar shows what the next map click will do, the legend lists congestion plus only the layers currently on the map, and the latest action's message floats over the map instead of moving the layout.
+- **Meaning of colour.** Route = blue, reroute (diversion) = violet so it cannot be confused with amber congestion, ambulance and emergency = red, closed road = near-black, best/optimal = green, chosen station set = navy. Congestion uses green, amber and red.
 - **Accessibility.** Every group of controls is a named region, the header navigation and a skip link work with the keyboard, the simulation state is announced as a status, charts are written out as text beside each bar, the metric cards have a plain-sentence version for screen readers, and animations are switched off for people who ask for reduced motion.
 - **What did not change.** All logic, requests and button labels are as before; the redesign only changed markup and styling (plus a loading spinner and disabled state on the button that was just clicked).
 

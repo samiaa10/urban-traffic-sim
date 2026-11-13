@@ -1,5 +1,5 @@
 // Small presentational pieces shared across the screen: icons, the logo,
-// KPI cards and a spinner. No logic or network calls in here.
+// KPI metrics, panels, the map legend and a spinner. No logic or network calls in here.
 
 import type { ReactNode } from "react"
 
@@ -151,28 +151,23 @@ export function Logo() {
 }
 
 // ------------------------------------------------
-// KPI card
+// KPI metric (one cell of the metrics strip)
 // ------------------------------------------------
 
 export function KpiCard({
   label,
   value,
   sub,
-  icon,
   children,
 }: {
   label: string
   value?: ReactNode
   sub?: ReactNode
-  icon: IconName
   children?: ReactNode
 }) {
   return (
     <div className="kpi">
-      <div className="kpi-label">
-        <Icon name={icon} size={15} />
-        {label}
-      </div>
+      <div className="kpi-label">{label}</div>
       {value !== undefined && <div className="kpi-value">{value}</div>}
       {children}
       {sub !== undefined && <div className="kpi-sub">{sub}</div>}
@@ -180,18 +175,16 @@ export function KpiCard({
   )
 }
 
-// A titled card used for each group of controls
+// A titled section of the controls column
 export function Panel({
   id,
   title,
   caption,
-  icon,
   children,
 }: {
   id?: string
   title: string
   caption?: string
-  icon: IconName
   children: ReactNode
 }) {
   // Every panel is a named region, so screen-reader users can jump to it
@@ -200,15 +193,61 @@ export function Panel({
   return (
     <section id={id} className="panel" aria-labelledby={headingId}>
       <header className="panel-head">
-        <span className="panel-icon">
-          <Icon name={icon} size={17} />
-        </span>
-        <div>
-          <h2 id={headingId}>{title}</h2>
-          {caption && <p>{caption}</p>}
-        </div>
+        <h2 id={headingId}>{title}</h2>
+        {caption && <p>{caption}</p>}
       </header>
       <div className="panel-body">{children}</div>
     </section>
+  )
+}
+
+// ------------------------------------------------
+// Map legend
+// ------------------------------------------------
+
+// How a layer is drawn: a line, a wide line, a dashed line, a solid dot
+// or an outlined ring. Mirrors the symbols used on the map itself.
+export type LegendSymbol = "line" | "wide" | "dash" | "dot" | "ring"
+
+export type LegendEntry = {
+  label: string
+  colour: string
+  symbol: LegendSymbol
+}
+
+function LegendSwatch({ colour, symbol }: Omit<LegendEntry, "label">) {
+  const modifier = symbol === "line" ? "" : ` legend-swatch--${symbol}`
+
+  return (
+    <span
+      className={`legend-swatch${modifier}`}
+      style={{ background: colour, borderColor: colour, color: colour }}
+    />
+  )
+}
+
+export function MapLegend({
+  groups,
+}: {
+  groups: { title: string; entries: LegendEntry[] }[]
+}) {
+  return (
+    <div className="legend">
+      {groups
+        .filter((group) => group.entries.length > 0)
+        .map((group) => (
+          <div className="legend-group" key={group.title}>
+            <strong>{group.title}</strong>
+            <div className="legend-items">
+              {group.entries.map((entry) => (
+                <span className="legend-item" key={entry.label}>
+                  <LegendSwatch colour={entry.colour} symbol={entry.symbol} />
+                  {entry.label}
+                </span>
+              ))}
+            </div>
+          </div>
+        ))}
+    </div>
   )
 }

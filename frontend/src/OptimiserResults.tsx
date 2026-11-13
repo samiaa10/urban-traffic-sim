@@ -2,7 +2,6 @@
 // touches Leaflet or the network, so it can be rendered and tested without
 // a browser (see tests/optimiserResults.test.tsx).
 
-import { Icon } from "./components.tsx"
 import {
   count,
   minutes,
@@ -86,7 +85,6 @@ export function RankingResults({ data }: { data: OptimiserResponse }) {
   return (
     <div className="card results-card">
       <h2 className="results-title">
-        <Icon name="stations" size={18} />
         Single-station ranking
       </h2>
 
@@ -212,7 +210,6 @@ export function StationSetResults({ data }: { data: StationSetResponse }) {
   return (
     <div className="card results-card">
       <h2 className="results-title">
-        <Icon name="chart" size={18} />
         Multi-station placement
       </h2>
 

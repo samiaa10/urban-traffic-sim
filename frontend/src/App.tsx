@@ -18,8 +18,16 @@ import type {
   StationSetResponse,
 } from "./optimiser.ts"
 import { API_URL } from "./config.ts"
-import { Icon, KpiCard, Logo, Panel, Spinner } from "./components.tsx"
-import { COLOURS } from "./mapStyles.ts"
+import {
+  Icon,
+  KpiCard,
+  Logo,
+  MapLegend,
+  Panel,
+  Spinner,
+  type LegendEntry,
+} from "./components.tsx"
+import { COLOURS, LINE, MARKER } from "./mapStyles.ts"
 import {
   allFinished,
   congestionColour,
@@ -677,6 +685,86 @@ function App() {
   // The state of the three route-planning steps
   const bothPointsChosen = start !== null && destination !== null
 
+  // What the next click on the map will do (see handleMapClick)
+  const nextClick = !start
+    ? { label: "Start point", colour: COLOURS.start }
+    : !destination
+      ? { label: "Destination", colour: COLOURS.destination }
+      : { label: "New start point", colour: COLOURS.start }
+
+  // Legend entries, matching how each layer is drawn on the map
+  const congestionLegend: LegendEntry[] = [
+    ["light", "Light"],
+    ["moderate", "Moderate"],
+    ["heavy", "Heavy"],
+  ].map(([level, label]) => ({
+    label,
+    colour: congestionColour(level),
+    symbol: "wide",
+  }))
+
+  const ambulanceOnMap = vehicles.some(
+    (vehicle) => vehicle.vehicle_type === "ambulance" || vehicle.on_emergency
+  )
+  const otherVehiclesOnMap = vehicles.some(
+    (vehicle) => !(vehicle.vehicle_type === "ambulance" || vehicle.on_emergency)
+  )
+
+  const layerLegend = (
+    [
+    route.length > 0 && {
+      label: "Planned route",
+      colour: COLOURS.route,
+      symbol: "line",
+    },
+    incidentActive && incidentRoute.length > 0 && {
+      label: "Diversion",
+      colour: COLOURS.reroute,
+      symbol: "line",
+    },
+    emergencyActive && emergencyRoute.length > 0 && {
+      label: "Ambulance route",
+      colour: COLOURS.emergency,
+      symbol: "dash",
+    },
+    blockedAhead.length > 0 && {
+      label: "Closed road",
+      colour: COLOURS.closure,
+      symbol: "wide",
+    },
+    otherVehiclesOnMap && {
+      label: "Vehicle",
+      colour: COLOURS.route,
+      symbol: "dot",
+    },
+    ambulanceOnMap && {
+      label: "Ambulance",
+      colour: COLOURS.emergency,
+      symbol: "dot",
+    },
+    emergencyLocation !== null && {
+      label: "Incident",
+      colour: COLOURS.emergency,
+      symbol: "ring",
+    },
+    optimiser !== null && {
+      label: "Best candidate",
+      colour: COLOURS.rankBest,
+      symbol: "dot",
+    },
+    optimiser !== null && {
+      label: "Other candidates",
+      colour: COLOURS.rank,
+      symbol: "dot",
+    },
+    stationSet !== null && {
+      label: "Chosen stations",
+      colour: COLOURS.chosen,
+      symbol: "dot",
+    },
+    ] as (LegendEntry | false)[]
+  ).filter((entry): entry is LegendEntry => entry !== false)
+
   const emergencyBadge: Record<
     EmergencyStatus["state"],
     { label: string; tone: string }
@@ -737,7 +825,6 @@ function App() {
             id="simulation"
             title="Route simulation"
             caption="Plan a journey and watch traffic respond"
-            icon="route"
           >
             <ol className="steps">
               <li
@@ -806,7 +893,6 @@ function App() {
           <Panel
             title="Road closure"
             caption="Block a road on the route and reroute traffic"
-            icon="barrier"
           >
             {/* ROAD CLOSURE BUTTON */}
             {start && destination ? (
@@ -836,7 +922,6 @@ function App() {
             id="emergency"
             title="Emergency response"
             caption="Dispatch an ambulance to the destination"
-            icon="siren"
           >
             {/* EMERGENCY BUTTON */}
             {start && destination ? (
@@ -950,7 +1035,7 @@ function App() {
 
         {/* ---------------- STATUS CARDS ---------------- */}
         <section className="kpis" aria-label="Simulation metrics">
-          <KpiCard label="Status" icon="pulse" sub={simulationState.hint}>
+          <KpiCard label="Status" sub={simulationState.hint}>
             <div className="kpi-status" role="status">
               <span
                 className="dot"
@@ -963,7 +1048,6 @@ function App() {
 
           <KpiCard
             label="Route length"
-            icon="route"
             value={
               routeInfo ? (
                 <>
@@ -983,14 +1067,12 @@ function App() {
 
           <KpiCard
             label="Vehicles"
-            icon="car"
             value={vehicles.length}
             sub={`${finishedVehicles} finished`}
           />
 
           <KpiCard
             label="Simulation time"
-            icon="clock"
             value={
               <>
                 {simulationTime ?? 0}
@@ -1002,7 +1084,6 @@ function App() {
 
           <KpiCard
             label="Traffic flow"
-            icon="gauge"
             value={traffic ? `${traffic.averageSpeedPercent}%` : "-"}
             sub={
               traffic
@@ -1027,7 +1108,17 @@ function App() {
           <div className="map-toolbar">
             <div>
               <h2>Norwich road network</h2>
-              <p>Select two points on the map to plan a route</p>
+              <p>OpenStreetMap road graph with A* routing</p>
+            </div>
+            <div className="map-mode" aria-live="polite">
+              <span
+                className="swatch-dot"
+                style={{ background: nextClick.colour }}
+                aria-hidden="true"
+              />
+              <span>
+                Next click: <strong>{nextClick.label}</strong>
+              </span>
             </div>
           </div>
 
@@ -1061,10 +1152,10 @@ function App() {
               {start && (
                 <CircleMarker
                   center={start}
-                  radius={8}
+                  radius={MARKER.point}
                   pathOptions={{
-                    color: "#ffffff",
-                    weight: 2,
+                    color: MARKER.outline,
+                    weight: MARKER.outlineWeight,
                     fillColor: COLOURS.start,
                     fillOpacity: 1,
                   }}
@@ -1075,10 +1166,10 @@ function App() {
               {destination && (
                 <CircleMarker
                   center={destination}
-                  radius={8}
+                  radius={MARKER.point}
                   pathOptions={{
-                    color: "#ffffff",
-                    weight: 2,
+                    color: MARKER.outline,
+                    weight: MARKER.outlineWeight,
                     fillColor: COLOURS.destination,
                     fillOpacity: 1,
                   }}
@@ -1095,8 +1186,9 @@ function App() {
                   ]}
                   pathOptions={{
                     color: congestionColour(segment.level),
-                    weight: 7,
-                    opacity: 0.75,
+                    weight: LINE.congestion,
+                    opacity: 0.55,
+                    lineCap: "butt",
                   }}
                 />
               ))}
@@ -1106,8 +1198,8 @@ function App() {
                 positions={route}
                 pathOptions={{
                   color: COLOURS.route,
-                  weight: 4,
-                  opacity: 0.9,
+                  weight: LINE.route,
+                  opacity: 0.95,
                 }}
               />
 
@@ -1117,8 +1209,9 @@ function App() {
                   positions={emergencyRoute}
                   pathOptions={{
                     color: COLOURS.emergency,
-                    weight: 5,
-                    dashArray: "10, 10",
+                    weight: LINE.emergency,
+                    dashArray: "8, 7",
+                    lineCap: "butt",
                   }}
                 />
               )}
@@ -1129,8 +1222,9 @@ function App() {
                   positions={blockedAhead}
                   pathOptions={{
                     color: COLOURS.closure,
-                    weight: 10,
-                    opacity: 0.85,
+                    weight: LINE.closure,
+                    opacity: 0.9,
+                    lineCap: "butt",
                   }}
                 />
               )}
@@ -1141,7 +1235,8 @@ function App() {
                   positions={incidentRoute}
                   pathOptions={{
                     color: COLOURS.reroute,
-                    weight: 5,
+                    weight: LINE.reroute,
+                    opacity: 0.95,
                   }}
                 />
               )}
@@ -1150,11 +1245,12 @@ function App() {
               {emergencyLocation && (
                 <CircleMarker
                   center={emergencyLocation}
-                  radius={14}
+                  radius={MARKER.incident}
                   pathOptions={{
                     color: COLOURS.emergency,
+                    weight: 2.5,
                     fillColor: COLOURS.emergency,
-                    fillOpacity: 0.8,
+                    fillOpacity: 0.16,
                   }}
                 />
               )}
@@ -1174,46 +1270,25 @@ function App() {
                   <CircleMarker
                     key={vehicle.vehicle_id}
                     center={[vehicle.latitude, vehicle.longitude]}
-                    radius={isAmbulance ? 12 : 10}
-                    pathOptions={
-                      isAmbulance
-                        ? {
-                            color: "#ffffff",
-                            weight: 2,
-                            fillColor: COLOURS.emergency,
-                            fillOpacity: 1,
-                          }
-                        : {
-                            color: "#ffffff",
-                            weight: 2,
-                            fillColor: COLOURS.route,
-                            fillOpacity: 1,
-                          }
-                    }
+                    radius={isAmbulance ? MARKER.ambulance : MARKER.vehicle}
+                    pathOptions={{
+                      color: MARKER.outline,
+                      weight: MARKER.outlineWeight,
+                      fillColor: isAmbulance ? COLOURS.emergency : COLOURS.route,
+                      fillOpacity: 1,
+                    }}
                   />
                 )
               })}
             </MapContainer>
 
-            {/* LIVE CONGESTION LEGEND */}
-            <div className="legend">
-              <strong>Live congestion</strong>
-              <div className="legend-items">
-                {[
-                  ["light", "Light"],
-                  ["moderate", "Moderate"],
-                  ["heavy", "Heavy"],
-                ].map(([level, label]) => (
-                  <span className="legend-item" key={level}>
-                    <span
-                      className="legend-swatch"
-                      style={{ background: congestionColour(level) }}
-                    />
-                    {label}
-                  </span>
-                ))}
-              </div>
-            </div>
+            {/* LEGEND: congestion, plus whichever layers are on the map */}
+            <MapLegend
+              groups={[
+                { title: "Live congestion", entries: congestionLegend },
+                { title: "On the map", entries: layerLegend },
+              ]}
+            />
           </div>
         </section>
 
