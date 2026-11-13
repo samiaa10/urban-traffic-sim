@@ -4,3 +4,4 @@ uvicorn
 osmnx      # only needed to download the Norwich road map the first time
 pytest     # only needed to run the tests
 httpx      # only needed by the API tests (FastAPI's TestClient uses it)
+pyyaml     # only needed by the tests that check render.yaml (test_deployment_files.py)

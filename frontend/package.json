@@ -8,7 +8,9 @@
     "build": "tsc -b && vite build",
     "lint": "eslint .",
     "preview": "vite preview",
-    "test": "node -e \"require('fs').rmSync('.test-build',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \".test-build/tests/*.test.js\""
+    "test": "npm run test:unit && npm run test:ui",
+    "test:unit": "node -e \"require('fs').rmSync('.test-build',{recursive:true,force:true})\" && tsc -p tsconfig.test.json && node --test \".test-build/tests/*.test.js\"",
+    "test:ui": "tsc -p tsconfig.ui-tests.json && vitest run"
   },
   "dependencies": {
     "leaflet": "^1.9.4",

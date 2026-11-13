@@ -13,6 +13,7 @@ tests need neither the Norwich data file nor internet access.
 """
 
 import importlib
+import logging
 import math
 import pickle
 import sys
@@ -703,6 +704,30 @@ def test_dispatch_an_ambulance_and_measure_the_response(running, api):
     assert emergency["state"] == "arrived"
     assert emergency["response_time_seconds"] > 0
     assert emergency["eta_seconds"] == 0
+
+
+def test_dispatch_is_logged_not_printed(running, api, caplog, capsys):
+    add_ambulance(running, api)
+
+    with caplog.at_level(logging.DEBUG, logger="backend.api.main"):
+        response = dispatch_ambulance(running, api, destination=15)
+
+    assert response.status_code == 200
+
+    # Regression: the dispatch used to print the whole route to stdout
+    assert capsys.readouterr().out == ""
+
+    records = [r for r in caplog.records if r.name == "backend.api.main"]
+
+    summary = [r for r in records if r.levelno == logging.INFO]
+    assert len(summary) == 1
+    assert "dispatched vehicle" in summary[0].getMessage()
+
+    # The full route is only written at DEBUG level
+    assert any(
+        r.levelno == logging.DEBUG and "Emergency route" in r.getMessage()
+        for r in records
+    )
 
 
 def test_ambulance_can_answer_a_second_emergency_after_the_first(running, api):

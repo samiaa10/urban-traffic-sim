@@ -1,3 +1,4 @@
+import logging
 import os
 import pickle
 from pathlib import Path
@@ -7,7 +8,7 @@ import math
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 
-from backend.api.settings import allowed_origins
+from backend.api.settings import allowed_origins, log_level
 from backend.routing.a_star import a_star
 from backend.simulation.simulation import Simulation
 from backend.simulation import rerouting
@@ -22,6 +23,18 @@ from backend.optimiser.station_optimiser import (
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
+
+
+# Logging. LOG_LEVEL (default INFO) sets how much is written; DEBUG also
+# writes every dispatched emergency route point by point. basicConfig does
+# nothing if logging was already set up (for example by pytest), and
+# uvicorn's own loggers keep their own format.
+logging.basicConfig(
+    level=log_level(os.environ.get("LOG_LEVEL")),
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
+
+logger = logging.getLogger(__name__)
 
 # The Norwich road network. NORWICH_SIM_GRAPH can point at a different
 # graph file; the API tests use this to run against a tiny map.
@@ -53,6 +66,13 @@ app.add_middleware(
 
 with open(GRAPH_FILE, "rb") as file:
     graph = pickle.load(file)
+
+logger.info(
+    "Loaded road graph %s: %d junctions, %d road segments",
+    GRAPH_FILE,
+    len(graph.nodes),
+    sum(len(edges) for edges in graph.edges.values()),
+)
 
 
 # Lets us turn a route point back into its junction id (used for rerouting)
@@ -573,10 +593,14 @@ def create_emergency(
     # Find the nearest graph node to the dispatched vehicle
     current_location = vehicle.get_current_location()
 
-    print("Ambulance starting location:", current_location)
-    print("Emergency location:", latitude, longitude)
-    print("Ambulance initial route:", vehicle.route)
-    
+    logger.debug(
+        "Dispatching vehicle from %s to emergency at (%s, %s); "
+        "route before dispatch: %s",
+        current_location,
+        latitude,
+        longitude,
+        vehicle.route,
+    )
 
     nearest_vehicle_node = None
     nearest_vehicle_distance = float("inf")
@@ -625,8 +649,18 @@ def create_emergency(
     # Give the emergency vehicle its new route
     vehicle.set_route(new_route, reset_distance=True)
 
-    print("Calculated emergency route:", new_route)
-    print("Calculated route distance:", distance)
+    logger.info(
+        "Emergency (%s) at (%s, %s): dispatched vehicle %d, "
+        "route %.0f m, %d junctions, %d nodes explored",
+        emergency_type,
+        latitude,
+        longitude,
+        simulation.vehicles.index(vehicle),
+        distance,
+        len(path),
+        nodes_explored,
+    )
+    logger.debug("Emergency route: %s", new_route)
 
     return {
         "status": "emergency dispatched",
