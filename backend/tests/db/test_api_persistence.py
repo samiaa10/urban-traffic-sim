@@ -5,7 +5,6 @@ test database. A second create_app on the same database is what a server
 restart looks like: the first app's memory is gone, the database is not.
 """
 
-import pickle
 import uuid
 
 import pytest
@@ -17,45 +16,11 @@ pytest.importorskip("httpx")
 from fastapi.testclient import TestClient  # noqa: E402
 
 from backend.api.app import create_app  # noqa: E402
-from backend.tests.test_api import make_test_graph  # noqa: E402
 
 
 # ------------------------------------------------------------
 # Fixtures
 # ------------------------------------------------------------
-
-@pytest.fixture(scope="module")
-def graph_file(tmp_path_factory):
-    path = tmp_path_factory.mktemp("graph") / "test_graph.pkl"
-
-    with open(path, "wb") as file:
-        pickle.dump(make_test_graph(), file)
-
-    return path
-
-
-@pytest.fixture
-def make_app(engine, database_url_for_tests, graph_file):
-    """Build apps on the test database; wipe the saved runs afterwards."""
-
-    apps = []
-
-    def make(**options):
-        options.setdefault("metrics_interval", 10)
-        app = create_app(graph_file, database_url=database_url_for_tests, **options)
-        apps.append(app)
-        return app
-
-    yield make
-
-    for app in apps:
-        app.state.context.database.dispose()
-
-    with engine.begin() as connection:
-        connection.execute(text(
-            "TRUNCATE simulation_runs, optimiser_runs RESTART IDENTITY CASCADE"
-        ))
-
 
 @pytest.fixture
 def app(make_app):

@@ -483,3 +483,11 @@ def test_without_a_database_history_is_unavailable_but_runs_work(client):
     assert "DATABASE_URL" in response.json()["detail"]
     assert client.get("/simulations").json()["persistence"] is False
     assert client.get(f"/simulations/{simulation_id}").json()["recording"] == "off"
+
+
+def test_without_a_database_optimiser_answers_are_not_saved(client):
+    answer = client.get("/optimiser/stations", params={"scenarios": 10}).json()
+
+    assert answer["optimiser_run_id"] is None
+    assert answer["reused"] is False
+    assert client.get("/optimiser/runs").status_code == 503
