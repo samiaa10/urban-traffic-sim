@@ -34,6 +34,8 @@ import {
   describeEmergency,
   describeSimulationState,
   describeTraffic,
+  runPath,
+  simulationIdFrom,
   summariseTraffic,
   toCoordinates,
   type Coordinate,
@@ -143,6 +145,16 @@ function App() {
   const simulationInterval =
     useRef<number | null>(null)
 
+  // The running simulation's ID, from /simulation/start (null with an
+  // older backend that gives none). A ref, not state: the polling timer
+  // reads it, and nothing on screen shows it.
+  const simulationId =
+    useRef<string | null>(null)
+
+  // Full URL of an endpoint that acts on the running simulation
+  const runUrl = (original: string, perRun: string) =>
+    `${API_URL}${runPath(simulationId.current, original, perRun)}`
+
   const stopSimulationPolling = () => {
     if (simulationInterval.current !== null) {
       clearInterval(simulationInterval.current)
@@ -223,7 +235,7 @@ function App() {
         async () => {
           try {
             const response = await fetch(
-              `${API_URL}/simulation/step`,
+              runUrl("/simulation/step", "/step"),
               {
                 method: "POST",
               }
@@ -240,7 +252,7 @@ function App() {
             // Fetch live congestion data
             try {
               const congestionResponse = await fetch(
-                `${API_URL}/simulation/congestion`
+                runUrl("/simulation/congestion", "/congestion")
               )
 
               if (congestionResponse.ok) {
@@ -259,7 +271,7 @@ function App() {
             // Fetch the emergency response status (ETA, response time)
             try {
               const statusResponse = await fetch(
-                `${API_URL}/emergency/status`
+                runUrl("/emergency/status", "/emergencies/status")
               )
 
               if (statusResponse.ok) {
@@ -345,6 +357,8 @@ function App() {
       setSimulationTime(null)
 
       // 4. Start backend simulation
+      simulationId.current = null
+
       const simulationResponse = await fetch(
         `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
         {
@@ -358,6 +372,10 @@ function App() {
       if (!simulationResponse.ok) {
         throw new Error("Could not start simulation")
       }
+
+      // Later requests name this run, so they reach it even if another
+      // run is started elsewhere
+      simulationId.current = simulationIdFrom(simulationData)
 
       // Put first vehicle at starting position
       if (simulationData.vehicle_position) {
@@ -427,7 +445,10 @@ function App() {
 
       // Block road segment
       const blockResponse = await fetch(
-        `${API_URL}/incident/block?start=${startNode.node}&destination=${endNode.node}`,
+        runUrl(
+          `/incident/block?start=${startNode.node}&destination=${endNode.node}`,
+          `/incidents/block?start=${startNode.node}&destination=${endNode.node}`
+        ),
         {
           method: "POST",
         }
@@ -446,7 +467,10 @@ function App() {
 
       // Reroute vehicle 0
       const rerouteResponse = await fetch(
-        `${API_URL}/simulation/reroute?vehicle_id=0`,
+        runUrl(
+          "/simulation/reroute?vehicle_id=0",
+          "/reroute?vehicle_id=0"
+        ),
         {
           method: "POST",
         }
@@ -513,7 +537,10 @@ function App() {
 
       // 1. Create ambulance station
       const stationResponse = await fetch(
-        `${API_URL}/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
+        runUrl(
+          `/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
+          `/stations?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`
+        ),
         {
           method: "POST",
         }
@@ -527,7 +554,10 @@ function App() {
 
       // 2. Add ambulance to station
       const vehicleResponse = await fetch(
-        `${API_URL}/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance`,
+        runUrl(
+          "/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance",
+          "/stations/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance"
+        ),
         {
           method: "POST",
         }
@@ -539,7 +569,10 @@ function App() {
 
       // 3. Create emergency and dispatch ambulance
       const emergencyResponse = await fetch(
-        `${API_URL}/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
+        runUrl(
+          `/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
+          `/emergencies?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`
+        ),
         {
           method: "POST",
         }
@@ -593,7 +626,7 @@ function App() {
   const blockRoadAheadOfAmbulance = async () => {
     try {
       const response = await fetch(
-        `${API_URL}/emergency/block-ahead`,
+        runUrl("/emergency/block-ahead", "/emergencies/block-ahead"),
         {
           method: "POST",
         }
