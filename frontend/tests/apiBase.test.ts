@@ -37,6 +37,15 @@ describe("backend address", () => {
     ])
   })
 
+  it("can use a path on the same address (Docker: nginx forwards /api)", async () => {
+    const { urls, fakeFetch } = recordUrls()
+
+    setApiBase("/api")
+    await requestJson("/optimiser/stations", fakeFetch)
+
+    assert.deepEqual(urls, ["/api/optimiser/stations"])
+  })
+
   it("ignores a trailing slash so URLs never contain //", async () => {
     const { urls, fakeFetch } = recordUrls()
 

@@ -23,6 +23,8 @@ VITE_API_URL=http://127.0.0.1:9000 npm run dev
 
 The address is read in `src/config.ts`. Vite copies it into the JavaScript when the app is built, so a deployed build must be rebuilt after changing it. If you serve the frontend from a different origin, add that origin to the backend's `CORS_ORIGINS`.
 
+In Docker (`frontend/Dockerfile`) the app is built with `VITE_API_URL=/api` and served by nginx, which forwards `/api/...` to the backend (`nginx.conf`), so no CORS setting is needed there. See the main README's Docker section.
+
 ## Scripts
 
 | Command | What it does |
@@ -39,7 +41,7 @@ The address is read in `src/config.ts`. Vite copies it into the JavaScript when 
 
 - `src/main.tsx`: React entry point
 - `src/App.tsx`: the interface: map, controls, simulation loop and the calls to the backend
-- `src/simulationHelpers.ts`: status text, emergency text, traffic summary and route conversion
+- `src/simulationHelpers.ts`: status text, emergency text, traffic summary, route conversion, and which simulation run a request is for (`runPath`: once the backend returns a `simulation_id`, run requests go to `/simulations/{id}/...`)
 - `src/OptimiserPanel.tsx`, `src/OptimiserResults.tsx`, `src/optimiser.ts`: the station optimiser (controls and map markers, result tables, requests and types)
 - `src/config.ts`: the backend address
 - `src/mapStyles.ts`, `src/components.tsx`, `src/index.css`: map colours and sizes, shared UI pieces, the design system

@@ -45,6 +45,12 @@ import statistics
 from backend.routing.a_star import get_segment
 
 
+# Bump this whenever a change here would give different results for the
+# same request. Saved results are only reused (?reuse=true) for requests
+# with the same version, so old answers never pass for new ones.
+OPTIMISER_VERSION = 1
+
+
 def shortest_distances(graph, source, blocked_segments=None):
     """Driving distance (metres) from `source` to every junction it can reach.
 

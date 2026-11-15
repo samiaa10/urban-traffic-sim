@@ -72,3 +72,60 @@ def test_log_level_accepts_standard_names_in_any_case(value, expected):
 def test_unknown_log_levels_are_refused(bad):
     with pytest.raises(ValueError):
         log_level(bad)
+
+
+# ------------------------------------------------------------
+# MAX_LIVE_RUNS
+# ------------------------------------------------------------
+
+from backend.api.settings import max_live_runs  # noqa: E402
+
+
+def test_eight_live_runs_are_allowed_by_default():
+    assert max_live_runs(None) == 8
+    assert max_live_runs("  ") == 8
+
+
+def test_live_run_limit_can_be_set():
+    assert max_live_runs("3") == 3
+    assert max_live_runs(" 20 ") == 20
+
+
+@pytest.mark.parametrize("value", ["0", "101", "-1", "two", "2.5"])
+def test_a_bad_live_run_limit_fails_at_start_up(value):
+    with pytest.raises(ValueError, match="MAX_LIVE_RUNS"):
+        max_live_runs(value)
+
+
+# ------------------------------------------------------------
+# DATABASE_URL
+# ------------------------------------------------------------
+
+from backend.api.settings import database_url  # noqa: E402
+
+
+def test_no_database_url_means_no_database():
+    assert database_url(None) is None
+    assert database_url("  ") is None
+
+
+@pytest.mark.parametrize("given", [
+    "postgres://u:p@db:5432/sim",          # what Render and Heroku hand out
+    "postgresql://u:p@db:5432/sim",
+    "postgresql+psycopg://u:p@db:5432/sim",
+    "  postgresql://u:p@db:5432/sim  ",
+])
+def test_postgresql_urls_use_the_psycopg_driver(given):
+    assert database_url(given) == "postgresql+psycopg://u:p@db:5432/sim"
+
+
+@pytest.mark.parametrize("given", [
+    "sqlite:///sim.db",
+    "mysql://u:p@db/sim",
+    "postgresql+asyncpg://u:p@db/sim",
+])
+def test_other_databases_are_refused_without_echoing_the_password(given):
+    with pytest.raises(ValueError, match="DATABASE_URL") as error:
+        database_url(given)
+
+    assert "p@db" not in str(error.value)
