@@ -226,10 +226,24 @@ def test_nginx_forwards_the_api_to_the_backend_service(compose):
     assert "listen 8080;" in nginx
     assert "EXPOSE 8080" in text("frontend/Dockerfile")
 
-    # location /api/ + proxy_pass with a trailing slash strips /api
     api_block = re.search(r"location /api/ \{(.*?)\}", nginx, re.S).group(1)
-    assert "proxy_pass http://backend:8000/;" in api_block
+
+    # The /api prefix is removed before the request reaches the backend
+    assert "rewrite ^/api/(.*)$ /$1 break;" in api_block
+    assert "set $backend http://backend:8000;" in api_block
+    assert "proxy_pass $backend;" in api_block
     assert "backend" in services(compose)
+
+
+def test_nginx_finds_a_restarted_backend():
+    """With a variable in proxy_pass and Docker's resolver, nginx looks the
+    backend up again; with a fixed host name it would keep the IP it saw
+    at start-up and answer 502 after the backend container restarts."""
+
+    nginx = text("frontend/nginx.conf")
+
+    assert re.search(r"resolver 127\.0\.0\.11 valid=\d+s", nginx)
+    assert "proxy_pass http://backend" not in nginx
 
     # The app handles its own paths
     assert "try_files $uri $uri/ /index.html;" in nginx
@@ -240,3 +254,62 @@ def test_the_frontend_build_context_leaves_out_local_installs():
 
     assert "node_modules" in ignored
     assert "dist" in ignored
+
+
+# ------------------------------------------------------------
+# GitHub Actions (.github/workflows/tests.yml)
+# ------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def workflow():
+    yaml = pytest.importorskip("yaml")
+    return yaml.safe_load(text(".github/workflows/tests.yml"))
+
+
+PYTHON_JOBS = ("test", "test-python-3-12")
+
+
+def steps_text(job):
+    return "\n".join(step.get("run", "") for step in job["steps"])
+
+
+@pytest.mark.parametrize("name", PYTHON_JOBS)
+def test_ci_runs_the_database_tests_on_real_postgresql(workflow, name):
+    job = workflow["jobs"][name]
+
+    assert job["services"]["postgres"]["image"].startswith("postgres:16")
+    assert "TEST_DATABASE_URL" in job["env"]
+    # A missing database must fail the run, not skip the tests
+    assert job["env"]["REQUIRE_DATABASE_TESTS"] == "1"
+
+    # The test database's name contains "test" (the tests wipe it)
+    assert "test" in job["env"]["TEST_DATABASE_URL"].rsplit("/", 1)[-1]
+
+
+@pytest.mark.parametrize("name", PYTHON_JOBS)
+def test_ci_checks_the_migrations(workflow, name):
+    commands = steps_text(workflow["jobs"][name])
+
+    assert "alembic upgrade head" in commands
+    assert "alembic check" in commands
+    assert "pytest backend/tests" in commands
+    for package in ("sqlalchemy", "alembic", "psycopg"):
+        assert package in commands, package
+
+
+def test_ci_builds_and_runs_the_docker_stack(workflow):
+    commands = steps_text(workflow["jobs"]["docker"])
+
+    assert "docker compose config" in commands
+    assert "scripts/compose_smoke_test.py" in commands
+    assert (ROOT / "scripts" / "compose_smoke_test.py").is_file()
+
+
+def test_ci_job_names_are_unchanged(workflow):
+    """Branch protection can require checks by name; keep the old ones."""
+
+    jobs = workflow["jobs"]
+
+    assert jobs["test"].get("name", "test") == "test"
+    assert jobs["test-python-3-12"]["name"] == "test (Python 3.12)"
+    assert jobs["frontend"]["name"] == "frontend (lint, build and test)"
