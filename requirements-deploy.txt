@@ -6,3 +6,8 @@ uvicorn
 # The saved map stores numpy numbers, so it cannot be opened without numpy
 # (2.x: the map was saved with numpy 2).
 numpy>=2
+# Database (PostgreSQL). Only used when DATABASE_URL is set; without it
+# the API keeps runs in memory only, as before Stage 3.
+sqlalchemy>=2.0,<2.1
+alembic>=1.13,<2
+psycopg[binary]>=3.2,<4
