@@ -1,0 +1,94 @@
+# The whole of NORWICH//SIM with PostgreSQL:
+#
+#     docker compose up --build
+#
+# then open http://localhost:8080 (the API's own docs are at
+# http://localhost:8000/docs). Stop with Ctrl+C, or `docker compose down`;
+# saved runs and optimiser results stay in the "pgdata" volume until
+# `docker compose down -v`.
+#
+# Start-up order: db (healthy) -> migrate (alembic upgrade head, then
+# exits) -> backend (healthy) -> frontend.
+#
+# Settings can go in a .env file next to this one (not committed), e.g.
+#   POSTGRES_PASSWORD=something-better
+#   FRONTEND_PORT=8081
+#   BACKEND_PORT=8001
+
+name: norwich-sim
+
+x-database-url: &database-url
+  DATABASE_URL: postgresql://norwich:${POSTGRES_PASSWORD:-norwich}@db:5432/norwich_sim
+
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: norwich
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-norwich}
+      POSTGRES_DB: norwich_sim
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U norwich -d norwich_sim"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+    restart: unless-stopped
+
+  # Brings the database schema up to date, then exits. The backend only
+  # starts once this has succeeded (it also refuses to start on an
+  # out-of-date schema).
+  migrate:
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: norwich-sim-backend
+    command: ["alembic", "upgrade", "head"]
+    environment:
+      <<: *database-url
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: "no"
+
+  backend:
+    # Same image as migrate (the second build is fully cached); listed
+    # here too so Compose never tries to pull it from a registry
+    build:
+      context: .
+      dockerfile: backend/Dockerfile
+    image: norwich-sim-backend
+    environment:
+      <<: *database-url
+      LOG_LEVEL: ${LOG_LEVEL:-INFO}
+      MAX_LIVE_RUNS: ${MAX_LIVE_RUNS:-8}
+      # The frontend reaches the API through its own nginx (same address),
+      # so browsers only need CORS for direct use of port 8000
+      CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-8080}
+    # One container, one worker: live runs are kept in its memory
+    # (see backend/Dockerfile). Do not scale this service.
+    ports:
+      - "127.0.0.1:${BACKEND_PORT:-8000}:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+      migrate:
+        condition: service_completed_successfully
+    restart: unless-stopped
+
+  frontend:
+    build:
+      context: frontend
+      args:
+        VITE_API_URL: /api
+    image: norwich-sim-frontend
+    ports:
+      - "${FRONTEND_PORT:-8080}:8080"
+    depends_on:
+      backend:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  pgdata:

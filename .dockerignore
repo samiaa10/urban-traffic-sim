@@ -1,0 +1,31 @@
+# What the backend image build (context: the repository root) never needs.
+# Keeping it out makes builds faster and the image smaller, and keeps
+# local files (virtual environments, caches, git history) out of images.
+
+.git
+.github
+.claude
+.venv
+venv
+**/__pycache__
+**/*.pyc
+.pytest_cache
+.DS_Store
+
+# The frontend has its own image (frontend/Dockerfile)
+frontend
+
+# Only the committed Norwich map is used; not the OpenStreetMap cache
+cache
+data/*
+!data/osm
+data/osm/*
+!data/osm/norwich_graph.pkl
+
+# Not needed to run the API
+backend/tests
+docs
+*.md
+render.yaml
+docker-compose.yml
+requirements.txt
