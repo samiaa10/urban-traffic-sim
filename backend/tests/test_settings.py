@@ -95,3 +95,37 @@ def test_live_run_limit_can_be_set():
 def test_a_bad_live_run_limit_fails_at_start_up(value):
     with pytest.raises(ValueError, match="MAX_LIVE_RUNS"):
         max_live_runs(value)
+
+
+# ------------------------------------------------------------
+# DATABASE_URL
+# ------------------------------------------------------------
+
+from backend.api.settings import database_url  # noqa: E402
+
+
+def test_no_database_url_means_no_database():
+    assert database_url(None) is None
+    assert database_url("  ") is None
+
+
+@pytest.mark.parametrize("given", [
+    "postgres://u:p@db:5432/sim",          # what Render and Heroku hand out
+    "postgresql://u:p@db:5432/sim",
+    "postgresql+psycopg://u:p@db:5432/sim",
+    "  postgresql://u:p@db:5432/sim  ",
+])
+def test_postgresql_urls_use_the_psycopg_driver(given):
+    assert database_url(given) == "postgresql+psycopg://u:p@db:5432/sim"
+
+
+@pytest.mark.parametrize("given", [
+    "sqlite:///sim.db",
+    "mysql://u:p@db/sim",
+    "postgresql+asyncpg://u:p@db/sim",
+])
+def test_other_databases_are_refused_without_echoing_the_password(given):
+    with pytest.raises(ValueError, match="DATABASE_URL") as error:
+        database_url(given)
+
+    assert "p@db" not in str(error.value)
