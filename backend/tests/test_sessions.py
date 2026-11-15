@@ -70,7 +70,7 @@ def test_a_new_default_run_stops_the_previous_default():
     registry.add(first, make_default=True)
     stopped = registry.add(second, make_default=True)
 
-    assert stopped == [first]
+    assert stopped == [(first, "replaced")]
     assert registry.default() is second
     assert registry.get(first.id) is None
 
@@ -98,7 +98,7 @@ def test_the_run_idle_longest_is_stopped_when_the_limit_is_reached():
 
     stopped = registry.add(newest)
 
-    assert stopped == [newer]
+    assert stopped == [(newer, "stopped")]
     assert len(registry) == 2
     assert registry.get(oldest.id) is oldest
 
@@ -472,3 +472,14 @@ def test_separate_apps_have_separate_runs(graph_file):
 
     assert second.get(f"/simulations/{simulation_id}").status_code == 404
     assert second.get("/simulations").json()["simulations"] == []
+
+
+def test_without_a_database_history_is_unavailable_but_runs_work(client):
+    simulation_id = create_run(client)
+
+    response = client.get(f"/simulations/{simulation_id}/history/incidents")
+
+    assert response.status_code == 503
+    assert "DATABASE_URL" in response.json()["detail"]
+    assert client.get("/simulations").json()["persistence"] is False
+    assert client.get(f"/simulations/{simulation_id}").json()["recording"] == "off"

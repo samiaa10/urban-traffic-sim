@@ -4,6 +4,7 @@ registering run endpoints twice, and checking junctions and roads."""
 import functools
 import inspect
 import math
+import uuid
 
 from fastapi import Depends, HTTPException, Request
 
@@ -30,17 +31,53 @@ def default_run(context: AppContext = Depends(get_context)) -> LiveRun:
     return run
 
 
+def parse_run_id(simulation_id):
+    """The UUID in a path, or 404 (no run can have a malformed ID)."""
+
+    try:
+        return uuid.UUID(simulation_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Simulation not found")
+
+
+def stored_run(context, run_uuid):
+    """The saved row for a run, or None (always None without a database)."""
+
+    if context.database is None:
+        return None
+
+    from backend.db.repository import RunRepository
+
+    with context.database.transaction() as session:
+        return RunRepository(session).get_run(run_uuid)
+
+
 def run_by_id(
     simulation_id: str, context: AppContext = Depends(get_context)
 ) -> LiveRun:
-    """The live run named in the path (404 if there is no such run)."""
+    """The live run named in the path.
 
-    run = context.registry.get(simulation_id)
+    404 if there is no such run; 409 if it existed but is no longer live
+    (stopped, replaced or interrupted): its history can still be read
+    from /simulations/{simulation_id}/history/...
+    """
 
-    if run is None:
-        raise HTTPException(status_code=404, detail="Simulation not found")
+    run_uuid = parse_run_id(simulation_id)
+    run = context.registry.get(str(run_uuid))
 
-    return run
+    if run is not None:
+        return run
+
+    stored = stored_run(context, run_uuid)
+
+    if stored is not None:
+        raise HTTPException(
+            status_code=409,
+            detail=f"Simulation has ended ({stored.status.value}); "
+                   "its history is still available",
+        )
+
+    raise HTTPException(status_code=404, detail="Simulation not found")
 
 
 def run_route(router, method, legacy_path, run_path, **options):
@@ -165,10 +202,7 @@ def closures_for(context, simulation_id):
     halfway through."""
 
     if simulation_id is not None:
-        run = context.registry.get(simulation_id)
-
-        if run is None:
-            raise HTTPException(status_code=404, detail="Simulation not found")
+        run = run_by_id(simulation_id, context)
     else:
         run = context.registry.default()
 

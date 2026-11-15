@@ -27,6 +27,8 @@ import time
 import uuid
 from datetime import datetime, timezone
 
+from backend.api.recorder import NullRecorder
+
 
 logger = logging.getLogger(__name__)
 
@@ -35,7 +37,8 @@ class LiveRun:
     """One running simulation and everything needed to drive it."""
 
     def __init__(self, simulation, traffic, start, destination, run_id=None):
-        self.id = run_id or str(uuid.uuid4())
+        self.id_uuid = uuid.UUID(run_id) if run_id else uuid.uuid4()
+        self.id = str(self.id_uuid)
         self.simulation = simulation
         self.traffic = traffic
         self.start = start
@@ -50,6 +53,9 @@ class LiveRun:
         # Held while a request reads or changes this run
         self.lock = threading.Lock()
 
+        # Saves what happens to the database (see recorder.py)
+        self.recorder = NullRecorder()
+
     def touch(self):
         self.last_used = time.monotonic()
 
@@ -61,7 +67,10 @@ class LiveRun:
         return {
             "simulation_id": self.id,
             "status": "active",
+            "live": True,
             "is_default": is_default,
+            # "on", "off" (no database) or "failed" (history has a gap)
+            "recording": self.recorder.status,
             "created_at": self.created_at.isoformat(),
             "start": self.start,
             "destination": self.destination,
@@ -93,10 +102,11 @@ class RunRegistry:
             return len(self._runs)
 
     def add(self, run, make_default=False):
-        """Keep `run`; returns the runs stopped to make room (or replaced).
+        """Keep `run`; returns (run, reason) for each run this stopped.
 
-        With make_default=True the previous default run is stopped: that is
-        how /simulation/start has always behaved (one start, one run).
+        reason is "replaced" (make_default=True stops the previous default
+        run: that is how /simulation/start has always behaved) or "stopped"
+        (the run idle longest, to stay within max_live).
         """
 
         stopped = []
@@ -105,14 +115,14 @@ class RunRegistry:
             if make_default and self._default_id is not None:
                 previous = self._runs.pop(self._default_id, None)
                 if previous is not None:
-                    stopped.append(previous)
+                    stopped.append((previous, "replaced"))
 
             while len(self._runs) >= self.max_live:
                 idle = min(self._runs.values(), key=lambda r: r.last_used)
                 del self._runs[idle.id]
                 if idle.id == self._default_id:
                     self._default_id = None
-                stopped.append(idle)
+                stopped.append((idle, "stopped"))
                 logger.info(
                     "Stopped simulation %s to make room (limit %d live runs)",
                     idle.id, self.max_live,
@@ -170,6 +180,11 @@ class RunRegistry:
         return sorted(runs, key=lambda r: r.created_at, reverse=True)
 
     def clear(self):
+        """Forget every run; returns them."""
+
         with self._lock:
+            runs = list(self._runs.values())
             self._runs.clear()
             self._default_id = None
+
+        return runs

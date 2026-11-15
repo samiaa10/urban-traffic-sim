@@ -49,6 +49,7 @@ def block_incident(
 
         # Vehicles that could not get round stay flagged and keep trying
         run.traffic.process_events()
+        run.recorder.sync()
 
     return {
         "status": "incident created",
@@ -74,6 +75,7 @@ def unblock_incident(
 
         # Vehicles that might now have a quicker way re-plan on the next step
         recheck = run.traffic.process_events()
+        run.recorder.sync()
 
     return {
         "status": "incident removed",
@@ -141,11 +143,13 @@ def create_accident(
     with run.lock:
         simulation = run.simulation
         accident = simulation.add_accident(segment, severity, duration_seconds)
+        recheck = run.traffic.process_events()
+        run.recorder.sync()
 
         return {
             "status": "accident created",
             "accident": accident.describe(simulation.time),
-            "vehicles_to_recheck": run.traffic.process_events()
+            "vehicles_to_recheck": recheck
         }
 
 
@@ -169,8 +173,11 @@ def clear_accident(
                 detail="There is no accident on that road"
             )
 
+        recheck = run.traffic.process_events()
+        run.recorder.sync(manual_clear=True)
+
         return {
             "status": "accident cleared",
             "segment": segment_json(segment),
-            "vehicles_to_recheck": run.traffic.process_events()
+            "vehicles_to_recheck": recheck
         }
