@@ -15,6 +15,7 @@ name must contain "test".
 """
 
 import os
+import pickle
 from pathlib import Path
 
 import pytest
@@ -110,3 +111,44 @@ def session(engine):
     session.close()
     outer.rollback()
     connection.close()
+
+
+# ------------------------------------------------------------
+# API apps on the test database (tests through the HTTP API)
+# ------------------------------------------------------------
+
+@pytest.fixture(scope="module")
+def graph_file(tmp_path_factory):
+    path = tmp_path_factory.mktemp("graph") / "test_graph.pkl"
+
+    from backend.tests.test_api import make_test_graph
+
+    with open(path, "wb") as file:
+        pickle.dump(make_test_graph(), file)
+
+    return path
+
+
+@pytest.fixture
+def make_app(engine, database_url_for_tests, graph_file):
+    """Build apps on the test database; wipe the saved runs afterwards."""
+
+    apps = []
+
+    def make(**options):
+        options.setdefault("metrics_interval", 10)
+        from backend.api.app import create_app
+
+        app = create_app(graph_file, database_url=database_url_for_tests, **options)
+        apps.append(app)
+        return app
+
+    yield make
+
+    for app in apps:
+        app.state.context.database.dispose()
+
+    with engine.begin() as connection:
+        connection.execute(text(
+            "TRUNCATE simulation_runs, optimiser_runs RESTART IDENTITY CASCADE"
+        ))

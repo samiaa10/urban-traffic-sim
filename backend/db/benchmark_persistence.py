@@ -20,6 +20,11 @@ took. Scenarios:
           step, so the surge's counts are saved on every step (the most
           frequent writing the recorder does)
 
+A second part times the station optimiser (default candidates, 200
+scenarios): computing an answer without a database, computing and saving
+it, and fetching the saved answer again (?reuse=true and
+GET /optimiser/runs/{id}).
+
 The runs it creates are deleted afterwards. Timings depend on the machine
 and on where the database is; the report records which.
 """
@@ -123,7 +128,90 @@ def measure(plain, saving, engine, fleet, surge, steps):
     }
 
 
-def report(rows, steps, url):
+OPTIMISER_REQUESTS = (
+    ("ranking", "/optimiser/stations", {"scenarios": 200}),
+    ("station set (3)", "/optimiser/station-set", {"scenarios": 200, "stations": 3}),
+)
+
+
+def timed(call, repeats):
+    times = []
+    result = None
+
+    for _ in range(repeats):
+        began = time.perf_counter()
+        result = call()
+        times.append((time.perf_counter() - began) * 1000)
+
+    return statistics.median(times), result
+
+
+def measure_optimiser(plain, saving, repeats, fetches):
+    rows = []
+
+    for label, path, params in OPTIMISER_REQUESTS:
+        plain_ms, _ = timed(lambda: plain.get(path, params=params).json(), repeats)
+        saving_ms, answer = timed(lambda: saving.get(path, params=params).json(), repeats)
+
+        reuse_ms, reused = timed(
+            lambda: saving.get(path, params={**params, "reuse": True}).json(), fetches
+        )
+        assert reused["reused"] is True
+
+        fetch_ms, _ = timed(
+            lambda: saving.get(f"/optimiser/runs/{answer['optimiser_run_id']}").json(),
+            fetches,
+        )
+
+        rows.append({
+            "label": label, "plain": plain_ms, "saving": saving_ms,
+            "reuse": reuse_ms, "fetch": fetch_ms,
+        })
+        print(
+            f"{label}: compute {plain_ms:.0f} ms, compute+save {saving_ms:.0f} ms, "
+            f"reuse {reuse_ms:.1f} ms, fetch {fetch_ms:.1f} ms",
+            flush=True,
+        )
+
+    # Remove what the benchmark saved
+    for summary in saving.get("/optimiser/runs", params={"limit": 200}).json()["optimiser_runs"]:
+        saving.delete(f"/optimiser/runs/{summary['optimiser_run_id']}")
+
+    return rows
+
+
+def optimiser_report(rows, repeats, fetches):
+    lines = [
+        "",
+        "## Station optimiser",
+        "",
+        f"Default candidates (about 40 junctions), 200 scenarios. Median of "
+        f"{repeats} computations and {fetches} fetches.",
+        "",
+        "| Request | Compute, no database (ms) | Compute + save (ms) "
+        "| Saved answer via `reuse=true` (ms) | `GET /optimiser/runs/{id}` (ms) |",
+        "|---|---:|---:|---:|---:|",
+    ]
+
+    for row in rows:
+        lines.append(
+            f"| {row['label']} | {row['plain']:.0f} | {row['saving']:.0f} "
+            f"| {row['reuse']:.1f} | {row['fetch']:.1f} |"
+        )
+
+    lines += [
+        "",
+        "Saving an answer costs a few milliseconds next to computing it. A",
+        "saved answer comes back in a few milliseconds: that is what",
+        "`reuse=true` buys when the same question is asked again (the same",
+        "map, settings, candidates, closed roads and optimiser version; see",
+        "`OPTIMISER_VERSION` in `backend/optimiser/station_optimiser.py`).",
+    ]
+
+    return lines
+
+
+def report(rows, steps, url, optimiser_lines=()):
     host = url.split("@")[-1].split("/")[0]
     lines = [
         "# Persistence benchmark",
@@ -174,6 +262,8 @@ def report(rows, steps, url):
         "  emergencies are never behind, because they are saved as they happen.",
     ]
 
+    lines += list(optimiser_lines)
+
     return "\n".join(lines) + "\n"
 
 
@@ -181,6 +271,8 @@ def main():
     parser = argparse.ArgumentParser(description="Persistence benchmark")
     parser.add_argument("--steps", type=int, default=120)
     parser.add_argument("--fleets", default="0,500,2000")
+    parser.add_argument("--optimiser-repeats", type=int, default=3)
+    parser.add_argument("--fetches", type=int, default=20)
     parser.add_argument("--save", action="store_true", help=f"write {REPORT.name}")
     arguments = parser.parse_args()
 
@@ -206,7 +298,14 @@ def main():
                 flush=True,
             )
 
-    text = report(rows, arguments.steps, url)
+    optimiser_rows = measure_optimiser(
+        plain, saving, arguments.optimiser_repeats, arguments.fetches
+    )
+
+    text = report(
+        rows, arguments.steps, url,
+        optimiser_report(optimiser_rows, arguments.optimiser_repeats, arguments.fetches),
+    )
     print()
     print(text)
 

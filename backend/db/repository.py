@@ -18,6 +18,8 @@ from typing import Optional, Sequence, Tuple
 
 from sqlalchemy import delete, func, select, update
 
+from backend.optimiser.station_optimiser import OPTIMISER_VERSION
+
 from backend.db.models import (
     CandidateSource,
     Emergency,
@@ -572,16 +574,18 @@ class RunRepository:
 
 def optimiser_request_key(
     kind, graph_sha256, candidates, closed_segments, scenarios, seed,
-    target_seconds, speed, station_count=None,
+    target_seconds, speed, station_count=None, version=OPTIMISER_VERSION,
 ):
     """A fingerprint of everything an optimisation's answer depends on.
 
     The optimiser is deterministic, so two requests with the same key get
-    the same answer. candidates is the list of (lat, lon) points in the
-    order given (order can break ties); closed roads are sorted.
+    the same answer: the same map, settings, candidates (the (lat, lon)
+    points in the order given, since order can break ties), closed roads
+    (in any order) and optimiser version.
     """
 
     key = {
+        "version": int(version),
         "kind": OptimiserKind(kind).value,
         "graph": graph_sha256,
         "candidates": [[float(a), float(b)] for a, b in candidates],
@@ -694,6 +698,12 @@ class OptimiserRepository:
 
     def get(self, optimiser_run_id):
         return self.session.get(OptimiserRun, optimiser_run_id)
+
+    def delete(self, optimiser_run_id):
+        result = self.session.execute(
+            delete(OptimiserRun).where(OptimiserRun.id == optimiser_run_id)
+        )
+        return result.rowcount > 0
 
     def latest_for_key(self, request_key):
         """The newest saved answer to an identical request, if any."""

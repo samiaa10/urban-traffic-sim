@@ -167,6 +167,7 @@ def test_request_keys_change_with_anything_the_answer_depends_on():
         {"seed": 2},
         {"target_seconds": 300},
         {"speed": 15},
+        {"version": 999},                  # the optimiser itself changed
     ):
         assert optimiser_request_key(**{**base, **change}) != key, change
 
