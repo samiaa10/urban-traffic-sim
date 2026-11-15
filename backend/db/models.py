@@ -22,7 +22,7 @@ point at the simulation run whose closed roads it avoided; deleting that
 run keeps the optimisation and just forgets the link.
 
 Roads are not a table: the road network lives in the committed graph file
-(about 100,000 roads that never change). A road is stored the way the API
+(10,980 road segments that never change). A road is stored the way the API
 already names it, by its two junction ids and their coordinates, and each
 run records a fingerprint of the graph file so ids are never read against
 a different map.
