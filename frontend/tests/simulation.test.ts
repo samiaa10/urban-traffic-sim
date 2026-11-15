@@ -1,5 +1,6 @@
 // Tests for the simulation screen's logic (src/simulationHelpers.ts):
-// status text, emergency text, traffic summary, route conversion.
+// status text, emergency text, traffic summary, route conversion, and
+// which run a request is for.
 
 import assert from "node:assert/strict"
 import { describe, it } from "node:test"
@@ -10,6 +11,8 @@ import {
   describeEmergency,
   describeSimulationState,
   describeTraffic,
+  runPath,
+  simulationIdFrom,
   summariseTraffic,
   toCoordinates,
   type EmergencyStatus,
@@ -301,6 +304,56 @@ describe("allFinished", () => {
     assert.equal(
       allFinished([vehicle({ finished: true }), vehicle({ finished: true })]),
       true
+    )
+  })
+})
+
+// ------------------------------------------------
+// Which run a request is for (runPath, simulationIdFrom)
+// ------------------------------------------------
+
+describe("simulationIdFrom", () => {
+  it("reads the run's ID from the start answer", () => {
+    assert.equal(
+      simulationIdFrom({ status: "simulation started", simulation_id: "abc-123" }),
+      "abc-123"
+    )
+  })
+
+  it("is null for an older backend that gives no ID", () => {
+    assert.equal(simulationIdFrom({ status: "simulation started" }), null)
+  })
+
+  it("is null for answers that are not usable IDs", () => {
+    assert.equal(simulationIdFrom(null), null)
+    assert.equal(simulationIdFrom({ simulation_id: 42 }), null)
+    assert.equal(simulationIdFrom({ simulation_id: "" }), null)
+  })
+})
+
+describe("runPath", () => {
+  it("names the run when there is an ID", () => {
+    assert.equal(
+      runPath("abc-123", "/simulation/step", "/step"),
+      "/simulations/abc-123/step"
+    )
+  })
+
+  it("keeps the query string", () => {
+    assert.equal(
+      runPath("abc", "/incident/block?start=1&destination=2", "/incidents/block?start=1&destination=2"),
+      "/simulations/abc/incidents/block?start=1&destination=2"
+    )
+  })
+
+  it("uses the original path without an ID", () => {
+    assert.equal(runPath(null, "/simulation/step", "/step"), "/simulation/step")
+  })
+
+  it("cannot be steered to another path by the ID", () => {
+    assert.equal(
+      runPath("../optimiser", "/simulation/step", "/step"),
+      "/simulations/..%2Foptimiser/step"
     )
   })
 })

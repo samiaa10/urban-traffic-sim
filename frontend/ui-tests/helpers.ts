@@ -433,3 +433,47 @@ export function workingBackend(): Backend {
     "GET /optimiser/station-set": { body: stationSetAnswer(3) },
   }
 }
+
+// ------------------------------------------------
+// A backend whose runs have IDs (Stage 3)
+// ------------------------------------------------
+
+// Each endpoint that acts on the running simulation: its original path
+// and its path under /simulations/{id}
+export const RUN_ENDPOINTS: [string, string][] = [
+  ["POST /simulation/step", "POST /simulations/{id}/step"],
+  ["GET /simulation/congestion", "GET /simulations/{id}/congestion"],
+  ["GET /emergency/status", "GET /simulations/{id}/emergencies/status"],
+  ["POST /incident/block", "POST /simulations/{id}/incidents/block"],
+  ["POST /simulation/reroute", "POST /simulations/{id}/reroute"],
+  ["POST /station/create", "POST /simulations/{id}/stations"],
+  ["POST /station/add-vehicle", "POST /simulations/{id}/stations/add-vehicle"],
+  ["POST /emergency/create", "POST /simulations/{id}/emergencies"],
+  ["POST /emergency/block-ahead", "POST /simulations/{id}/emergencies/block-ahead"],
+]
+
+// `backend` as a current backend would answer: /simulation/start returns
+// a simulation_id, and the run endpoints answer ONLY under
+// /simulations/{id}. A request to an original path fails the test with
+// "no answer", so this proves the app names its run.
+export function withRunIds(backend: Backend, simulationId = "run-1"): Backend {
+  const converted: Backend = { ...backend }
+
+  for (const [original, perRun] of RUN_ENDPOINTS) {
+    if (original in converted) {
+      converted[perRun.replace("{id}", simulationId)] = converted[original]
+      delete converted[original]
+    }
+  }
+
+  const start = backend["POST /simulation/start"]
+
+  if (start !== undefined && !(start instanceof Error) && typeof start !== "function") {
+    converted["POST /simulation/start"] = {
+      ...start,
+      body: { ...(start.body as object), simulation_id: simulationId },
+    }
+  }
+
+  return converted
+}
