@@ -169,3 +169,31 @@ export function describeEmergency(status: EmergencyStatus): string {
 // Has every vehicle arrived? (An empty list does not count.)
 export const allFinished = (vehicles: Vehicle[]): boolean =>
   vehicles.length > 0 && vehicles.every((vehicle) => vehicle.finished)
+
+// ------------------------------------------------
+// Which run a request is for
+// ------------------------------------------------
+
+// The ID /simulation/start returned, if it returned one. Backends since
+// Stage 3 do (each run has its own ID); an older backend does not.
+export function simulationIdFrom(startResponse: unknown): string | null {
+  const id = (startResponse as { simulation_id?: unknown } | null)
+    ?.simulation_id
+
+  return typeof id === "string" && id.length > 0 ? id : null
+}
+
+// Path of an endpoint that acts on the running simulation. With the run's
+// ID it is /simulations/{id}<perRun>, so the request reaches this run even
+// if someone else starts another; without one it is the original
+// single-run path, so the frontend still works with an older backend.
+// A query string on perRun/original is kept.
+export function runPath(
+  simulationId: string | null,
+  original: string,
+  perRun: string
+): string {
+  return simulationId === null
+    ? original
+    : `/simulations/${encodeURIComponent(simulationId)}${perRun}`
+}

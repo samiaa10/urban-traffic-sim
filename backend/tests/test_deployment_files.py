@@ -60,7 +60,13 @@ def test_backend_installs_from_a_file_that_exists_and_stays_small(blueprint):
 
     # numpy is needed to open the saved map; osmnx would make the build
     # slow and large for no benefit, because the map is already downloaded.
-    assert packages == {"fastapi", "uvicorn", "numpy"}
+    # The database packages (Stage 3) are imported by the backend whether
+    # or not DATABASE_URL is set; psycopg[binary] ships prebuilt wheels,
+    # so nothing is compiled during the build.
+    assert packages == {
+        "fastapi", "uvicorn", "numpy",
+        "sqlalchemy", "alembic", "psycopg[binary]",
+    }
 
 
 def test_both_services_use_the_same_variable_names_the_code_reads(blueprint):
