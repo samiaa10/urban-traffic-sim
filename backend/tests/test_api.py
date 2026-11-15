@@ -1109,3 +1109,251 @@ def test_other_origins_are_not_allowed(client):
 
 def test_unknown_path_is_404(client):
     assert client.get("/no-such-endpoint").status_code == 404
+
+
+# ------------------------------------------------------------
+# Stage 2: accidents, fleets, surges, dynamic rerouting
+# ------------------------------------------------------------
+
+STAGE_2_NEEDS_A_SIMULATION = [
+    ("post", "/incident/accident", {"start": 0, "destination": 1}),
+    ("post", "/incident/accident/clear", {"start": 0, "destination": 1}),
+    ("post", "/simulation/fleet", {"count": 5}),
+    ("post", "/traffic/surge", {"latitude": 52.623, "longitude": 1.2845}),
+    ("get", "/traffic/status", {}),
+    ("post", "/traffic/rerouting", {"enabled": False}),
+]
+
+
+@pytest.mark.parametrize("method,path,params", STAGE_2_NEEDS_A_SIMULATION)
+def test_stage_2_endpoints_need_a_running_simulation(client, method, path, params):
+    response = getattr(client, method)(path, params=params)
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "No simulation is running"
+
+
+def test_step_reports_reroutes_and_simulation_time(running):
+    body = step(running)
+
+    assert body["simulation_time"] == 1
+    assert body["rerouted_this_step"] >= 0
+    assert all("reroutes" in vehicle for vehicle in body["vehicles"])
+
+
+def test_accident_is_listed_with_its_severity_and_time_left(running):
+    response = running.post(
+        "/incident/accident",
+        params={"start": 1, "destination": 2, "severity": "severe", "duration_seconds": 120},
+    )
+
+    assert response.status_code == 200
+    accident = response.json()["accident"]
+    assert accident["severity"] == "severe"
+    assert accident["remaining_seconds"] == 120
+
+    listed = running.get("/incidents").json()
+    assert listed["incidents"] == []                 # not a closure
+    assert listed["accidents"][0]["severity"] == "severe"
+
+
+def test_accident_slows_the_vehicle_using_that_road(running, api):
+    # Rerouting off: with it on, the vehicle (correctly) avoids the road
+    # before driving onto it, and this test is about the slowdown itself
+    running.post("/traffic/rerouting", params={"enabled": False})
+    a, b = vehicle_road(api, index=0)
+
+    running.post(
+        "/incident/accident",
+        params={"start": a, "destination": b, "severity": "moderate"},
+    )
+    vehicle = step(running)["vehicles"][0]
+
+    assert vehicle["speed_factor"] <= 0.45 + 1e-9
+
+
+def test_accident_clears_by_itself(running):
+    running.post(
+        "/incident/accident",
+        params={"start": 1, "destination": 2, "duration_seconds": 3},
+    )
+
+    step(running, 3)
+
+    assert running.get("/incidents").json()["accidents"] == []
+
+
+def test_accident_can_be_cleared_early_and_only_once(running):
+    running.post("/incident/accident", params={"start": 1, "destination": 2})
+
+    first = running.post("/incident/accident/clear", params={"start": 2, "destination": 1})
+    second = running.post("/incident/accident/clear", params={"start": 1, "destination": 2})
+
+    assert first.status_code == 200
+    assert second.status_code == 404
+
+
+def test_severe_accident_ahead_makes_the_vehicle_take_another_way(running, api):
+    a, b = vehicle_road(api, index=2)
+
+    response = running.post(
+        "/incident/accident",
+        params={"start": a, "destination": b, "severity": "severe"},
+    )
+    assert response.json()["vehicles_to_recheck"] >= 1
+
+    step(running)
+
+    vehicle = api.simulation.vehicles[0]
+    road = api.network.segment[(a, b)]
+    remaining = [
+        tuple(sorted((
+            (p["latitude"], p["longitude"]), (q["latitude"], q["longitude"])
+        )))
+        for p, q in zip(vehicle.route[vehicle.position:], vehicle.route[vehicle.position + 1:])
+    ]
+
+    assert vehicle.reroutes >= 1
+    assert road not in remaining
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"start": 1, "destination": 2, "severity": "catastrophic"},
+        {"start": 1, "destination": 2, "duration_seconds": 0},
+        {"start": 1, "destination": 2, "duration_seconds": -5},
+        {"start": 1, "destination": 2, "duration_seconds": 100000},
+        {"start": 0, "destination": 5},                       # not joined
+    ],
+)
+def test_bad_accident_requests_are_400(running, params):
+    assert running.post("/incident/accident", params=params).status_code == 400
+
+
+def test_accident_on_unknown_junction_is_404(running):
+    response = running.post("/incident/accident", params={"start": 0, "destination": 12345})
+
+    assert response.status_code == 404
+
+
+def test_reopening_a_road_that_saves_time_brings_the_vehicle_back(client, api):
+    # A one-road trip (0 -> 1, about 200 m). Closing that road forces the
+    # detour 0-4-5-1 (about 650 m), so reopening it saves about 30 s.
+    client.post("/simulation/start", params={"start": 0, "destination": 1})
+    client.post("/incident/block", params={"start": 0, "destination": 1})
+    assert len(api.simulation.vehicles[0].route) == 4
+
+    response = client.post("/incident/unblock", params={"start": 0, "destination": 1})
+
+    assert response.status_code == 200
+    assert response.json()["vehicles_to_recheck"] >= 1
+
+    step(client)
+    assert len(api.simulation.vehicles[0].route) == 2       # straight there again
+
+
+def test_reopening_a_road_with_an_equally_good_way_round_changes_no_route(running, api):
+    # On a grid every closed road has an equally short way round, so the
+    # vehicle that went round it is re-checked but has no reason to switch
+    a, b = vehicle_road(api, index=2)
+    running.post("/incident/block", params={"start": a, "destination": b})
+    route_round = list(api.simulation.vehicles[0].route)
+
+    response = running.post("/incident/unblock", params={"start": a, "destination": b})
+    assert response.status_code == 200
+    assert response.json()["vehicles_to_recheck"] >= 1
+
+    api.traffic.reroute_pass(urgent_only=True)
+    assert api.simulation.vehicles[0].route == route_round
+
+
+def test_fleet_adds_vehicles_that_drive(running, api):
+    before = len(api.simulation.vehicles)
+
+    response = running.post("/simulation/fleet", params={"count": 15, "seed": 3})
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["spawned"] + body["failed"] == 15
+    assert body["spawned"] > 0
+    assert body["total_vehicles"] == before + body["spawned"]
+
+    step(running, 5)
+    assert any(v.distance_travelled > 0 for v in api.simulation.vehicles[before:])
+
+
+def test_fleet_is_repeatable_with_a_seed(client, api):
+    def trips():
+        client.post("/simulation/start", params={"start": 0, "destination": 15})
+        client.post("/simulation/fleet", params={"count": 10, "seed": 8})
+        return [(v.origin, v.destination) for v in api.simulation.vehicles[2:]]
+
+    assert trips() == trips()
+
+
+@pytest.mark.parametrize("count", [0, -1, 2001])
+def test_fleet_size_is_checked(running, count):
+    assert running.post("/simulation/fleet", params={"count": count}).status_code == 400
+
+
+def test_surge_keeps_adding_trips_into_its_zone(running, api):
+    before = len(api.simulation.vehicles)
+
+    response = running.post(
+        "/traffic/surge",
+        params={
+            "latitude": 52.623, "longitude": 1.2845, "radius_metres": 300,
+            "vehicles_per_minute": 120, "duration_seconds": 10,
+        },
+    )
+    assert response.status_code == 200
+
+    step(running, 15)
+
+    surge = running.get("/traffic/status").json()["surges"][0]
+    assert surge["spawned"] + surge["failed"] == 20    # 2 a second for 10 s
+    assert surge["active"] is False
+    assert len(api.simulation.vehicles) == before + surge["spawned"]
+
+
+@pytest.mark.parametrize(
+    "params",
+    [
+        {"radius_metres": 50},
+        {"radius_metres": 9000},
+        {"direction": "sideways"},
+        {"vehicles_per_minute": 0},
+        {"vehicles_per_minute": 1000},
+        {"duration_seconds": 0},
+        {"duration_seconds": 10000},
+        {"latitude": 51.5, "longitude": -0.12},              # no roads there
+    ],
+)
+def test_bad_surge_requests_are_400(running, params):
+    query = {"latitude": 52.623, "longitude": 1.2845, **params}
+
+    assert running.post("/traffic/surge", params=query).status_code == 400
+
+
+def test_traffic_status_reports_the_state_of_the_network(running):
+    running.post("/incident/accident", params={"start": 1, "destination": 2})
+
+    status = running.get("/traffic/status").json()
+
+    assert status["vehicles"] >= 1
+    assert len(status["accidents"]) == 1
+    assert status["policy"]["enabled"] is True
+    assert set(status["rerouting"]) >= {"searches", "reroutes"}
+
+
+def test_dynamic_rerouting_can_be_switched_off(running, api):
+    response = running.post("/traffic/rerouting", params={"enabled": False})
+
+    assert response.json()["policy"]["enabled"] is False
+
+    a, b = vehicle_road(api, index=2)
+    running.post("/incident/accident", params={"start": a, "destination": b, "severity": "severe"})
+    step(running)
+
+    assert api.simulation.vehicles[0].reroutes == 0

@@ -1,3 +1,6 @@
+import math
+
+from backend.simulation.accidents import Accident
 from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
@@ -35,6 +38,39 @@ def speed_factor_for_count(vehicle_count):
     return SPEED_FACTORS[congestion_level(vehicle_count)]
 
 
+def effective_vehicle_count(vehicle_count, accident=None):
+    """How many vehicles the road "feels" like it has.
+
+    An accident lowers the road's capacity, so the same vehicles congest
+    it more: with half the capacity, 2 vehicles count as 4. A lone vehicle
+    is never held up by capacity (it only has itself), but it is still
+    slowed by the accident's speed factor.
+    """
+
+    if accident is None or vehicle_count <= 1:
+        return vehicle_count
+
+    return math.ceil(vehicle_count / accident.capacity_factor - 1e-9)
+
+
+def speed_factor_on_road(vehicle_count, accident=None):
+    """Fraction of full speed on a road: traffic, then any accident.
+
+    This is the single definition of a road's speed. The simulation moves
+    vehicles with it, ETAs are estimated with it, and the travel-time
+    router plans routes with it, so all three agree.
+    """
+
+    factor = speed_factor_for_count(
+        effective_vehicle_count(vehicle_count, accident)
+    )
+
+    if accident is not None:
+        factor *= accident.speed_factor
+
+    return factor
+
+
 def segment_between(point_a, point_b):
     """Road segment key for two route points (direction does not matter)."""
 
@@ -61,6 +97,20 @@ class Simulation:
         # Emergency stations
         self.stations = []
 
+        # Accidents: road segment -> Accident (the road stays open but slow)
+        self.accidents = {}
+
+        # Things that happened to the road network, oldest first. Each is
+        # {"time", "type", "segment"}; type is one of "road_closed",
+        # "road_reopened", "accident", "accident_cleared". Whoever plans
+        # routes (see traffic_manager.py) reads these to react.
+        self.events = []
+
+        # Real road lengths, keyed by ((lat, lon), (lat, lon)) in driving
+        # direction. None means vehicles measure roads as straight lines
+        # (see use_road_lengths).
+        self.road_lengths = None
+
         # Create the first vehicle
         self.add_vehicle(route)
 
@@ -76,9 +126,32 @@ class Simulation:
             vehicle_type
         )
 
+        vehicle.road_lengths = self.road_lengths
+
         self.vehicles.append(vehicle)
 
         return vehicle
+
+    def use_road_lengths(self, road_lengths):
+        """Make vehicles drive the real length of each road.
+
+        road_lengths maps ((lat, lon), (lat, lon)) to metres (for example
+        RoadNetwork.length_between_points). Without it a vehicle measures
+        the straight line between two junctions, which is shorter than the
+        road the router and the optimiser measured. Roads not in the
+        mapping (such as the bit of road from a vehicle's position to the
+        next junction after a reroute) are still measured as straight lines.
+        """
+
+        self.road_lengths = road_lengths
+
+        for vehicle in self.vehicles:
+            vehicle.road_lengths = road_lengths
+
+    def record_event(self, event_type, segment):
+        self.events.append(
+            {"time": self.time, "type": event_type, "segment": segment}
+        )
 
     # ========================================
     # INCIDENTS / BLOCKED ROADS
@@ -87,12 +160,58 @@ class Simulation:
     def block_segment(self, segment):
         """Block a road segment because of an incident."""
         segment = tuple(sorted(segment))
-        self.blocked_segments.add(segment)
+
+        if segment not in self.blocked_segments:
+            self.blocked_segments.add(segment)
+            self.record_event("road_closed", segment)
 
     def unblock_segment(self, segment):
         """Reopen a previously blocked road segment."""
         segment = tuple(sorted(segment))
-        self.blocked_segments.discard(segment)
+
+        if segment in self.blocked_segments:
+            self.blocked_segments.discard(segment)
+            self.record_event("road_reopened", segment)
+
+    # ========================================
+    # ACCIDENTS (road stays open, but slow)
+    # ========================================
+
+    def add_accident(self, segment, severity="moderate", duration=None):
+        """Start an accident on a road. Replaces any accident already there."""
+
+        segment = tuple(sorted(segment))
+        accident = Accident(segment, severity, self.time, duration)
+
+        self.accidents[segment] = accident
+        self.record_event("accident", segment)
+
+        return accident
+
+    def clear_accident(self, segment):
+        """Clear an accident early. Returns False if there was none."""
+
+        segment = tuple(sorted(segment))
+
+        if self.accidents.pop(segment, None) is None:
+            return False
+
+        self.record_event("accident_cleared", segment)
+        return True
+
+    def clear_expired_accidents(self):
+        """Remove accidents whose time is up (called by step)."""
+
+        for segment, accident in list(self.accidents.items()):
+            if self.time >= accident.clears_at:
+                self.clear_accident(segment)
+
+    def road_speed_factor(self, segment, vehicle_count):
+        """Fraction of full speed on this road with this many vehicles."""
+
+        return speed_factor_on_road(
+            vehicle_count, self.accidents.get(segment)
+        )
 
     def is_segment_blocked(self, segment):
         """Check whether a road segment is blocked."""
@@ -328,9 +447,8 @@ class Simulation:
         traffic = self.get_traffic_density()
 
         def speed_factor(point_a, point_b):
-            return speed_factor_for_count(
-                traffic.get(segment_between(point_a, point_b), 0)
-            )
+            segment = segment_between(point_a, point_b)
+            return self.road_speed_factor(segment, traffic.get(segment, 0))
 
         for vehicle in self.vehicles:
 
@@ -358,6 +476,8 @@ class Simulation:
             )
 
         self.time += 1
+
+        self.clear_expired_accidents()
 
         self.check_emergencies()
 
@@ -421,9 +541,15 @@ class Simulation:
 
         for segment, vehicle_count in traffic.items():
 
+            accident = self.accidents.get(segment)
+
+            # An accident's lost capacity shows in the level too, so the
+            # map colour matches how slowly vehicles really move there
             congestion[segment] = {
                 "vehicle_count": vehicle_count,
-                "level": congestion_level(vehicle_count)
+                "level": congestion_level(
+                    effective_vehicle_count(vehicle_count, accident)
+                ),
             }
 
         return congestion

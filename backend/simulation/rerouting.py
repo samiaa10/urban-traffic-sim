@@ -81,9 +81,16 @@ def reroute_vehicle(
     vehicle,
     node_by_point,
     traffic=None,
-    blocked_segments=None
+    blocked_segments=None,
+    route_finder=None
 ):
     """Give one vehicle a fresh route to its destination.
+
+    route_finder(vehicle, start, destination) -> (path, metres, nodes
+    explored) replaces the default search (shortest route with A*, plus
+    the traffic penalty). The traffic manager passes its travel-time
+    search here, so a closure is planned around with the same costs as
+    every other routing decision.
 
     Returns a dict whose "status" is:
         "rerouted"  new route set (also has route, distance, nodes_explored)
@@ -97,14 +104,19 @@ def reroute_vehicle(
     if start_node is None or destination_node is None:
         return {"status": "skipped"}
 
-    path, distance, nodes_explored = a_star(
-        graph,
-        start_node,
-        destination_node,
-        return_stats=True,
-        traffic=traffic,
-        blocked_segments=blocked_segments
-    )
+    if route_finder is not None:
+        path, distance, nodes_explored = route_finder(
+            vehicle, start_node, destination_node
+        )
+    else:
+        path, distance, nodes_explored = a_star(
+            graph,
+            start_node,
+            destination_node,
+            return_stats=True,
+            traffic=traffic,
+            blocked_segments=blocked_segments
+        )
 
     if not path:
         return {"status": "stranded"}
@@ -132,7 +144,8 @@ def reroute_affected_vehicles(
     graph,
     simulation,
     node_by_point,
-    only_affected=True
+    only_affected=True,
+    route_finder=None
 ):
     """Reroute vehicles after a closure.
 
@@ -180,7 +193,8 @@ def reroute_affected_vehicles(
             vehicle,
             node_by_point,
             traffic=traffic,
-            blocked_segments=blocked
+            blocked_segments=blocked,
+            route_finder=route_finder
         )
 
         stats[result["status"]] += 1

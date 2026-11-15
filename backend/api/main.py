@@ -7,12 +7,18 @@ import math
 
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 
 from backend.api.settings import allowed_origins, log_level
 from backend.routing.a_star import a_star
+from backend.routing.travel_time import RoadNetwork
+from backend.simulation.accidents import SEVERITIES
+from backend.simulation.demand import Zone
 from backend.simulation.simulation import Simulation
+from backend.simulation.traffic_manager import TrafficManager
 from backend.simulation import rerouting
 from backend.simulation import dispatch
+import random
 from backend.optimiser.station_optimiser import (
     dense_candidates,
     explain_best,
@@ -78,6 +84,9 @@ logger.info(
 # Lets us turn a route point back into its junction id (used for rerouting)
 node_by_point = rerouting.build_node_lookup(graph)
 
+# Road lengths, segment keys and the fastest-route search, built once
+network = RoadNetwork(graph)
+
 
 # Candidate stations the optimiser uses when none are given (about 40
 # well-connected junctions spread over the map). Worked out once at startup.
@@ -85,6 +94,50 @@ default_station_candidates = dense_candidates(graph)
 
 
 simulation = None
+
+# Owns the running simulation together with the road network: fleets,
+# surges, dynamic rerouting, reactions to accidents and reopened roads.
+# Created by /simulation/start alongside the simulation.
+traffic = None
+
+
+def require_simulation():
+    if simulation is None:
+        raise HTTPException(
+            status_code=404,
+            detail="No simulation is running"
+        )
+
+
+def road_between(start, destination):
+    """Segment key for the road joining two junctions (400/404 if none)."""
+
+    for node, label in ((start, "Start"), (destination, "Destination")):
+        if node not in graph.nodes:
+            raise HTTPException(
+                status_code=404,
+                detail=f"{label} node not found"
+            )
+
+    if not (
+        graph.has_edge(start, destination)
+        or graph.has_edge(destination, start)
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="These two nodes are not directly connected by a road"
+        )
+
+    return tuple(sorted((network.position[start], network.position[destination])))
+
+
+def segment_json(segment):
+    start_point, end_point = segment
+
+    return {
+        "start": {"latitude": start_point[0], "longitude": start_point[1]},
+        "end": {"latitude": end_point[0], "longitude": end_point[1]},
+    }
 
 
 @app.get("/")
@@ -184,7 +237,7 @@ def route(start: int, destination: int):
 @app.post("/simulation/start")
 def start_simulation(start: int, destination: int):
 
-    global simulation
+    global simulation, traffic
 
     if start not in graph.nodes:
         raise HTTPException(
@@ -251,6 +304,9 @@ def start_simulation(start: int, destination: int):
     if second_path_coordinates:
         simulation.add_vehicle(second_path_coordinates)
 
+    # Fleets, surges, dynamic rerouting; vehicles drive real road lengths
+    traffic = TrafficManager(network, simulation)
+
 
     # --------------------------------
     # Return simulation information
@@ -291,8 +347,8 @@ def simulation_step():
             detail="No simulation is running"
         )
 
-    # Move all vehicles
-    simulation.step()
+    # Run surges, move all vehicles, then react to changes and re-plan
+    rerouted = traffic.step()
 
     vehicles = []
 
@@ -310,12 +366,20 @@ def simulation_step():
             "on_emergency": vehicle.on_emergency,
             # Traffic: 1.0 = free flowing, lower = held up by other vehicles
             "speed_factor": vehicle.speed_factor,
-            "journey_seconds": vehicle.journey_seconds
+            "journey_seconds": vehicle.journey_seconds,
+            # Times this trip's route was changed (closures, accidents,
+            # or a meaningfully faster route appearing)
+            "reroutes": vehicle.reroutes
         })
 
-    return {
-        "vehicles": vehicles
-    }
+    # Already plain numbers, strings and booleans, so skip FastAPI's
+    # general-purpose encoder: with 2,000 vehicles it took about 55 ms of
+    # every step just to walk this list. The JSON is the same.
+    return JSONResponse({
+        "vehicles": vehicles,
+        "simulation_time": simulation.time,
+        "rerouted_this_step": rerouted
+    })
 
 @app.get("/simulation/congestion")
 def simulation_congestion():
@@ -344,6 +408,7 @@ def simulation_congestion():
                 "longitude": end_point[1]
             },
             "vehicle_count": data["vehicle_count"],
+            # Includes any accident's lost capacity (see /incidents)
             "level": data["level"]
         })
 
@@ -396,12 +461,17 @@ def block_incident(
 
     simulation.block_segment(segment)
 
-    # Event -> affected road -> only the vehicles that use it get new routes
+    # Event -> affected road -> only the vehicles that use it get new
+    # routes, planned with the same travel-time costs as everything else
     rerouting_stats = rerouting.reroute_affected_vehicles(
         graph,
         simulation,
-        node_by_point
+        node_by_point,
+        route_finder=traffic.route_finder()
     )
+
+    # Vehicles that could not get round stay flagged and keep trying
+    traffic.process_events()
 
     return {
         "status": "incident created",
@@ -455,9 +525,13 @@ def unblock_incident(
 
     simulation.unblock_segment(segment)
 
+    # Vehicles that might now have a quicker way re-plan on the next step
+    recheck = traffic.process_events()
+
     return {
         "status": "incident removed",
-        "blocked_segment": segment
+        "blocked_segment": segment,
+        "vehicles_to_recheck": recheck
     }
 
 
@@ -488,7 +562,12 @@ def get_incidents():
         })
 
     return {
-        "incidents": incidents
+        "incidents": incidents,
+        # Accidents leave the road open but slow (see /incident/accident)
+        "accidents": [
+            accident.describe(simulation.time)
+            for accident in simulation.accidents.values()
+        ]
     }
 
 
@@ -520,7 +599,8 @@ def reroute_vehicle(vehicle_id: int = 0):
         vehicle,
         node_by_point,
         traffic=simulation.get_traffic_density(),
-        blocked_segments=simulation.get_blocked_segments()
+        blocked_segments=simulation.get_blocked_segments(),
+        route_finder=traffic.route_finder()
     )
 
     if result["status"] == "skipped":
@@ -705,7 +785,10 @@ def emergency_block_road_ahead():
             detail="No simulation is running"
         )
 
-    result = dispatch.block_road_ahead(graph, simulation, node_by_point)
+    result = dispatch.block_road_ahead(
+        graph, simulation, node_by_point, route_finder=traffic.route_finder()
+    )
+    traffic.process_events()
 
     messages = {
         "no_emergency": (404, "No ambulance is on its way to an emergency"),
@@ -981,4 +1064,177 @@ def optimise_station_group(
             outcome, scenarios, target_seconds
         ),
         **outcome
+    }
+
+
+# ============================================================
+# STAGE 2: accidents, fleets, surges, dynamic rerouting
+# ============================================================
+
+@app.post("/incident/accident")
+def create_accident(
+    start: int,
+    destination: int,
+    severity: str = "moderate",
+    duration_seconds: Optional[float] = None
+):
+    """Start an accident on the road between two adjacent junctions.
+
+    Unlike /incident/block the road stays open: traffic slows down and the
+    road jams with fewer vehicles, for duration_seconds of simulated time
+    (default depends on severity). Vehicles whose route uses the road
+    re-plan on the next step if another way is meaningfully faster.
+    """
+
+    require_simulation()
+
+    if severity not in SEVERITIES:
+        raise HTTPException(
+            status_code=400,
+            detail="severity must be one of " + ", ".join(SEVERITIES)
+        )
+
+    if duration_seconds is not None and not (
+        math.isfinite(duration_seconds) and 0 < duration_seconds <= 86400
+    ):
+        raise HTTPException(
+            status_code=400,
+            detail="duration_seconds must be above 0 and at most 86400"
+        )
+
+    segment = road_between(start, destination)
+    accident = simulation.add_accident(segment, severity, duration_seconds)
+
+    return {
+        "status": "accident created",
+        "accident": accident.describe(simulation.time),
+        "vehicles_to_recheck": traffic.process_events()
+    }
+
+
+@app.post("/incident/accident/clear")
+def clear_accident(start: int, destination: int):
+    """Clear an accident before its time is up."""
+
+    require_simulation()
+
+    segment = road_between(start, destination)
+
+    if not simulation.clear_accident(segment):
+        raise HTTPException(
+            status_code=404,
+            detail="There is no accident on that road"
+        )
+
+    return {
+        "status": "accident cleared",
+        "segment": segment_json(segment),
+        "vehicles_to_recheck": traffic.process_events()
+    }
+
+
+@app.post("/simulation/fleet")
+def spawn_fleet(count: int = 100, seed: Optional[int] = None):
+    """Add `count` vehicles (1 to 2000) with trips across Norwich.
+
+    Trips come from the demand model (origins spread over the road network,
+    about half of destinations drawn towards the city centre). Each vehicle
+    gets the fastest route under current traffic, accidents and closures.
+    The same seed gives the same trips.
+    """
+
+    require_simulation()
+
+    if count < 1 or count > 2000:
+        raise HTTPException(
+            status_code=400,
+            detail="count must be between 1 and 2000"
+        )
+
+    generator = random.Random(seed) if seed is not None else None
+    outcome = traffic.spawn_vehicles(count, generator)
+
+    logger.info(
+        "Spawned %d of %d vehicles in %.2f s",
+        outcome["spawned"], count, outcome["seconds"]
+    )
+
+    return {
+        "status": "fleet added",
+        "requested": outcome["requested"],
+        "spawned": outcome["spawned"],
+        "failed": outcome["failed"],
+        "seconds": outcome["seconds"],
+        "total_vehicles": len(simulation.vehicles)
+    }
+
+
+@app.post("/traffic/surge")
+def start_surge(
+    latitude: float,
+    longitude: float,
+    radius_metres: float = 800,
+    direction: str = "inbound",
+    vehicles_per_minute: float = 60,
+    duration_seconds: float = 900
+):
+    """Rush-hour style demand: keep adding trips into (inbound) or out of
+    (outbound) a circular zone for duration_seconds of simulated time."""
+
+    require_simulation()
+
+    checks = [
+        (math.isfinite(latitude) and math.isfinite(longitude),
+         "latitude and longitude must be numbers"),
+        (math.isfinite(radius_metres) and 100 <= radius_metres <= 5000,
+         "radius_metres must be between 100 and 5000"),
+        (direction in ("inbound", "outbound"),
+         "direction must be inbound or outbound"),
+        (math.isfinite(vehicles_per_minute) and 0 < vehicles_per_minute <= 600,
+         "vehicles_per_minute must be above 0 and at most 600"),
+        (math.isfinite(duration_seconds) and 0 < duration_seconds <= 7200,
+         "duration_seconds must be above 0 and at most 7200"),
+    ]
+
+    for ok, message in checks:
+        if not ok:
+            raise HTTPException(status_code=400, detail=message)
+
+    try:
+        surge = traffic.add_surge(
+            Zone(latitude, longitude, radius_metres),
+            direction,
+            vehicles_per_minute,
+            duration_seconds
+        )
+    except ValueError as error:
+        # e.g. the zone is outside the road network
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return {
+        "status": "surge started",
+        "surge": surge.describe(simulation.time)
+    }
+
+
+@app.get("/traffic/status")
+def traffic_status():
+    """Vehicles, surges, accidents, closures and rerouting counters."""
+
+    require_simulation()
+
+    return traffic.describe()
+
+
+@app.post("/traffic/rerouting")
+def configure_rerouting(enabled: bool):
+    """Turn dynamic rerouting on or off (closures still reroute)."""
+
+    require_simulation()
+
+    traffic.policy.enabled = enabled
+
+    return {
+        "status": "rerouting " + ("enabled" if enabled else "disabled"),
+        "policy": traffic.policy.describe()
     }

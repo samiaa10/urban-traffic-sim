@@ -20,10 +20,20 @@ Nothing here talks to FastAPI, so all of it can be tested on a tiny map.
 
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
-from backend.simulation.simulation import (
-    segment_between,
-    speed_factor_for_count,
-)
+from backend.simulation.simulation import segment_between
+
+
+def remaining_on_current_road(vehicle):
+    """Metres left on the road the vehicle is on now (same measure it drives)."""
+
+    route = vehicle.route
+
+    return max(
+        0.0,
+        vehicle.segment_distance(
+            route[vehicle.position], route[vehicle.position + 1]
+        ) - vehicle.distance_on_segment,
+    )
 
 
 def remaining_distance(vehicle):
@@ -34,15 +44,12 @@ def remaining_distance(vehicle):
     if vehicle.finished or vehicle.position >= len(route) - 1:
         return 0.0
 
-    # From where it is now to the next point on the route...
-    total = vehicle.calculate_distance(
-        vehicle.get_current_location(),
-        route[vehicle.position + 1]
-    )
+    # The rest of the road it is on...
+    total = remaining_on_current_road(vehicle)
 
-    # ...then every full segment after that
+    # ...then every full road after that
     for index in range(vehicle.position + 1, len(route) - 1):
-        total += vehicle.calculate_distance(route[index], route[index + 1])
+        total += vehicle.segment_distance(route[index], route[index + 1])
 
     return total
 
@@ -51,8 +58,9 @@ def remaining_seconds(simulation, vehicle):
     """Seconds the vehicle still needs, given the traffic on its route NOW.
 
     Same idea as remaining_distance, but each road is driven at the speed
-    that road's current traffic allows (the same speed factors the
-    simulation uses), so a congested route has a longer ETA.
+    that road allows right now (Simulation.road_speed_factor: traffic and
+    any accident, exactly as the simulation moves vehicles), so a congested
+    route has a longer ETA.
     """
 
     route = vehicle.route
@@ -62,26 +70,24 @@ def remaining_seconds(simulation, vehicle):
 
     traffic = simulation.get_traffic_density()
 
-    def seconds_on(point_a, point_b, road_a, road_b):
-        # Distance is measured from point_a to point_b, but the traffic
-        # that matters is on the whole road road_a -> road_b.
-        count = traffic.get(segment_between(road_a, road_b), 0)
-        speed = vehicle.speed * speed_factor_for_count(count)
-        return vehicle.calculate_distance(point_a, point_b) / speed
+    def seconds_for(metres, point_a, point_b):
+        segment = segment_between(point_a, point_b)
+        factor = simulation.road_speed_factor(segment, traffic.get(segment, 0))
+        return metres / (vehicle.speed * factor)
 
-    # From where it is now to the next point on the route...
-    here = route[vehicle.position]
-    ahead = route[vehicle.position + 1]
-
-    total = seconds_on(
-        vehicle.get_current_location(), ahead, here, ahead
+    # The rest of the road it is on...
+    total = seconds_for(
+        remaining_on_current_road(vehicle),
+        route[vehicle.position],
+        route[vehicle.position + 1],
     )
 
-    # ...then every full segment after that
+    # ...then every full road after that
     for index in range(vehicle.position + 1, len(route) - 1):
-        total += seconds_on(
-            route[index], route[index + 1],
-            route[index], route[index + 1]
+        total += seconds_for(
+            vehicle.segment_distance(route[index], route[index + 1]),
+            route[index],
+            route[index + 1],
         )
 
     return total
@@ -198,7 +204,7 @@ def candidate_segments(vehicle, node_by_point, already_blocked):
     ]
 
 
-def block_road_ahead(graph, simulation, node_by_point):
+def block_road_ahead(graph, simulation, node_by_point, route_finder=None):
     """Close a road on the ambulance's route and reroute it around it.
 
     Returns a dict whose "outcome" is:
@@ -256,7 +262,8 @@ def block_road_ahead(graph, simulation, node_by_point):
         stats = rerouting.reroute_affected_vehicles(
             graph,
             simulation,
-            node_by_point
+            node_by_point,
+            route_finder=route_finder
         )
 
         distance_after = remaining_distance(vehicle)

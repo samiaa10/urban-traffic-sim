@@ -45,6 +45,25 @@ class Vehicle:
         # The station this vehicle belongs to (emergency vehicles only)
         self.home_station = None
 
+        # Real road lengths ((lat, lon), (lat, lon)) -> metres, shared with
+        # the Simulation (see Simulation.use_road_lengths). None means roads
+        # are measured as straight lines between their two junctions.
+        self.road_lengths = None
+
+    def segment_distance(self, point_a, point_b):
+        """Length of the road from point_a to point_b, in metres."""
+
+        if self.road_lengths is not None:
+            length = self.road_lengths.get((
+                (point_a["latitude"], point_a["longitude"]),
+                (point_b["latitude"], point_b["longitude"]),
+            ))
+
+            if length is not None:
+                return length
+
+        return self.calculate_distance(point_a, point_b)
+
     def set_route(self, route, reset_distance=False):
         """Give the vehicle a new route and start it from the beginning."""
 
@@ -108,11 +127,9 @@ class Vehicle:
             current_point = self.route[self.position]
             next_point = self.route[self.position + 1]
 
-            segment_distance = (
-                self.calculate_distance(
-                    current_point,
-                    next_point
-                )
+            segment_distance = self.segment_distance(
+                current_point,
+                next_point
             )
 
             remaining_segment = (
@@ -177,19 +194,17 @@ class Vehicle:
         current_point = self.route[self.position]
         next_point = self.route[self.position + 1]
 
-        segment_distance = (
-            self.calculate_distance(
-                current_point,
-                next_point
-            )
+        segment_distance = self.segment_distance(
+            current_point,
+            next_point
         )
 
         if segment_distance == 0:
             return current_point
 
-        fraction = (
-            self.distance_on_segment
-            / segment_distance
+        fraction = min(
+            1.0,
+            self.distance_on_segment / segment_distance
         )
 
         latitude = (

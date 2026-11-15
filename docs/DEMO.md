@@ -109,3 +109,25 @@ The response has `stations` (in the order they were picked, each with the whole 
 ### 7. Optional: see a slowdown through the API
 
 Start a simulation, then step it a few times and watch `speed_factor` in each vehicle. It stays at 1.0 until two vehicles are on the same road, when both drop to 0.6. `/simulation/congestion` shows the same road as "moderate".
+
+### 8. Fleets, accidents and rush hour
+
+These have no buttons in the web interface yet, but vehicles added through the API appear on the map, because it draws every vehicle `/simulation/step` returns. Start a simulation first (step 2, or *Calculate Route* in the web interface), then:
+
+```bash
+# 500 vehicles with trips across Norwich (same seed = same trips)
+curl -X POST "http://127.0.0.1:8000/simulation/fleet?count=500&seed=1"
+
+# a severe accident for 15 minutes on a road (two adjacent junctions, e.g. from a route's "path")
+curl -X POST "http://127.0.0.1:8000/incident/accident?start=<NODE_A>&destination=<NODE_B>&severity=severe&duration_seconds=900"
+
+# morning rush hour: 120 trips a minute into the city centre for 30 minutes
+curl -X POST "http://127.0.0.1:8000/traffic/surge?latitude=52.6286&longitude=1.2927&radius_metres=1000&direction=inbound&vehicles_per_minute=120&duration_seconds=1800"
+
+# step a few times, then look at the network
+curl -X POST "http://127.0.0.1:8000/simulation/step"
+curl "http://127.0.0.1:8000/traffic/status"
+curl "http://127.0.0.1:8000/incidents"
+```
+
+`/traffic/status` shows how many vehicles are still driving, each surge's progress, active accidents with their time left, and the rerouting counters: searches run, searches skipped because no route could save enough, and route changes. Each vehicle in `/simulation/step` has a `reroutes` count. The accident response's `vehicles_to_recheck` is how many vehicles will reconsider their route on the next step; they change route only if another way saves at least 20 s and 10% of their remaining time. Clear an accident early with `/incident/accident/clear`, or let it expire. Either way, vehicles it could help reconsider at once. `curl -X POST "http://127.0.0.1:8000/traffic/rerouting?enabled=false"` switches dynamic rerouting off to compare.

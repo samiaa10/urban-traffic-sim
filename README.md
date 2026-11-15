@@ -12,16 +12,21 @@ I built it as a computer science project to practise graph algorithms, simulatio
 
 - **Real Norwich road network.** Downloaded from OpenStreetMap (drivable roads) and converted into a custom graph. The benchmark report records it as 5,058 junctions and 10,980 road segments.
 - **A\* routing** with a great-circle (haversine) distance heuristic. Dijkstra is also implemented, and is used to check A\* gives the same optimal distance.
-- **Live vehicle simulation.** Vehicles drive along their routes in one-second simulation steps.
+- **Live vehicle simulation.** Vehicles drive along their routes in one-second simulation steps, covering the real OpenStreetMap length of each road (the same lengths the router and optimiser use).
 - **Congestion visualisation.** The backend counts vehicles on each road segment and reports a congestion level per segment, which the map draws.
 - **Congestion slows vehicles down.** The same levels set vehicle speed: a lone vehicle drives at full speed, a road with 2 vehicles runs at 60% and a road with 3 or more at 30%. Journeys therefore take longer in traffic, ambulance response times and ETAs include the delay, and the status panel shows how many vehicles are held up.
-- **Congestion-aware routing.** Each vehicle on a road adds a 50 m penalty to its cost, so busy roads look "longer" to A\*.
-- **Road closures.** Close or reopen a road segment. Closures apply in both directions, and A\* avoids them.
-- **Automatic rerouting.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
+- **Travel-time routing.** Vehicles plan the *fastest* route, not the shortest: each road costs its length divided by the speed traffic and accidents allow on it right now, using the same speed rule that moves vehicles, so the planned time matches the driven time (tested). A\* with a straight-line estimate stays exact under congestion; landmark (ALT) lower bounds are also available.
+- **Dynamic rerouting.** Vehicles re-plan as traffic changes and switch only when a route is meaningfully faster (by default at least 20 s and 10%), with staggered checks every 10 s and a 60 s cooldown so they do not flip-flop. A landmark lower bound skips searches that could not save enough. On Norwich it cut mean journey time by 8 to 9% at the default settings, and by 25% for the vehicles caught by a severe accident (see [Dynamic traffic](#dynamic-traffic-fleets-rerouting-accidents)).
+- **Accidents.** Distinct from closures: the road stays open, but for a set duration traffic drives slower and the road jams with fewer vehicles. Minor, moderate and severe accidents differ in speed, capacity and default duration, and clear by themselves.
+- **Reacting to change.** An accident or closure on a vehicle's route makes it re-plan at the start of the next second, before it moves. When a road reopens or an accident clears, the vehicles that had changed route to avoid it re-plan at once (and switch only to a route that uses it); everyone else picks up the change at their next routine check.
+- **Fleets and traffic surges.** Spawn up to 2,000 vehicles per request with trips across Norwich from a simple demand model, or start a rush-hour style surge that keeps sending trips into (or out of) a zone for a while.
+- **Congestion-aware shortest routes.** `/route` still finds the shortest route with a 50 m penalty per vehicle on a road (unchanged); vehicles in the simulation use travel-time routing.
+- **Road closures.** Close or reopen a road segment. Closures apply in both directions, and every search avoids them.
+- **Automatic rerouting after closures.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
 - **Emergency response.** Create emergency stations and ambulances, raise an emergency, and an ambulance from the nearest station with one available (nearest in a straight line) is dispatched along an A\* route that accounts for traffic and closures. Response time is measured in simulated seconds, and you can close a road ahead of the ambulance to watch it reroute.
 - **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
 - **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
-- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, and rerouting strategies.
+- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, and dynamic traffic at increasing fleet sizes.
 - **Automated tests.** Backend tests (routing, simulation, optimiser and the FastAPI endpoints), frontend logic tests and frontend interaction tests, all run on every push by GitHub Actions.
 - **Logging.** The API logs start-up and each emergency dispatch through Python's `logging` module; `LOG_LEVEL` controls how much.
 
@@ -139,9 +144,9 @@ python -m pytest backend/tests -v
 
 The tests use small hand-built road networks (`backend/tests/helpers.py`, and a tiny grid map inside `test_api.py`), so they need neither the Norwich data file nor internet access.
 
-`backend/tests/test_api.py` tests the HTTP endpoints through FastAPI's `TestClient`, so it needs `fastapi` and `httpx` (both in `requirements.txt`). If either is missing the file is skipped and everything else still runs. Without them, 173 tests run; `test_api.py` adds 128 more (301 in total). The five checks of `render.yaml` in `test_deployment_files.py` need `pyyaml` and are skipped without it.
+`backend/tests/test_api.py` tests the HTTP endpoints through FastAPI's `TestClient`, so it needs `fastapi` and `httpx` (both in `requirements.txt`). If either is missing the file is skipped and everything else still runs. Without them, 260 tests run; `test_api.py` adds 164 more (424 in total). The five checks of `render.yaml` in `test_deployment_files.py` need `pyyaml` and are skipped without it.
 
-What they cover: Dijkstra/A\* agreement, road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places.
+What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places.
 
 ### Frontend
 
@@ -202,9 +207,39 @@ python -m backend.simulation.benchmark_rerouting
 
 Closes the busiest road and compares recalculating routes only for affected vehicles against recalculating every vehicle. This command saves its report to [`docs/rerouting_benchmark.md`](docs/rerouting_benchmark.md) automatically, overwriting the existing one. In the saved run (2026-10-18, Python 3.9.6, seed 42, fastest of 3 runs), affected-only rerouting was 2.0x faster with 100 vehicles and 3.9x faster with 1,000.
 
-### Simulation throughput, memory and optimiser runtime
+### Dynamic traffic: fleets, rerouting, accidents
 
-There is no benchmark script for simulation throughput, memory use or several simultaneous closures yet, so no figures are given for them here. The optimiser command line (below) prints how long each run took.
+```bash
+python -m backend.simulation.benchmark_traffic --save
+```
+
+Saves [`docs/traffic_benchmark.md`](docs/traffic_benchmark.md) (about 10 minutes). Results from one run (2026-11-15, Python 3.9.6, macOS on Apple silicon, seed 42); timings depend on the machine:
+
+**Fleet size.** Every vehicle sets off at once, so these first 300 simulated seconds are the busiest. "Per simulated second" is the wall-clock time of one step.
+
+| Vehicles | Spawn (route every vehicle) | Per simulated second, rerouting off | Per simulated second, dynamic rerouting (worst) | Route searches per second | Memory (spawn + 60 s) |
+|---|---|---|---|---|---|
+| 100 | 0.13 s | 0.8 ms | 5.5 ms (55 ms) | 2.7 | 1.4 MB |
+| 500 | 0.70 s | 3.8 ms | 39.7 ms (118 ms) | 20.1 | 6.7 MB |
+| 1,000 | 1.25 s | 7.6 ms | 81.8 ms (267 ms) | 39.2 | 13.3 MB |
+| 2,000 | 2.44 s | 15.2 ms | 218.5 ms (590 ms) | 85.7 | 26.5 MB |
+
+Movement alone scales linearly (about 7.5 µs per vehicle per second). Rerouting dominates: almost all of its time is route searches, which grow with the number of vehicles and with how congested the roads are. Up to about 2,000 vehicles a simulated second still takes well under a real second on this machine.
+
+**Does rerouting help?** Same 600 trips, 20 simulated minutes, two seeds:
+
+| Policy | Mean journey | Route changes per vehicle (most for one) |
+|---|---|---|
+| No dynamic rerouting | 444 s / 432 s | 0 |
+| **Default**: check every 10 s, 60 s cooldown, switch if it saves at least 20 s and 10% | 407 s / 393 s (8 to 9% faster) | 2.8 to 3.0 (10) |
+| Default with traffic averaged over 30 s | 418 s / 409 s | 2.0 (8) |
+| Eager: 30 s cooldown, save at least 10 s and 5% | 384 s / 375 s (13% faster) | 5.8 to 6.0 (18) |
+
+The default gets most of the benefit with about half the route changes of the eager policy. Averaging traffic over time was expected to stop drivers chasing short-lived queues, but it made journeys longer, so it is off by default.
+
+**A severe accident** on the busiest road (at least 200 m long), lasting the whole 20 minutes, with 1,000 vehicles: the 127 vehicles whose route used it averaged 779 s without dynamic rerouting (2 had not arrived after 20 minutes) and 588 s with it (25% faster, all arrived); the whole fleet averaged 508 s and 455 s.
+
+**Route search.** The travel-time A\* (`RoadNetwork.fastest_path`) averages 2.0 ms per trip under congestion, against 4.2 ms for the older shortest-distance `a_star` without traffic, because it precomputes each junction's roads and uses a flat-map distance estimate (a guaranteed lower bound, no trigonometry per junction). The landmark (ALT) estimate explores about a third fewer junctions but is slower (4.1 ms) in pure Python; its bound (89% of the true distance on average, against 74% for the straight line) is used instead to skip rerouting searches that could not save enough.
 
 ### Emergency station optimiser
 
@@ -228,10 +263,10 @@ Results from a default run on the Norwich graph (5,058 junctions, seed 1, 500 ra
 | Optimiser's pick vs a typical random junction | about 25% lower mean response time (2.65 vs 3.52 min) |
 | Optimiser's pick vs the city centre | 2.65 vs 2.97 min |
 | Stability across 10 random seeds | the same junction ranked first every time |
-| Optimiser estimate vs full simulation (150 random pairs) | simulation within -6.3% to +1.1% of the estimate, mean -1.2% |
+| Optimiser estimate vs full simulation (150 random pairs) | with the ambulance driving real road lengths (as it does in the API): +0.0% to +1.4%, mean +0.3% (the simulation rounds up to whole seconds). With roads measured as straight lines, as before Stage 2: -6.3% to +1.1%, mean -1.2% |
 | A plain central junction, and the best of 160 random junctions | slightly better than the pick (2.58 and 2.52 min), see Limitations |
 
-These figures are not stored by the scripts, so re-run the commands to reproduce them. They were first produced with Python 3.12, and re-running `evaluate`, `validate` and `run --stations 3 --target 240` on 2026-11-13 (Python 3.9.6, macOS) gave exactly the numbers in these tables. They are deterministic for a given map and seed.
+These figures are not stored by the scripts, so re-run the commands to reproduce them. They were first produced with Python 3.12, and re-running `evaluate`, `validate` and `run --stations 3 --target 240` on 2026-11-13 (Python 3.9.6, macOS) gave exactly the numbers in these tables (the real-road-length `validate` row was added on 2026-11-15). They are deterministic for a given map and seed.
 
 #### Choosing several stations
 
@@ -367,10 +402,16 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 
 ## Limitations
 
-- **The traffic model is simple.** Speed depends only on how many vehicles are on a road segment (full speed alone, 60% with two, 30% with three or more). Both directions of a road are counted together, so two vehicles passing each other in opposite directions slow each other down. Ambulances get no priority: an ambulance on a call is slowed by traffic like any other vehicle, and its ETA includes that. A vehicle that crosses several short roads in one second uses the traffic from the start of that second. Congestion-aware routing still adds a flat 50 m per vehicle rather than predicting travel time.
+- **The traffic model is simple.** Speed depends only on how many vehicles are on a road segment (full speed alone, 60% with two, 30% with three or more), not on the road's length, lanes or speed limit, so a 20 m road and a 500 m road with three vehicles are equally "heavy". The steps are steep, so one extra vehicle can make a road look three times slower, which is a large part of why vehicles re-plan as often as they do. Both directions of a road are counted together, so two vehicles passing each other in opposite directions slow each other down. Ambulances get no priority: an ambulance on a call is slowed by traffic like any other vehicle, and its ETA includes that. A vehicle that crosses several short roads in one second uses the traffic from the start of that second. The `/route` endpoint still adds a flat 50 m per vehicle rather than predicting travel time.
+- **Accident figures are modelling choices.** The speed and capacity factors and default durations per severity (`backend/simulation/accidents.py`) are reasonable guesses, not measured data. An accident affects both directions of the road.
+- **The demand model is synthetic.** There is no population or employment data: origins are spread over road junctions and about half of destinations are drawn towards the city centre (Gaussian falloff, scale 1.2 km). Trips are only made between the 4,143 of 5,058 junctions that can all reach each other. All vehicles in a fleet are routed on the same traffic snapshot and set off at once.
+- **Big events cost one slow step.** An accident or reopening that affects a few hundred vehicles re-plans them all in the same simulated second: with 2,000 vehicles on Norwich that step took 1 to 1.6 s (measured through the API), against about 0.2 to 0.4 s for an ordinary step.
+- **A vehicle rerouted part-way along a road is briefly counted on a made-up road.** Its new route starts at its current position (an existing test relies on that), so for the rest of that road it is counted on a segment from that point to the next junction rather than on the real road: it does not add to that road's congestion count, and an accident on that road does not slow it, for those few seconds.
+- **Finished vehicles stay in the vehicle list** (their position in the list is their id in the API), so every `/simulation/step` response grows as fleets and surges add vehicles. Stepping skips them cheaply, but a long surge produces a large response.
+- **Fleets and surges have no buttons in the web interface yet.** They work through the API (see the demo guide). Vehicles added that way do appear and move on the map, because the map draws every vehicle `/simulation/step` returns.
 - **Dispatch picks the station in a straight line.** The station is the nearest one (by latitude/longitude) that has an ambulance free, not the one with the shortest drive; only the ambulance's route itself uses the road network. If no ambulance is free the emergency is refused rather than queued.
 - **Everything lives in memory.** The API holds one simulation in a global variable, so there is one simulation per server process, and it is lost when the server restarts.
-- **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists). Large fleets (thousands of vehicles) are only used by the benchmark scripts.
+- **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with `/simulation/fleet` or `/traffic/surge`.
 - **Ambulances return to base instantly** after a call rather than driving back.
 - **The optimiser ignores traffic** (it uses free-flowing road distance) and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
 - **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser is a heuristic (greedy plus swaps) that is only checked against the true best set for 2 and 3 stations. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.

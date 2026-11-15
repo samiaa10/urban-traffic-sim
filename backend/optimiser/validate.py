@@ -17,6 +17,7 @@ from pathlib import Path
 
 from backend.optimiser.station_optimiser import shortest_distances
 from backend.routing.a_star import a_star
+from backend.routing.travel_time import RoadNetwork
 from backend.simulation.simulation import Simulation
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -37,8 +38,13 @@ def to_points(graph, path):
     ]
 
 
-def simulated_response_time(graph, path):
-    """Drive an ambulance along `path` in the full simulation."""
+def simulated_response_time(graph, path, road_lengths=None):
+    """Drive an ambulance along `path` in the full simulation.
+
+    With road_lengths (RoadNetwork.length_between_points) the ambulance
+    drives the real road lengths, as it does in the API; without, it
+    measures each road as a straight line between its junctions.
+    """
 
     start, end = graph.nodes[path[0]], graph.nodes[path[-1]]
 
@@ -48,6 +54,9 @@ def simulated_response_time(graph, path):
     # down, and this check is about an ambulance with the road to itself.
     parked = {"latitude": start["latitude"], "longitude": start["longitude"]}
     simulation = Simulation([parked, parked])
+
+    if road_lengths is not None:
+        simulation.use_road_lengths(road_lengths)
 
     station = simulation.add_station(start["latitude"], start["longitude"])
     simulation.add_emergency_vehicle(
@@ -72,12 +81,15 @@ def main():
     with open(GRAPH_FILE, "rb") as file:
         graph = pickle.load(file)
 
+    road_lengths = RoadNetwork(graph).length_between_points
+
     generator = random.Random(SEED)
     nodes = sorted(graph.nodes)
 
-    differences = []
+    straight = []      # ambulance measures roads as straight lines (old)
+    real = []          # ambulance drives the real road lengths (as in the API)
 
-    while len(differences) < PAIRS:
+    while len(real) < PAIRS:
 
         station, emergency = generator.sample(nodes, 2)
         path, distance = a_star(graph, station, emergency)
@@ -86,17 +98,23 @@ def main():
             continue
 
         optimiser_time = shortest_distances(graph, station)[emergency] / SPEED
-        simulation_time = simulated_response_time(graph, path)
 
-        differences.append(
-            100 * (simulation_time - optimiser_time) / optimiser_time
+        for results, lengths in ((straight, None), (real, road_lengths)):
+            simulation_time = simulated_response_time(graph, path, lengths)
+            results.append(
+                100 * (simulation_time - optimiser_time) / optimiser_time
+            )
+
+    for label, differences in (
+        ("straight-line roads", straight),
+        ("real road lengths  ", real),
+    ):
+        print(
+            f"{PAIRS} random station-to-emergency pairs, {label}: simulation "
+            f"vs optimiser response time, mean difference "
+            f"{statistics.mean(differences):+.1f}%, range "
+            f"{min(differences):+.1f}% to {max(differences):+.1f}%"
         )
-
-    print(
-        f"{PAIRS} random station-to-emergency pairs: simulation vs optimiser "
-        f"response time, mean difference {statistics.mean(differences):+.1f}%, "
-        f"range {min(differences):+.1f}% to {max(differences):+.1f}%"
-    )
 
 
 if __name__ == "__main__":
