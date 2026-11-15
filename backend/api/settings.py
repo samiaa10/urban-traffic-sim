@@ -69,3 +69,30 @@ def allowed_origins(value):
             origins.append(origin)
 
     return origins or list(DEFAULT_ORIGINS)
+
+
+# How many simulation runs may be live (in memory) at once
+DEFAULT_MAX_LIVE_RUNS = 8
+
+
+def max_live_runs(value):
+    """Turn the MAX_LIVE_RUNS environment variable into a whole number.
+
+    Not set (or blank) means 8. Each live run can hold thousands of
+    vehicles, so this caps the memory the API can use; starting one more
+    stops the run that has been idle longest. Anything that is not a whole
+    number from 1 to 100 is refused at start-up.
+    """
+
+    if value is None or not value.strip():
+        return DEFAULT_MAX_LIVE_RUNS
+
+    try:
+        count = int(value.strip())
+    except ValueError:
+        raise ValueError("MAX_LIVE_RUNS must be a whole number: " + value)
+
+    if not 1 <= count <= 100:
+        raise ValueError("MAX_LIVE_RUNS must be between 1 and 100: " + value)
+
+    return count

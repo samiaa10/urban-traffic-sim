@@ -141,11 +141,11 @@ def api(tmp_path_factory):
 def client(api):
     """A client, with no simulation running at the start of every test."""
 
-    api.simulation = None
+    api.registry.clear()
 
     yield TestClient(api.app)
 
-    api.simulation = None
+    api.registry.clear()
 
 
 @pytest.fixture
@@ -709,7 +709,7 @@ def test_dispatch_an_ambulance_and_measure_the_response(running, api):
 def test_dispatch_is_logged_not_printed(running, api, caplog, capsys):
     add_ambulance(running, api)
 
-    with caplog.at_level(logging.DEBUG, logger="backend.api.main"):
+    with caplog.at_level(logging.DEBUG, logger="backend.api.routes.emergencies"):
         response = dispatch_ambulance(running, api, destination=15)
 
     assert response.status_code == 200
@@ -717,7 +717,7 @@ def test_dispatch_is_logged_not_printed(running, api, caplog, capsys):
     # Regression: the dispatch used to print the whole route to stdout
     assert capsys.readouterr().out == ""
 
-    records = [r for r in caplog.records if r.name == "backend.api.main"]
+    records = [r for r in caplog.records if r.name == "backend.api.routes.emergencies"]
 
     summary = [r for r in records if r.levelno == logging.INFO]
     assert len(summary) == 1
