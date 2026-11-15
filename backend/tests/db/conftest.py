@@ -6,7 +6,7 @@ for example
     TEST_DATABASE_URL=postgresql://norwich:norwich@localhost:5433/norwich_sim_test
 
 and are skipped when it is not set (so the rest of the suite still runs
-anywhere). SQLite is deliberately not used as a stand-in: the schema uses
+anywhere) - unless REQUIRE_DATABASE_TESTS=1, as in CI, where that fails. SQLite is deliberately not used as a stand-in: the schema uses
 PostgreSQL enums, arrays, UUIDs, partial unique indexes and check
 constraints, and tests that passed on another database would prove little.
 
@@ -48,6 +48,11 @@ def database_url_for_tests():
     url = database_url(os.environ.get("TEST_DATABASE_URL"))
 
     if url is None:
+        # CI sets REQUIRE_DATABASE_TESTS so a missing database fails the
+        # run instead of quietly skipping every database test
+        if os.environ.get("REQUIRE_DATABASE_TESTS") == "1":
+            pytest.fail("REQUIRE_DATABASE_TESTS=1 but TEST_DATABASE_URL is not set")
+
         pytest.skip("TEST_DATABASE_URL is not set (database tests need PostgreSQL)")
 
     if "test" not in (make_url(url).database or ""):
