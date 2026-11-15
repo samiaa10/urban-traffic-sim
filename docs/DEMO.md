@@ -131,3 +131,28 @@ curl "http://127.0.0.1:8000/incidents"
 ```
 
 `/traffic/status` shows how many vehicles are still driving, each surge's progress, active accidents with their time left, and the rerouting counters: searches run, searches skipped because no route could save enough, and route changes. Each vehicle in `/simulation/step` has a `reroutes` count. The accident response's `vehicles_to_recheck` is how many vehicles will reconsider their route on the next step; they change route only if another way saves at least 20 s and 10% of their remaining time. Clear an accident early with `/incident/accident/clear`, or let it expire. Either way, vehicles it could help reconsider at once. `curl -X POST "http://127.0.0.1:8000/traffic/rerouting?enabled=false"` switches dynamic rerouting off to compare.
+
+### 9. Optional: several runs, saved history and restarts (Stage 3)
+
+Every run has an ID. `/simulation/start` returns it as `simulation_id`, and `POST /simulations` starts another, independent run; each run's endpoints are also available under `/simulations/<ID>/...` (the web interface uses those). With a database (`DATABASE_URL`, see the README, or simply `docker compose up --build`, where the API is at `http://localhost:8080/api` instead of `http://127.0.0.1:8000`), what happens in each run is saved:
+
+```bash
+# a second, independent run (the reply includes its simulation_id)
+curl -X POST "http://127.0.0.1:8000/simulations?start=<START_NODE>&destination=<DEST_NODE>"
+
+# drive it by ID: close a road and step
+curl -X POST "http://127.0.0.1:8000/simulations/<ID>/incidents/block?start=<NODE_A>&destination=<NODE_B>"
+curl -X POST "http://127.0.0.1:8000/simulations/<ID>/step"
+
+# every run, newest first, and one run's history
+curl "http://127.0.0.1:8000/simulations"
+curl "http://127.0.0.1:8000/simulations/<ID>/history"
+curl "http://127.0.0.1:8000/simulations/<ID>/history/incidents"
+curl "http://127.0.0.1:8000/simulations/<ID>/history/events"
+
+# saved optimiser results; reuse=true answers an identical request from the database
+curl "http://127.0.0.1:8000/optimiser/runs"
+curl "http://127.0.0.1:8000/optimiser/stations?reuse=true"
+```
+
+Now stop the backend (Ctrl+C) and start it again. `/simulations` still lists the run, now with `"status": "interrupted"` and `"live": false`, and its history is unchanged. A live run cannot be resumed after a restart (its vehicles were only in memory), so `POST /simulations/<ID>/step` answers 409. `DELETE /simulations/<ID>?purge=true` deletes a run and its history.

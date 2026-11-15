@@ -27,17 +27,24 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
 - **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
 - **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, and dynamic traffic at increasing fleet sizes.
-- **Automated tests.** Backend tests (routing, simulation, optimiser and the FastAPI endpoints), frontend logic tests and frontend interaction tests, all run on every push by GitHub Actions.
+- **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic tests and frontend interaction tests, plus a Docker Compose smoke test, all run on every push by GitHub Actions.
 - **Logging.** The API logs start-up and each emergency dispatch through Python's `logging` module; `LOG_LEVEL` controls how much.
+- **Several simulations at once.** Every run has an ID. The original endpoints act on the run started by `/simulation/start`, and every one of them is also available as `/simulations/{id}/...`, so runs can be driven independently (each with its own lock, at most `MAX_LIVE_RUNS` in memory). The web interface uses its run's ID.
+- **PostgreSQL persistence (optional).** With `DATABASE_URL` set, each run's history is saved as it happens: closures and accidents (and whether they expired or were cleared), stations and ambulances, emergencies from dispatch to arrival (or why nothing could be sent), fleets, surges, a timeline of events, and a metrics snapshot every simulated minute. After a restart, runs that were live come back as `interrupted` with their history intact. The data model is designed properly (13 tables, rules the database enforces itself) and explained in [the architecture guide](docs/ARCHITECTURE.md#persistence). Saving adds no measurable time to a simulation step ([benchmark](docs/persistence_benchmark.md)).
+- **Saved optimiser results.** Every optimiser answer is saved and can be listed and fetched again (`/optimiser/runs`); `reuse=true` answers an identical request from the database in about 6 ms instead of computing it again (about 750 ms).
+- **Database migrations** with Alembic; the API refuses to start on a database that is not up to date.
+- **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
 
 ## Tech stack
 
 | Part | Technology |
 |---|---|
 | Backend | Python, FastAPI, Uvicorn |
+| Database (optional) | PostgreSQL 16, SQLAlchemy 2.0, Alembic, psycopg 3 |
+| Containers | Docker, Docker Compose, nginx (serves the frontend and forwards `/api`) |
 | Map data | OpenStreetMap via OSMnx (used once, to download the network) |
 | Frontend | React 19, TypeScript, Vite, Leaflet / react-leaflet |
-| Testing | pytest + FastAPI `TestClient` (backend); Node's built-in test runner for frontend logic, Vitest + jsdom + React Testing Library for frontend interactions; GitHub Actions CI |
+| Testing | pytest + FastAPI `TestClient` (backend; database tests on a real PostgreSQL); Node's built-in test runner for frontend logic, Vitest + jsdom + React Testing Library for frontend interactions; GitHub Actions CI with a PostgreSQL service and a Docker Compose smoke test |
 | Frontend tooling | ESLint, `tsc` |
 
 ## Getting started
@@ -47,6 +54,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - Python 3 (CI runs 3.11 and 3.12, and the Render deployment uses 3.12. It was originally developed on 3.9.6, which still passed the tests on 2026-11-13 but is past end of life and no longer checked by CI.)
 - Node.js and npm (developed with Node 24)
 - An internet connection for the first-time map download
+- Optional: PostgreSQL 16 to save runs (step 6), or Docker to run everything in containers (see [Docker](#docker))
 
 ### 1. Clone
 
@@ -65,7 +73,7 @@ source .venv/bin/activate        # Windows (PowerShell): .venv\Scripts\Activate.
 pip install -r requirements.txt
 ```
 
-`requirements.txt` installs `fastapi`, `uvicorn`, `osmnx`, `pytest`, `httpx` (which FastAPI's test client needs) and `pyyaml` (which the tests that check `render.yaml` need). Versions are not pinned.
+`requirements.txt` installs `fastapi`, `uvicorn`, the database packages (`sqlalchemy`, `alembic`, `psycopg[binary]`; installed always, used only when `DATABASE_URL` is set), `osmnx`, `pytest`, `httpx` (which FastAPI's test client needs) and `pyyaml` (which the tests that check `render.yaml` and the Docker files need). Versions are not pinned, except a major-version range for the database packages.
 
 ### 3. Download the Norwich road network
 
@@ -87,13 +95,17 @@ uvicorn backend.api.main:app --reload
 
 The API runs at `http://127.0.0.1:8000`. FastAPI's interactive documentation is at `http://127.0.0.1:8000/docs`.
 
-The backend reads three optional environment variables:
+The backend reads five optional environment variables:
 
 | Variable | Default | What it does |
 |---|---|---|
 | `CORS_ORIGINS` | `http://localhost:5173` | Comma-separated list of websites allowed to call the API from a browser |
 | `LOG_LEVEL` | `INFO` | `DEBUG`, `INFO`, `WARNING`, `ERROR` or `CRITICAL`. `INFO` logs start-up and a one-line summary of each emergency dispatch; `DEBUG` also logs every dispatched route point by point. Any other value stops the server at start-up |
 | `NORWICH_SIM_GRAPH` | `data/osm/norwich_graph.pkl` | A different road-graph file (the API tests use a tiny one) |
+| `DATABASE_URL` | *(not set)* | A PostgreSQL URL (`postgresql://user:password@host:5432/name`; `postgres://` also works) to save runs and optimiser results. Not set: everything stays in memory, as before. See step 6 |
+| `MAX_LIVE_RUNS` | `8` | How many simulation runs may be in memory at once (1 to 100). Starting one more stops the run idle longest |
+
+Run the backend as **one** process (no `--workers` above 1): live simulation runs are kept in that process's memory.
 
 ### 5. Run the frontend
 
@@ -109,9 +121,32 @@ Open the address Vite prints, which should be **`http://localhost:5173`**. Use `
 
 Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (all frontend tests: `test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run preview`.
 
+### 6. Optional: save runs in PostgreSQL
+
+Without a database everything works, but nothing survives a restart. To save runs and optimiser results, create a database and user (tested with PostgreSQL 16), bring the schema up to date, and start the backend with `DATABASE_URL`:
+
+```bash
+createdb norwich_sim                     # or create it however you prefer
+export DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim
+alembic upgrade head                     # from the project root; creates the tables
+uvicorn backend.api.main:app --reload
+```
+
+Run `alembic upgrade head` again after pulling changes that add a migration; the API refuses to start on an out-of-date schema and says so. Saved runs are listed at `/simulations`, and each run's history is under `/simulations/{id}/history` (see the [demo guide](docs/DEMO.md), part B9).
+
 ### Docker
 
-There is no Docker setup yet (no `Dockerfile` or `docker-compose.yml`); run the two servers as in steps 4 and 5. Containerising the backend, frontend and a database is planned.
+To run everything (PostgreSQL, the migrations, the backend and the frontend) in containers, with Docker and Docker Compose installed:
+
+```bash
+docker compose up --build
+```
+
+Then open **http://localhost:8080**. The API's own documentation is at http://localhost:8000/docs. The first build takes a few minutes. Start-up order is: the database (once healthy), then a one-off `migrate` container (`alembic upgrade head`), then the backend (once the migration has succeeded), then the frontend. nginx serves the frontend and forwards `/api/...` to the backend, so the browser only talks to one address.
+
+- `Ctrl+C` or `docker compose down` stops it; saved runs stay in the `pgdata` volume. `docker compose down -v` deletes them.
+- Settings go in a `.env` file next to `docker-compose.yml` (not committed), for example `POSTGRES_PASSWORD=...`, `FRONTEND_PORT=8081`, `BACKEND_PORT=8001` (if 8080 or 8000 is already in use), `LOG_LEVEL=DEBUG`, `MAX_LIVE_RUNS=4`.
+- `python scripts/compose_smoke_test.py` builds and starts the stack under its own name and volume, checks it end to end (including that saved runs survive a backend restart) and removes it again. CI runs it on every push.
 
 ## Road-network data
 
@@ -144,9 +179,18 @@ python -m pytest backend/tests -v
 
 The tests use small hand-built road networks (`backend/tests/helpers.py`, and a tiny grid map inside `test_api.py`), so they need neither the Norwich data file nor internet access.
 
-`backend/tests/test_api.py` tests the HTTP endpoints through FastAPI's `TestClient`, so it needs `fastapi` and `httpx` (both in `requirements.txt`). If either is missing the file is skipped and everything else still runs. Without them, 260 tests run; `test_api.py` adds 164 more (424 in total). The five checks of `render.yaml` in `test_deployment_files.py` need `pyyaml` and are skipped without it.
+`backend/tests/test_api.py` and `test_sessions.py` test the HTTP endpoints through FastAPI's `TestClient`, so they need `fastapi` and `httpx` (both in `requirements.txt`); if either is missing those files are skipped and everything else still runs. The checks of `render.yaml`, `docker-compose.yml` and the CI workflow need `pyyaml` and are skipped without it.
 
-What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places.
+**Database tests.** `backend/tests/db/` (74 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
+
+```bash
+createdb norwich_sim_test
+TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
+```
+
+Without `TEST_DATABASE_URL` they are skipped: **503 tests pass and 73 are skipped**; with it, **all 576 run**. Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+
+What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 
 ### Frontend
 
@@ -159,11 +203,15 @@ npm test           # runs both kinds of test below
 There are two kinds of frontend test:
 
 - **Logic tests** (`frontend/tests/`, `npm run test:unit`) use Node's built-in test runner and add no dependencies. They test the logic behind the simulation screen (status messages, traffic summary, route conversion), the optimiser's requests and error handling (with `fetch` replaced by a fake), and the optimiser result tables (rendered to HTML).
-- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 53 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards). The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
+- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 58 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
 
 The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
 
-CI (`.github/workflows/tests.yml`) runs the backend tests on Python 3.11 and 3.12, and for the frontend: lint, build, the logic tests (`npm run test:unit`) and the interaction tests (`npm run test:ui`), as separate steps.
+CI (`.github/workflows/tests.yml`) runs:
+
+- the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 79) and the interaction tests (`npm run test:ui`, 58), as separate steps;
+- a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py`.
 
 ## Benchmarks
 
@@ -283,6 +331,14 @@ How the set is chosen: greedy picking (add the station that improves the whole s
 
 With the default 8 minute target even one station reaches 99.6% of emergencies, because the model has no traffic and Norwich is compact, so coverage only separates the options at tighter targets (3 to 5 minutes). The 2 unreached emergencies can only be reached from 1 of the 38 candidates (probably because of one-way roads), and the chosen set does not include it, so they appear in every row.
 
+### Persistence
+
+```bash
+DATABASE_URL=postgresql://... python -m backend.db.benchmark_persistence --save
+```
+
+Two apps on the Norwich map, one saving to PostgreSQL and one not, run identical simulations and take turns stepping. Saving made no measurable difference to a step (within ±3%, which is noise) at 2, 502 and 2,002 vehicles, with and without a surge: only 2 of 120 steps wrote anything, because a step writes only when something happened (and a metrics snapshot every simulated minute). For the optimiser (default candidates, 200 scenarios), computing took about 730 to 780 ms, saving added 3 to 5 ms, and a saved answer came back in 5 to 7 ms. Full results: [`docs/persistence_benchmark.md`](docs/persistence_benchmark.md).
+
 ## Deploying to Render
 
 This puts the app on the internet for free: the React frontend as a **static site** and the FastAPI backend as a **web service**, both built from this repository.
@@ -296,6 +352,7 @@ This puts the app on the internet for free: the React frontend as a **static sit
 | Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"NORWICH//SIM","status":"online"}`, then use the site |
 | Map data | The map file is committed in Git, so the deployed backend has it. Nothing is written to disk, so the free plan's temporary filesystem is not a problem |
 | Logs | The backend's start-up and dispatch log lines appear in the service's **Logs** tab. Add a `LOG_LEVEL` environment variable (for example `DEBUG`) to change how much is logged; it is optional and not in `render.yaml` |
+| Database | None: `render.yaml` sets no `DATABASE_URL`, so the deployed backend keeps runs in memory only, as before Stage 3. To save runs, see [Adding a database](#adding-a-database) |
 
 *These figures are Render's free-plan limits at the time of writing; check [render.com/pricing](https://render.com/pricing) if they matter to you.*
 
@@ -371,11 +428,19 @@ Every push to the deployed branch redeploys both services automatically.
 | Backend build or start fails with a numpy or pickle error | The Python or numpy version is not what the map was saved with. Keep `PYTHON_VERSION` at `3.12.3` and `numpy>=2` in `requirements-deploy.txt` |
 | Frontend build fails at `npm ci` | `package-lock.json` is out of date: run `npm install` in `frontend/` locally and commit the lockfile |
 
+### Adding a database
+
+Optional. Create a PostgreSQL database on Render (**New +** > **Postgres**; check Render's current free-database limits, which have included an expiry date), then:
+
+1. From your own computer, bring its schema up to date using the database's **External Database URL**: `DATABASE_URL=<external URL> alembic upgrade head`.
+2. On the backend's **Environment** tab add `DATABASE_URL` with the **Internal Database URL**. It restarts and logs `Database schema is up to date`.
+3. Repeat step 1 whenever a change adds a migration (the backend refuses to start until you do, and says so).
+
 ### Limits of this deployment
 
-- **Everyone shares one simulation.** The backend keeps a single simulation in memory (as it always has), so two people using the site at the same moment would affect each other's vehicles and road closures. It is fine for a portfolio demo where one visitor looks at a time, but it is not a multi-user service.
+- **Runs are kept apart, but there is one default run.** Each visitor's simulation has its own ID and its own vehicles and closures. Starting a new route makes that run the default and replaces the previous default, so if two people start routes at the same time, the first one's run is replaced (and their next step fails). Fine for a portfolio demo where one visitor looks at a time; not a multi-user service.
 - **The optimiser is open to anyone**, and searches use the shared free CPU. There is no login or rate limiting.
-- Restarting or waking the backend resets the simulation, because nothing is saved to disk.
+- Restarting or waking the backend ends every live run. Without a database nothing is kept; with one, their history is kept and they are marked `interrupted`.
 
 ## Demo
 
@@ -386,14 +451,19 @@ Every push to the deployed branch redeploys both services automatically.
 ```
 .
 ├── backend/
-│   ├── api/          FastAPI application (backend/api/main.py)
+│   ├── api/          FastAPI application: main.py (entry point), app.py, routes/, run registry, recorder
+│   ├── db/           PostgreSQL: models, repositories, Alembic migrations, persistence benchmark
 │   ├── routing/      graph, Dijkstra, A*, OSM loader, routing benchmarks
 │   ├── simulation/   vehicles, traffic, closures, rerouting, emergencies, stations
 │   ├── optimiser/    emergency station optimiser (+ CLI and validation)
-│   └── tests/        pytest suite
-├── frontend/         React + TypeScript + Vite map interface (+ tests/ and ui-tests/)
+│   ├── tests/        pytest suite (tests/db: database tests)
+│   └── Dockerfile    backend image
+├── frontend/         React + TypeScript + Vite map interface (+ tests/, ui-tests/, Dockerfile, nginx.conf)
 ├── docs/             architecture, demo guide, benchmark reports
 ├── data/osm/         the Norwich graph (committed so it can be deployed)
+├── scripts/          compose_smoke_test.py
+├── alembic.ini       database migrations
+├── docker-compose.yml, .dockerignore      Docker
 ├── render.yaml, requirements-deploy.txt   Render deployment
 └── .github/workflows/tests.yml
 ```
@@ -410,13 +480,13 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **Finished vehicles stay in the vehicle list** (their position in the list is their id in the API), so every `/simulation/step` response grows as fleets and surges add vehicles. Stepping skips them cheaply, but a long surge produces a large response.
 - **Fleets and surges have no buttons in the web interface yet.** They work through the API (see the demo guide). Vehicles added that way do appear and move on the map, because the map draws every vehicle `/simulation/step` returns.
 - **Dispatch picks the station in a straight line.** The station is the nearest one (by latitude/longitude) that has an ambulance free, not the one with the shortest drive; only the ambulance's route itself uses the road network. If no ambulance is free the emergency is refused rather than queued.
-- **Everything lives in memory.** The API holds one simulation in a global variable, so there is one simulation per server process, and it is lost when the server restarts.
+- **Live runs live in memory.** Runs have IDs and are kept apart, but they exist in one process's memory: the backend must run as a single worker, and a run cannot be resumed after a restart. With a database its history survives (it comes back `interrupted`); without one, nothing does. After a crash, a saved run's simulated time and vehicle counts can be up to a minute (simulated) behind; its events, incidents and emergencies are saved as they happen.
+- **History has no screen yet.** Saved runs and optimiser results are available through the API but not shown in the web interface. The optimiser panel plans around the default run's closed roads rather than passing its own run's ID.
 - **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with `/simulation/fleet` or `/traffic/surge`.
 - **Ambulances return to base instantly** after a call rather than driving back.
 - **The optimiser ignores traffic** (it uses free-flowing road distance) and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
 - **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser is a heuristic (greedy plus swaps) that is only checked against the true best set for 2 and 3 stations. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.
 - **Nearest-junction lookup scans every junction**, which is simple but not optimised. There is no caching, spatial index or parallel processing yet.
-- **No database and no Docker.** Nothing is persisted, and there are no container files yet.
 - **Frontend tests do not use real Leaflet or a real browser.** The interaction tests run in jsdom with a stand-in for the map, so map rendering, tile loading and real mouse behaviour on the map are not covered. There are no pause or reset buttons, and no authentication.
 
 ## Troubleshooting
@@ -427,3 +497,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 | `ModuleNotFoundError: No module named 'backend'` | Run commands from the project root, using `python -m ...` and `uvicorn backend.api.main:app`. |
 | Frontend loads but requests fail | Check the backend is running on port 8000 and that you opened `http://localhost:5173` (not `127.0.0.1`). |
 | `ModuleNotFoundError: No module named 'osmnx'` or `fastapi` | Activate the virtual environment and run `pip install -r requirements.txt`. |
+| `SchemaOutOfDate: The database is at migration none, the code needs 0001. Run: alembic upgrade head` | Run `alembic upgrade head` from the project root with the same `DATABASE_URL`. |
+| `DATABASE_URL must be a PostgreSQL URL` | Only PostgreSQL is supported; use a `postgresql://` (or `postgres://`) URL. |
+| `503 ... History needs a database` | The backend was started without `DATABASE_URL`; history and saved optimiser results need one. |
+| `409 Simulation has ended (interrupted)` | The run was live when the backend restarted (or it was stopped or replaced). Its history is still at `/simulations/{id}/history`; start a new run to keep simulating. |
+| `docker compose up` says a port is already allocated | Something else uses 8080 or 8000. Set `FRONTEND_PORT` / `BACKEND_PORT` in a `.env` file. |
+| Database tests are all skipped | Set `TEST_DATABASE_URL` to a PostgreSQL database whose name contains `test` (it is wiped). |
