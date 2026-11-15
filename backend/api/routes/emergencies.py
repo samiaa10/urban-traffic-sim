@@ -1,0 +1,185 @@
+"""Emergencies: dispatching the nearest ambulance and following it."""
+
+import logging
+
+from fastapi import APIRouter, Depends, HTTPException
+
+from backend.api.context import AppContext
+from backend.api.routes.common import (
+    default_run,
+    get_context,
+    nearest_node_id,
+    path_points,
+    run_route,
+)
+from backend.api.sessions import LiveRun
+from backend.routing.a_star import a_star
+from backend.simulation import dispatch
+
+
+logger = logging.getLogger(__name__)
+
+router = APIRouter()
+
+
+@run_route(router, "post", "/emergency/create", "/emergencies")
+def create_emergency(
+    latitude: float,
+    longitude: float,
+    emergency_type: str = "ambulance",
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context)
+):
+    graph = context.graph
+
+    with run.lock:
+        simulation = run.simulation
+
+        emergency = simulation.create_emergency(
+            latitude,
+            longitude,
+            emergency_type
+        )
+
+        # Find the nearest station with an available vehicle
+        vehicle = simulation.dispatch_from_nearest_station(emergency)
+
+        if vehicle is None:
+            simulation.cancel_emergency(emergency)
+            raise HTTPException(
+                status_code=404,
+                detail="No available emergency vehicle"
+            )
+
+        nearest_emergency_node = nearest_node_id(graph, latitude, longitude)
+
+        current_location = vehicle.get_current_location()
+
+        logger.debug(
+            "Dispatching vehicle from %s to emergency at (%s, %s); "
+            "route before dispatch: %s",
+            current_location,
+            latitude,
+            longitude,
+            vehicle.route,
+        )
+
+        nearest_vehicle_node = nearest_node_id(
+            graph,
+            current_location["latitude"],
+            current_location["longitude"]
+        )
+
+        # Plan around current traffic and closed roads
+        path, distance, nodes_explored = a_star(
+            graph,
+            nearest_vehicle_node,
+            nearest_emergency_node,
+            return_stats=True,
+            traffic=simulation.get_traffic_density(),
+            blocked_segments=simulation.get_blocked_segments()
+        )
+
+        if not path:
+            simulation.cancel_emergency(emergency)
+            raise HTTPException(
+                status_code=404,
+                detail="No route to emergency"
+            )
+
+        new_route = path_points(graph, path)
+
+        # Give the emergency vehicle its new route
+        vehicle.set_route(new_route, reset_distance=True)
+
+        vehicle_id = simulation.vehicles.index(vehicle)
+
+    logger.info(
+        "Emergency (%s) at (%s, %s): dispatched vehicle %d, "
+        "route %.0f m, %d junctions, %d nodes explored",
+        emergency_type,
+        latitude,
+        longitude,
+        vehicle_id,
+        distance,
+        len(path),
+        nodes_explored,
+    )
+    logger.debug("Emergency route: %s", new_route)
+
+    return {
+        "status": "emergency dispatched",
+        "emergency_type": emergency_type,
+        "vehicle_id": vehicle_id,
+        "emergency_location": {
+            "latitude": latitude,
+            "longitude": longitude
+        },
+        "route_distance_metres": distance,
+        "nodes_explored": nodes_explored,
+        "route": new_route
+    }
+
+
+@run_route(router, "get", "/emergency/status", "/emergencies/status")
+def emergency_status(run: LiveRun = Depends(default_run)):
+    """Live status of every emergency (state, ETA, response time, reroutes)."""
+
+    with run.lock:
+        simulation = run.simulation
+
+        return {
+            "simulation_time": simulation.time,
+            "emergencies": [
+                dispatch.emergency_status(simulation, emergency)
+                for emergency in simulation.get_emergencies()
+            ]
+        }
+
+
+BLOCK_AHEAD_ERRORS = {
+    "no_emergency": (404, "No ambulance is on its way to an emergency"),
+    "too_close": (400, "The ambulance is too close to its destination to close a road ahead"),
+    "no_detour": (400, "Every road ahead is the only way there, so none was closed"),
+    "off_network": (400, "The ambulance route is not on the road network"),
+}
+
+
+@run_route(
+    router, "post", "/emergency/block-ahead", "/emergencies/block-ahead"
+)
+def emergency_block_road_ahead(
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context)
+):
+    """Close a road on the ambulance's route; it is rerouted around it."""
+
+    with run.lock:
+        result = dispatch.block_road_ahead(
+            context.graph,
+            run.simulation,
+            context.node_by_point,
+            route_finder=run.traffic.route_finder()
+        )
+        run.traffic.process_events()
+
+    if result["outcome"] in BLOCK_AHEAD_ERRORS:
+        status_code, detail = BLOCK_AHEAD_ERRORS[result["outcome"]]
+        raise HTTPException(status_code=status_code, detail=detail)
+
+    start_point, end_point = result["blocked_segment"]
+
+    return {
+        "status": "road closed, ambulance rerouted",
+        "vehicle_id": result["vehicle_id"],
+        "blocked_segment": {
+            "start": {"latitude": start_point[0], "longitude": start_point[1]},
+            "end": {"latitude": end_point[0], "longitude": end_point[1]}
+        },
+        "distance_before_metres": result["distance_before_metres"],
+        "distance_after_metres": result["distance_after_metres"],
+        "extra_metres": result["extra_metres"],
+        "extra_seconds": result["extra_seconds"],
+        "rerouting": result["rerouting"],
+        "route": result["route"]
+    }

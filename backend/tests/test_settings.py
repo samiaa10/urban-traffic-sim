@@ -72,3 +72,26 @@ def test_log_level_accepts_standard_names_in_any_case(value, expected):
 def test_unknown_log_levels_are_refused(bad):
     with pytest.raises(ValueError):
         log_level(bad)
+
+
+# ------------------------------------------------------------
+# MAX_LIVE_RUNS
+# ------------------------------------------------------------
+
+from backend.api.settings import max_live_runs  # noqa: E402
+
+
+def test_eight_live_runs_are_allowed_by_default():
+    assert max_live_runs(None) == 8
+    assert max_live_runs("  ") == 8
+
+
+def test_live_run_limit_can_be_set():
+    assert max_live_runs("3") == 3
+    assert max_live_runs(" 20 ") == 20
+
+
+@pytest.mark.parametrize("value", ["0", "101", "-1", "two", "2.5"])
+def test_a_bad_live_run_limit_fails_at_start_up(value):
+    with pytest.raises(ValueError, match="MAX_LIVE_RUNS"):
+        max_live_runs(value)
