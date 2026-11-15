@@ -11,7 +11,12 @@ import os
 from pathlib import Path
 
 from backend.api.app import create_app
-from backend.api.settings import allowed_origins, log_level, max_live_runs
+from backend.api.settings import (
+    allowed_origins,
+    database_url,
+    log_level,
+    max_live_runs,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -43,6 +48,8 @@ app = create_app(
     cors_origins=allowed_origins(os.environ.get("CORS_ORIGINS")),
     # How many simulation runs may be in memory at once (default 8)
     max_live=max_live_runs(os.environ.get("MAX_LIVE_RUNS")),
+    # PostgreSQL for saving runs and optimiser results; not set = in memory
+    database_url=database_url(os.environ.get("DATABASE_URL")),
 )
 
 context = app.state.context

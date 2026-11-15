@@ -4,13 +4,14 @@ import logging
 import random
 from typing import Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
 
 from backend.api.context import AppContext
 from backend.api.routes.common import (
     default_run,
     get_context,
+    parse_run_id,
     path_points,
     require_node,
     run_route,
@@ -75,6 +76,14 @@ def build_run(context, start, destination):
 
     run = LiveRun(simulation, traffic, start, destination)
 
+    # Saved before anyone can use it; a run that cannot be saved is not
+    # started (it would have no history)
+    if not context.attach_recorder(run):
+        raise HTTPException(
+            status_code=503,
+            detail="The simulation could not be saved (database unavailable)"
+        )
+
     details = {
         "distance_metres": distance,
         "nodes_explored": nodes_explored,
@@ -86,8 +95,9 @@ def build_run(context, start, destination):
 
 
 def add_run(context, run, make_default):
-    for stopped in context.registry.add(run, make_default=make_default):
-        logger.info("Simulation %s stopped", stopped.id)
+    for stopped, reason in context.registry.add(run, make_default=make_default):
+        context.end_run(stopped, reason)
+        logger.info("Simulation %s %s", stopped.id, reason)
 
 
 # ------------------------------------------------------------
@@ -134,20 +144,82 @@ def create_simulation(
     return {"status": "simulation started", **details}
 
 
+RUN_STATUSES = ("active", "stopped", "replaced", "interrupted")
+
+
+def stored_summary(row, live_run=None, registry=None):
+    from backend.db.serializers import run_summary
+
+    summary = run_summary(row)
+
+    if live_run is not None:
+        # Live: the in-memory figures are newer than the saved ones
+        with live_run.lock:
+            summary.update(live_run.summary(registry.is_default(live_run)))
+
+    return summary
+
+
 @router.get("/simulations")
-def list_simulations(context: AppContext = Depends(get_context)):
-    """The live runs, newest first."""
+def list_simulations(
+    status: Optional[str] = None,
+    limit: int = Query(50, ge=1, le=200),
+    offset: int = Query(0, ge=0),
+    context: AppContext = Depends(get_context)
+):
+    """Simulation runs, newest first.
+
+    With a database: every saved run, live or not (filter with status:
+    active, stopped, replaced or interrupted; page with limit/offset).
+    Without one: the live runs only.
+    """
 
     registry = context.registry
-    summaries = []
 
-    for run in registry.runs():
-        with run.lock:
-            summaries.append(run.summary(is_default=registry.is_default(run)))
+    if status is not None and status not in RUN_STATUSES:
+        raise HTTPException(
+            status_code=400,
+            detail="status must be one of " + ", ".join(RUN_STATUSES)
+        )
+
+    if context.database is None:
+        live = [r for r in registry.runs()]
+        if status not in (None, "active"):
+            live = []
+
+        summaries = []
+        for run in live[offset:offset + limit]:
+            with run.lock:
+                summaries.append(run.summary(is_default=registry.is_default(run)))
+
+        return {
+            "persistence": False,
+            "max_live": registry.max_live,
+            "total": len(live),
+            "limit": limit,
+            "offset": offset,
+            "simulations": summaries,
+        }
+
+    from backend.db.models import RunStatus
+    from backend.db.repository import RunRepository
+
+    with context.database.transaction() as session:
+        rows, total = RunRepository(session).list_runs(
+            status=RunStatus(status) if status else None,
+            limit=limit, offset=offset,
+        )
 
     return {
+        "persistence": True,
         "max_live": registry.max_live,
-        "simulations": summaries,
+        "total": total,
+        "limit": limit,
+        "offset": offset,
+        "simulations": [
+            stored_summary(row, registry.get(str(row.id)), registry)
+            for row in rows
+        ],
     }
 
 
@@ -156,7 +228,19 @@ def get_simulation(
     simulation_id: str,
     context: AppContext = Depends(get_context)
 ):
-    run = context.registry.get(simulation_id)
+    """One run: live, or (with a database) one that has ended."""
+
+    run_uuid = parse_run_id(simulation_id)
+    run = context.registry.get(str(run_uuid))
+
+    if context.database is not None:
+        from backend.db.repository import RunRepository
+
+        with context.database.transaction() as session:
+            row = RunRepository(session).get_run(run_uuid)
+
+        if row is not None:
+            return stored_summary(row, run, context.registry)
 
     if run is None:
         raise HTTPException(status_code=404, detail="Simulation not found")
@@ -168,16 +252,41 @@ def get_simulation(
 @router.delete("/simulations/{simulation_id}")
 def stop_simulation(
     simulation_id: str,
+    purge: bool = False,
     context: AppContext = Depends(get_context)
 ):
-    """Stop a run and free its memory."""
+    """Stop a live run (its history is kept), or with purge=true also
+    delete it and its history from the database (live or not)."""
 
-    run = context.registry.remove(simulation_id)
+    run_uuid = parse_run_id(simulation_id)
+    run = context.registry.remove(str(run_uuid))
 
-    if run is None:
+    if run is not None:
+        context.end_run(run, "stopped")
+        logger.info("Simulation %s stopped on request", run.id)
+
+    deleted = False
+
+    if context.database is not None:
+        from backend.db.repository import RunRepository
+
+        with context.database.transaction() as session:
+            repo = RunRepository(session)
+
+            if purge:
+                deleted = repo.delete_run(run_uuid)
+            elif run is None and repo.get_run(run_uuid) is not None:
+                raise HTTPException(
+                    status_code=409,
+                    detail="Simulation has already ended; "
+                           "use purge=true to delete its history"
+                )
+
+    if run is None and not deleted:
         raise HTTPException(status_code=404, detail="Simulation not found")
 
-    logger.info("Simulation %s stopped on request", run.id)
+    if deleted:
+        return {"status": "simulation deleted", "simulation_id": str(run_uuid)}
 
     return {"status": "simulation stopped", "simulation_id": run.id}
 
@@ -207,6 +316,9 @@ def simulation_step(run: LiveRun = Depends(default_run)):
 
         # Run surges, move all vehicles, then react to changes and re-plan
         rerouted = run.traffic.step()
+
+        # Save what changed (usually nothing: then no database work)
+        run.recorder.sync()
 
         vehicles = []
 
@@ -352,6 +464,7 @@ def spawn_fleet(
     with run.lock:
         outcome = run.traffic.spawn_vehicles(count, generator)
         total_vehicles = len(run.simulation.vehicles)
+        run.recorder.fleet_added(outcome, seed)
 
     logger.info(
         "Spawned %d of %d vehicles in %.2f s",

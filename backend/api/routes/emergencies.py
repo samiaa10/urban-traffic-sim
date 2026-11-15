@@ -46,6 +46,7 @@ def create_emergency(
 
         if vehicle is None:
             simulation.cancel_emergency(emergency)
+            run.recorder.emergency_refused(emergency, "no_vehicle")
             raise HTTPException(
                 status_code=404,
                 detail="No available emergency vehicle"
@@ -81,7 +82,9 @@ def create_emergency(
         )
 
         if not path:
+            vehicle_index = simulation.vehicles.index(vehicle)
             simulation.cancel_emergency(emergency)
+            run.recorder.emergency_refused(emergency, "no_route", vehicle_index)
             raise HTTPException(
                 status_code=404,
                 detail="No route to emergency"
@@ -93,6 +96,10 @@ def create_emergency(
         vehicle.set_route(new_route, reset_distance=True)
 
         vehicle_id = simulation.vehicles.index(vehicle)
+
+        run.recorder.emergency_dispatched(
+            emergency, vehicle_id, distance, nodes_explored
+        )
 
     logger.info(
         "Emergency (%s) at (%s, %s): dispatched vehicle %d, "
@@ -137,6 +144,24 @@ def emergency_status(run: LiveRun = Depends(default_run)):
         }
 
 
+def emergency_for(run, result):
+    """The emergency whose ambulance /emergency/block-ahead closed a road
+    in front of (None if no road was closed)."""
+
+    vehicle_id = result.get("vehicle_id")
+
+    if vehicle_id is None:
+        return None
+
+    vehicle = run.simulation.vehicles[vehicle_id]
+
+    for emergency in run.simulation.get_emergencies():
+        if emergency.active and emergency.assigned_vehicle is vehicle:
+            return emergency
+
+    return None
+
+
 BLOCK_AHEAD_ERRORS = {
     "no_emergency": (404, "No ambulance is on its way to an emergency"),
     "too_close": (400, "The ambulance is too close to its destination to close a road ahead"),
@@ -162,6 +187,9 @@ def emergency_block_road_ahead(
             route_finder=run.traffic.route_finder()
         )
         run.traffic.process_events()
+
+        # The closure is saved linked to the emergency it was made for
+        run.recorder.sync(closure_emergency=emergency_for(run, result))
 
     if result["outcome"] in BLOCK_AHEAD_ERRORS:
         status_code, detail = BLOCK_AHEAD_ERRORS[result["outcome"]]

@@ -54,6 +54,8 @@ def start_surge(
             # e.g. the zone is outside the road network
             raise HTTPException(status_code=400, detail=str(error))
 
+        run.recorder.surge_started(surge)
+
         return {
             "status": "surge started",
             "surge": surge.describe(run.simulation.time)
@@ -77,6 +79,7 @@ def configure_rerouting(
 
     with run.lock:
         run.traffic.policy.enabled = enabled
+        run.recorder.rerouting_changed(enabled)
 
         return {
             "status": "rerouting " + ("enabled" if enabled else "disabled"),

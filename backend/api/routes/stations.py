@@ -24,6 +24,7 @@ def create_station(
             longitude,
             station_type
         )
+        run.recorder.station_added(len(run.simulation.stations) - 1, station)
 
         return {
             "status": "station created",
@@ -67,6 +68,7 @@ def add_station_vehicle(
         )
 
         vehicle_id = simulation.vehicles.index(vehicle)
+        run.recorder.vehicle_added(station_id, vehicle_id, vehicle)
 
     return {
         "status": "emergency vehicle added",

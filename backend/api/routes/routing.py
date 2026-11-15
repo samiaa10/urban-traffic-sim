@@ -7,6 +7,7 @@ from fastapi import APIRouter, Depends, HTTPException
 from backend.api.context import AppContext
 from backend.api.routes.common import (
     get_context,
+    run_by_id,
     nearest_node_id,
     path_points,
     require_node,
@@ -60,9 +61,7 @@ def route(
     require_node(graph, destination, "Destination")
 
     if simulation_id is not None:
-        run = context.registry.get(simulation_id)
-        if run is None:
-            raise HTTPException(status_code=404, detail="Simulation not found")
+        run = run_by_id(simulation_id, context)
     else:
         run = context.registry.default()
 
