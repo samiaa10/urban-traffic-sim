@@ -27,9 +27,11 @@ jobs:
       - name: Run the tests
         run: python -m pytest backend/tests -v
 
-  # The same tests on Python 3.9, the version used for local development.
-  test-python-3-9:
-    name: test (Python 3.9)
+  # The same tests on Python 3.12, the version the Render deployment uses
+  # (render.yaml). Python 3.9 was dropped: it is past end of life and is
+  # not available on the ubuntu-latest (26.04) runners.
+  test-python-3-12:
+    name: test (Python 3.12)
     runs-on: ubuntu-latest
     timeout-minutes: 10
 
@@ -37,10 +39,10 @@ jobs:
       - name: Get the code
         uses: actions/checkout@v4
 
-      - name: Set up Python 3.9
+      - name: Set up Python 3.12
         uses: actions/setup-python@v5
         with:
-          python-version: "3.9"
+          python-version: "3.12"
 
       - name: Install test dependencies
         run: pip install pytest fastapi httpx pyyaml

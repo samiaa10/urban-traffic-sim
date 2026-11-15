@@ -107,7 +107,7 @@ frontend/
 
 docs/                           This file, the demo guide, saved benchmark reports (congestion, rerouting)
 render.yaml, requirements-deploy.txt   Render deployment (backend web service + static frontend)
-.github/workflows/tests.yml     CI: backend tests (Python 3.9 and 3.11); frontend lint, build, logic tests and interaction tests
+.github/workflows/tests.yml     CI: backend tests (Python 3.11 and 3.12); frontend lint, build, logic tests and interaction tests
 ```
 
 ## Key ideas
@@ -242,7 +242,7 @@ The screen is one workspace: a fixed navy header, a controls column on the left,
 
 `npm test` runs both kinds (`test:unit`, then `test:ui`).
 
-GitHub Actions runs `python -m pytest backend/tests -v` on Python 3.9 and 3.11 (with `pytest fastapi httpx pyyaml` installed), and for the frontend `npm run lint`, `npm run build`, `npm run test:unit` and `npm run test:ui` as separate steps.
+GitHub Actions runs `python -m pytest backend/tests -v` on Python 3.11 and 3.12 (with `pytest fastapi httpx pyyaml` installed), and for the frontend `npm run lint`, `npm run build`, `npm run test:unit` and `npm run test:ui` as separate steps.
 
 ## Known design trade-offs
 

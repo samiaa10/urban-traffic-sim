@@ -39,7 +39,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 
 ### Prerequisites
 
-- Python 3 (developed on 3.9.6; CI runs 3.9 and 3.11. Other versions are untested.)
+- Python 3 (CI runs 3.11 and 3.12, and the Render deployment uses 3.12. It was originally developed on 3.9.6, which still passed the tests on 2026-11-13 but is past end of life and no longer checked by CI.)
 - Node.js and npm (developed with Node 24)
 - An internet connection for the first-time map download
 
@@ -158,7 +158,7 @@ There are two kinds of frontend test:
 
 The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
 
-CI (`.github/workflows/tests.yml`) runs the backend tests on Python 3.9 and 3.11, and for the frontend: lint, build, the logic tests (`npm run test:unit`) and the interaction tests (`npm run test:ui`), as separate steps.
+CI (`.github/workflows/tests.yml`) runs the backend tests on Python 3.11 and 3.12, and for the frontend: lint, build, the logic tests (`npm run test:unit`) and the interaction tests (`npm run test:ui`), as separate steps.
 
 ## Benchmarks
 
