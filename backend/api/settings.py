@@ -131,7 +131,7 @@ def scenario_workers(value, cpu_count=None):
     Not set: min(4, number of CPUs). 0 runs scenarios one at a time on a
     thread in the API process (no extra processes: for small machines and
     tests). Each worker process holds its own copy of the map (about
-    50-80 MB on Norwich, see docs/scenario_benchmark.md).
+    80-100 MB on Norwich, see docs/scenario_benchmark.md).
     """
 
     import os
