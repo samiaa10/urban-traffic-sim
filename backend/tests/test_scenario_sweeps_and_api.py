@@ -133,3 +133,23 @@ def test_studies_need_a_database(client):
     assert response.status_code == 503
     assert "DATABASE_URL" in response.json()["detail"]
     assert client.get("/scenarios/studies").status_code == 503
+
+
+def test_the_frontend_ranks_only_by_metrics_the_backend_knows():
+    """frontend/src/scenarios.ts lists the metrics the study can be ranked
+    by, so the page needs no request on load; each must exist here."""
+
+    import re
+    from pathlib import Path
+
+    from backend.scenarios.compare import METRICS
+
+    source = (Path(__file__).resolve().parents[2] / "frontend/src/scenarios.ts").read_text()
+    block = source[source.index("export const METRIC_OPTIONS"):]
+    block = block[: block.index("]\n")]
+    keys = re.findall(r'key: "([a-z0-9_]+)"', block)
+
+    assert keys, "no metrics found in METRIC_OPTIONS"
+    assert set(keys) <= set(METRICS)
+    for key in keys:
+        assert f'better: "{METRICS[key]["better"]}"' in block.split(f'key: "{key}"')[1].split("}")[0]

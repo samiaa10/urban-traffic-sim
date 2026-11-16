@@ -102,6 +102,12 @@ def test_a_scenario_shows_its_full_result_and_its_difference_from_the_baseline(c
         (c["start"], c["destination"]) for c in CUT
     ]
     assert detail["spec"]["closures"][0]["start_at"] == 0
+    # Each closure with its coordinates, for drawing on the map
+    assert len(detail["disruptions"]) == 7
+    first = detail["disruptions"][0]
+    graph = app.state.context.graph
+    assert first["kind"] == "closure" and first["start_node"] == 25
+    assert first["start"] == {"latitude": graph.nodes[25]["latitude"], "longitude": graph.nodes[25]["longitude"]}
     assert result["summary"]["trips_requested"] == 40
     assert result["trip_counts"]["finished"] + result["trip_counts"]["unfinished"] \
         + result["trip_counts"]["unroutable"] == 40

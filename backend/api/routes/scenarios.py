@@ -602,9 +602,25 @@ def get_scenario(scenario_id: str, context: AppContext = Depends(get_context)):
                     "roads": road_changes(base_result, result),
                 }
 
+        position = context.network.position
+        disruptions = [
+            {
+                "kind": kind,
+                "start_node": item["start"],
+                "end_node": item["destination"],
+                "start": dict(zip(("latitude", "longitude"), position[item["start"]])),
+                "end": dict(zip(("latitude", "longitude"), position[item["destination"]])),
+            }
+            for kind, items in (("closure", scenario.spec.get("closures", [])),
+                                ("accident", scenario.spec.get("accidents", [])))
+            for item in items
+            if item["start"] in position and item["destination"] in position
+        ]
+
         body = {
             "scenario_id": str(scenario.id),
             "study_id": str(scenario.study_id),
+            "disruptions": disruptions,
             "position": scenario.position,
             "name": scenario.name,
             "is_baseline": scenario.is_baseline,

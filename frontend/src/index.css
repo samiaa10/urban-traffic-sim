@@ -1,6 +1,7 @@
 /* NORWICH//SIM interface styles
    1. Design tokens   2. Base   3. Layout   4. Controls
-   5. Panel content   6. Optimiser results   7. Map   8. Responsive / motion
+   5. Panel content   6. Optimiser results   7. Map   8. Scenario analysis
+   9. Responsive / motion
 
    Hierarchy comes from surface contrast and spacing first; hairlines are
    used only where two regions of the same surface need separating. */
@@ -1235,7 +1236,339 @@ a {
   color: var(--navy-900);
 }
 
-/* ---------------- 8. Responsive and motion ---------------- */
+/* ---------------- 8. Scenario analysis ---------------- */
+
+/* In the main column, under the map and optimiser results (the controls
+   column is sticky, so anything spanning both columns would slide under
+   it): builder | results */
+.scenarios {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  scroll-margin-top: calc(var(--topbar-h) + var(--gap));
+}
+
+.scenarios-head h2 {
+  font-size: var(--text-lg);
+  font-weight: var(--weight-semibold);
+  color: var(--navy-900);
+}
+
+.scenarios-head p {
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+}
+
+.scenarios-body {
+  display: grid;
+  grid-template-columns: 340px minmax(0, 1fr);
+  gap: var(--gap);
+  align-items: start;
+}
+
+.scenario-builder {
+  display: flex;
+  flex-direction: column;
+  gap: 14px;
+  padding: var(--pad);
+}
+
+.scenario-results {
+  display: flex;
+  flex-direction: column;
+  gap: var(--gap);
+}
+
+.scenario-results > .empty {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  gap: 4px;
+  padding: 28px 24px;
+  text-align: center;
+  font-size: var(--text-sm);
+  color: var(--ink-3);
+  box-shadow: inset 0 0 0 1px var(--line);
+  border-radius: var(--radius);
+}
+
+.scenario-results > .empty strong {
+  color: var(--ink-2);
+}
+
+/* Text inputs match the selects */
+.field input,
+.draft-name {
+  height: var(--control-h);
+  padding: 0 12px;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  font: inherit;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-medium);
+  color: var(--ink);
+}
+
+.field input:focus-visible,
+.draft-name:focus-visible {
+  outline-offset: 1px;
+  background: var(--surface);
+}
+
+.drafts {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+
+.draft {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+
+.draft-head {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+}
+
+.draft-name {
+  flex: 1;
+  min-width: 0;
+  background: var(--surface);
+}
+
+.checks {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 16px;
+}
+
+.check {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink-2);
+  white-space: nowrap;
+}
+
+.check input {
+  accent-color: var(--navy-700);
+}
+
+.icon-btn {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: var(--control-h-sm);
+  height: var(--control-h-sm);
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: var(--ink-3);
+  cursor: pointer;
+}
+
+.icon-btn:hover {
+  background: var(--surface-3);
+  color: var(--ink);
+}
+
+.chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chips:empty {
+  display: none;
+}
+
+.chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  padding: 2px 4px 2px 8px;
+  border-radius: var(--radius-xs);
+  background: var(--surface-3);
+  font-size: var(--text-xs);
+  font-weight: var(--weight-medium);
+  color: var(--ink);
+}
+
+.chip--warn {
+  background: var(--amber-soft);
+  color: var(--amber);
+}
+
+.chip button {
+  display: inline-flex;
+  border: 0;
+  padding: 2px;
+  border-radius: var(--radius-xs);
+  background: transparent;
+  color: inherit;
+  cursor: pointer;
+}
+
+.chip button:hover {
+  background: rgba(11, 34, 57, 0.08);
+}
+
+.draft-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.sweep {
+  border-top: 1px solid var(--line-2);
+  padding-top: 12px;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
+.sweep summary {
+  cursor: pointer;
+  font-weight: var(--weight-semibold);
+  color: var(--navy-800);
+}
+
+.sweep[open] {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+}
+
+.sweep p {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.sweep .fields {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+}
+
+/* A study's progress */
+.study-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.progress {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 8px 14px;
+}
+
+.progress-bar {
+  flex: 1 1 200px;
+  height: 8px;
+  border-radius: 4px;
+  background: var(--surface-3);
+  overflow: hidden;
+}
+
+.progress-bar span {
+  display: block;
+  height: 100%;
+  background: var(--teal);
+  transition: width 0.3s;
+}
+
+.progress-text {
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+/* Delay-over-time line chart */
+.line-chart {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.line-chart .axis {
+  stroke: var(--line);
+}
+
+.legend-inline {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  margin-top: 8px;
+  list-style: none;
+  padding: 0;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.legend-inline .swatch {
+  display: inline-block;
+  width: 10px;
+  height: 3px;
+  margin-right: 6px;
+  vertical-align: middle;
+  border-radius: 2px;
+}
+
+.kpi-row {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 1px;
+  overflow: hidden;
+  border-radius: var(--radius-sm);
+  background: var(--line-2);
+}
+
+.kpi-row .kpi {
+  background: var(--surface);
+}
+
+/* A scenario name in the ranking table that opens its details */
+.link-btn {
+  padding: 0;
+  border: 0;
+  background: none;
+  font: inherit;
+  font-weight: var(--weight-medium);
+  color: var(--blue);
+  text-align: left;
+  cursor: pointer;
+}
+
+.link-btn:hover {
+  text-decoration: underline;
+}
+
+.link-btn[aria-pressed="true"] {
+  color: var(--navy-900);
+  font-weight: var(--weight-semibold);
+}
+
+.failures {
+  margin: 0;
+  padding-left: 18px;
+  font-size: var(--text-xs);
+  color: var(--red-strong);
+}
+
+/* ---------------- 9. Responsive and motion ---------------- */
 
 @media (max-width: 1280px) {
   .kpis {
@@ -1253,8 +1586,13 @@ a {
   .kpis,
   .map-card,
   .results,
+  .scenarios,
   .sidebar {
     grid-column: 1;
+  }
+
+  .scenarios-body {
+    grid-template-columns: minmax(0, 1fr);
   }
 
   /* Map first, then the controls, then the analysis */
