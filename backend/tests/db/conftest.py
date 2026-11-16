@@ -151,9 +151,26 @@ def make_app(engine, database_url_for_tests, graph_file):
     yield make
 
     for app in apps:
-        app.state.context.database.dispose()
+        context = app.state.context
+        if context.jobs is not None:
+            context.jobs.shutdown()
+        context.database.dispose()
 
     with engine.begin() as connection:
         connection.execute(text(
-            "TRUNCATE simulation_runs, optimiser_runs RESTART IDENTITY CASCADE"
+            "TRUNCATE simulation_runs, optimiser_runs, scenario_studies "
+            "RESTART IDENTITY CASCADE"
         ))
+
+
+@pytest.fixture(scope="module")
+def grid_graph_file(tmp_path_factory):
+    """An 8 x 8 grid map, big enough for the demand model's trips (at least
+    800 m), for scenario tests."""
+
+    from backend.tests.helpers import make_grid_graph
+
+    path = tmp_path_factory.mktemp("grid") / "grid_graph.pkl"
+    with open(path, "wb") as file:
+        pickle.dump(make_grid_graph(size=8, seed=7), file)
+    return path

@@ -129,3 +129,35 @@ def test_other_databases_are_refused_without_echoing_the_password(given):
         database_url(given)
 
     assert "p@db" not in str(error.value)
+
+
+# ------------------------------------------------------------
+# SCENARIO_WORKERS and MAX_STUDY_SCENARIOS
+# ------------------------------------------------------------
+
+from backend.api.settings import max_study_scenarios, scenario_workers  # noqa: E402
+
+
+def test_scenario_workers_default_to_at_most_four():
+    assert scenario_workers(None, cpu_count=8) == 4
+    assert scenario_workers("", cpu_count=2) == 2
+    assert scenario_workers(None, cpu_count=1) == 1
+
+
+def test_scenario_workers_can_be_zero_for_in_process():
+    assert scenario_workers("0") == 0
+    assert scenario_workers(" 6 ") == 6
+
+
+@pytest.mark.parametrize("value", ["-1", "65", "lots", "1.5"])
+def test_bad_scenario_worker_counts_fail_at_start_up(value):
+    with pytest.raises(ValueError, match="SCENARIO_WORKERS"):
+        scenario_workers(value)
+
+
+def test_study_size_limit():
+    assert max_study_scenarios(None) == 1000
+    assert max_study_scenarios("5000") == 5000
+    for bad in ("0", "5001", "many"):
+        with pytest.raises(ValueError, match="MAX_STUDY_SCENARIOS"):
+            max_study_scenarios(bad)

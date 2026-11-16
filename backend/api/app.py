@@ -11,6 +11,7 @@ from backend.api.recorder import METRICS_INTERVAL
 from backend.api.routes import (
     emergencies,
     history,
+    scenarios,
     incidents,
     optimiser,
     routing,
@@ -18,7 +19,11 @@ from backend.api.routes import (
     stations,
     traffic,
 )
-from backend.api.settings import DEFAULT_MAX_LIVE_RUNS, allowed_origins
+from backend.api.settings import (
+    DEFAULT_MAX_LIVE_RUNS,
+    DEFAULT_MAX_STUDY_SCENARIOS,
+    allowed_origins,
+)
 
 
 logger = logging.getLogger(__name__)
@@ -34,13 +39,21 @@ def open_database(url):
     database = Database(url)
     database.check_schema()
 
+    from backend.db.scenario_repository import ScenarioRepository
+
     with database.transaction() as session:
         interrupted = RunRepository(session).interrupt_active_runs()
+        studies = ScenarioRepository(session).interrupt_unfinished()
 
     if interrupted:
         logger.info(
             "Marked %d simulation run(s) from before the restart as interrupted",
             len(interrupted),
+        )
+    if studies:
+        logger.info(
+            "Marked %d scenario study(ies) from before the restart as interrupted",
+            len(studies),
         )
 
     return database
@@ -52,12 +65,16 @@ def create_app(
     max_live=DEFAULT_MAX_LIVE_RUNS,
     database_url=None,
     metrics_interval=METRICS_INTERVAL,
+    scenario_workers=0,
+    max_study_scenarios=DEFAULT_MAX_STUDY_SCENARIOS,
 ):
     """A new app with its own road graph and (empty) set of live runs.
 
     cors_origins is a list of origins (None: the local dev server only).
     database_url (a SQLAlchemy URL) turns on saving runs; None keeps them
-    in memory only. backend/api/main.py reads these from the environment.
+    in memory only. scenario_workers is how many processes run scenario
+    studies (0: one at a time on a thread). backend/api/main.py reads these
+    from the environment.
     """
 
     if cors_origins is None:
@@ -69,7 +86,10 @@ def create_app(
     async def lifespan(app):
         yield
         # Shutting down: live runs end here, so record them as interrupted
-        app.state.context.end_all_runs("interrupted")
+        context = app.state.context
+        context.end_all_runs("interrupted")
+        if context.jobs is not None:
+            context.jobs.shutdown()
         if database is not None:
             database.dispose()
 
@@ -94,7 +114,20 @@ def create_app(
         graph_file=graph_file,
         database=database,
         metrics_interval=metrics_interval,
+        max_study_scenarios=max_study_scenarios,
     )
+
+    if database is not None:
+        from backend.scenarios.jobs import JobManager
+
+        context = app.state.context
+        context.jobs = JobManager(
+            database,
+            graph_file,
+            context.graph_sha256,
+            scenario_workers,
+            world=context.scenario_world() if scenario_workers == 0 else None,
+        )
 
     for module in (
         routing,
@@ -105,6 +138,7 @@ def create_app(
         traffic,
         optimiser,
         history,
+        scenarios,
     ):
         app.include_router(module.router)
 
