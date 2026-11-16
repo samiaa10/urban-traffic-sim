@@ -13,11 +13,15 @@ TABLES = {
     "incidents", "surges", "fleet_spawns", "run_events", "run_metrics",
     "optimiser_runs", "optimiser_candidates", "optimiser_selected_stations",
     "optimiser_baselines",
+    # 0002: scenario studies
+    "scenario_studies", "scenarios", "scenario_results", "scenario_road_impacts",
+    "scenario_area_impacts", "scenario_timeseries",
 }
 
 ENUM_TYPES = {
     "run_status", "incident_kind", "incident_end_reason", "emergency_status",
     "surge_direction", "event_type", "optimiser_kind", "candidate_source",
+    "study_status", "scenario_status",
 }
 
 
@@ -65,4 +69,21 @@ def test_downgrade_removes_everything_and_upgrade_works_again(engine):
 
 def test_the_database_is_at_the_latest_revision(engine):
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0001"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+
+
+def test_the_scenario_migration_can_be_undone_on_its_own(engine):
+    """0002 down to 0001 leaves exactly the Stage 3 schema."""
+
+    downgrade(engine, "0001")
+
+    try:
+        assert tables(engine) == TABLES - {
+            "scenario_studies", "scenarios", "scenario_results",
+            "scenario_road_impacts", "scenario_area_impacts", "scenario_timeseries",
+        }
+        assert enum_types(engine) == ENUM_TYPES - {"study_status", "scenario_status"}
+    finally:
+        migrate(engine, "head")
+
+    assert tables(engine) == TABLES

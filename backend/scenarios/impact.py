@@ -53,13 +53,18 @@ TOP_AREAS = 10
 class ImpactTracker:
     """Collects per-second delay for the trips it is told about."""
 
-    def __init__(self, simulation, node_by_point, timeseries_interval=60):
+    def __init__(self, simulation, node_by_point, timeseries_interval=60, measure=True):
         self.simulation = simulation
+        # measure=False keeps only the bookkeeping (which vehicles are still
+        # on their way), for measuring what the measuring itself costs
+        self.measure = measure
         self.node_by_point = node_by_point
         self.timeseries_interval = timeseries_interval
 
-        # Tracked vehicles (demand and surge trips, not ambulances)
+        # Tracked vehicles (demand and surge trips, not ambulances), and
+        # those still on their way (finished ones are dropped from it)
         self.vehicles = []
+        self.active = []
 
         # Road key -> accumulated figures
         self.road_delay = defaultdict(float)        # vehicle-seconds lost
@@ -73,6 +78,11 @@ class ImpactTracker:
 
     def track(self, vehicle):
         self.vehicles.append(vehicle)
+        self.active.append(vehicle)
+
+    @property
+    def all_finished(self):
+        return not self.active
 
     # ------------------------------------------------------------
     # Every second
@@ -81,10 +91,13 @@ class ImpactTracker:
     def before_step(self):
         """Record where each moving vehicle is and how far it has got."""
 
+        if not self.measure:
+            return
+
         snapshot = []
         counts = defaultdict(int)
 
-        for vehicle in self.vehicles:
+        for vehicle in self.active:
             if vehicle.finished or vehicle.position >= len(vehicle.route) - 1:
                 continue
 
@@ -102,6 +115,10 @@ class ImpactTracker:
 
     def after_step(self):
         """Add the delay each vehicle picked up during the step."""
+
+        if not self.measure:
+            self.active = [vehicle for vehicle in self.active if not vehicle.finished]
+            return
 
         step_delay = 0.0
 
@@ -129,6 +146,9 @@ class ImpactTracker:
         self._interval_delay += step_delay
         self._interval_vehicle_seconds += len(self._snapshot)
         self._snapshot = []
+
+        if any(vehicle.finished for vehicle in self.active):
+            self.active = [vehicle for vehicle in self.active if not vehicle.finished]
 
         now = self.simulation.time
         if now % self.timeseries_interval == 0:
@@ -166,14 +186,26 @@ class ImpactTracker:
 
     def _road_of(self, vehicle):
         """The road key a vehicle is on: the sorted pair of its route
-        points around its position."""
+        points around its position. Cached until the vehicle moves to the
+        next road or gets a new route (a vehicle stays on a road for
+        several seconds, so this saves building the key every second)."""
+
+        cached = getattr(vehicle, "_impact_road", None)
+        if (
+            cached is not None
+            and cached[0] is vehicle.route
+            and cached[1] == vehicle.position
+        ):
+            return cached[2]
 
         a = vehicle.route[vehicle.position]
         b = vehicle.route[vehicle.position + 1]
-        return tuple(sorted((
-            (a["latitude"], a["longitude"]),
-            (b["latitude"], b["longitude"]),
-        )))
+        point_a = (a["latitude"], a["longitude"])
+        point_b = (b["latitude"], b["longitude"])
+        road = (point_a, point_b) if point_a <= point_b else (point_b, point_a)
+
+        vehicle._impact_road = (vehicle.route, vehicle.position, road)
+        return road
 
     # ------------------------------------------------------------
     # Results
