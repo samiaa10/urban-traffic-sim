@@ -22,6 +22,8 @@ The control names below describe what each action does. If the wording on a butt
 
    With the default 8 minute target even one station reaches over 99% of emergencies (the model has no traffic and Norwich is compact), so try 3 or 4 minutes to see the stations make a difference. *Clear results* removes both the single-station and the set markers.
 
+8. **Look back, restart and resume (needs a database).** In the **History** section (header link *History*), click *Load saved runs and studies*. Each saved run shows when it started, its status and how far it got; *Details* lists its closures, accidents, emergencies, stations and fleets. Stop the backend while a run is going and start it again, then click *Refresh*: the run is now `interrupted`. Click *Restart*: a new run starts from the same setup (`/simulations/<ID>/restart`), its route is drawn and its vehicles start moving, and a note says what was put back (stations, closures, accidents, fleet vehicles). Under *Scenario studies*, *Open* shows a past study in the Scenarios results, and *Resume* runs an interrupted or cancelled study's unfinished scenarios again (`/scenarios/studies/<ID>/resume`).
+
 Things to watch for: the route changing when a road closes, vehicles slowing on shared roads, the ambulance's response time being measured in *simulated* seconds, and the detour making the response slower.
 
 ## B. Reproducing the same steps with the API
@@ -155,7 +157,14 @@ curl "http://127.0.0.1:8000/optimiser/runs"
 curl "http://127.0.0.1:8000/optimiser/stations?reuse=true"
 ```
 
-Now stop the backend (Ctrl+C) and start it again. `/simulations` still lists the run, now with `"status": "interrupted"` and `"live": false`, and its history is unchanged. A live run cannot be resumed after a restart (its vehicles were only in memory), so `POST /simulations/<ID>/step` answers 409. `DELETE /simulations/<ID>?purge=true` deletes a run and its history.
+Now stop the backend (Ctrl+C) and start it again. `/simulations` still lists the run, now with `"status": "interrupted"` and `"live": false`, and its history is unchanged. A live run cannot carry on after a restart (its vehicles were only in memory), so `POST /simulations/<ID>/step` answers 409. Instead, start it again from its saved setup:
+
+```bash
+# a new run with the same route, stations, closures and accidents still in place, and fleet trips
+curl -X POST "http://127.0.0.1:8000/simulations/<ID>/restart"
+```
+
+The reply has the new `simulation_id`, `restarted_from` (the old ID) and `applied` (how many stations, ambulances, closures, accidents and fleet vehicles were put back); vehicles start from the beginning. `DELETE /simulations/<ID>?purge=true` deletes a run and its history (a run restarted from it is kept).
 
 ### 10. Scenario analysis: what does a disruption cost the whole network? (Stage 4)
 
@@ -195,5 +204,7 @@ curl -X POST "http://127.0.0.1:8000/scenarios/studies/sweep" -H "Content-Type: a
   "roads": [[<NODE_A>, <NODE_B>], [<NODE_C>, <NODE_D>]]
 }'
 ```
+
+If the backend stops while a study is running, it is resumed when the backend starts again (finished scenarios keep their results; set `RESUME_STUDIES=false` to turn this off). A cancelled or interrupted study can also be resumed by hand: `curl -X POST "http://127.0.0.1:8000/scenarios/studies/<STUDY_ID>/resume"`.
 
 `GET /scenarios/nearest-road?latitude=...&longitude=...` finds the junction pair of the road nearest a point, and `GET /scenarios/metrics` lists what studies can be ranked by. The same seed always gives the same trips, so comparing a disruption with its baseline is trip by trip.
