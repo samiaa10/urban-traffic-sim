@@ -313,3 +313,13 @@ def test_ci_job_names_are_unchanged(workflow):
     assert jobs["test"].get("name", "test") == "test"
     assert jobs["test-python-3-12"]["name"] == "test (Python 3.12)"
     assert jobs["frontend"]["name"] == "frontend (lint, build and test)"
+
+
+def test_scenario_workers_are_set_in_compose(compose):
+    """Scenario studies run in worker processes inside the backend
+    container; Compose sets how many (and Docker must allow them)."""
+
+    environment = services(compose)["backend"]["environment"]
+
+    assert environment["SCENARIO_WORKERS"].startswith("${SCENARIO_WORKERS:-")
+    assert "SCENARIO_WORKERS" in text("backend/api/main.py")
