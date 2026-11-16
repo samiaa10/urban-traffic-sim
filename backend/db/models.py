@@ -1005,12 +1005,20 @@ class ScenarioResult(Base):
     # Per trip, in trip order (the same order in every scenario with the
     # same trip signature): ends, journey and free-flow time, delay, and
     # status (TRIP_STATUS_CODES). NULL elements for trips with no route.
-    trip_origin: Mapped[List[Optional[int]]] = mapped_column(ARRAY(BigInteger))
-    trip_destination: Mapped[List[Optional[int]]] = mapped_column(ARRAY(BigInteger))
-    trip_journey_seconds: Mapped[List[Optional[int]]] = mapped_column(ARRAY(Integer))
-    trip_free_flow_seconds: Mapped[List[Optional[float]]] = mapped_column(ARRAY(Float))
-    trip_delay_seconds: Mapped[List[Optional[float]]] = mapped_column(ARRAY(Float))
-    trip_status: Mapped[List[int]] = mapped_column(ARRAY(SmallInteger))
+    # Deferred (group "trips"): loaded only when asked for, so listing or
+    # ranking a large study does not pull thousands of arrays
+    trip_origin: Mapped[List[Optional[int]]] = mapped_column(
+        ARRAY(BigInteger), deferred=True, deferred_group="trips")
+    trip_destination: Mapped[List[Optional[int]]] = mapped_column(
+        ARRAY(BigInteger), deferred=True, deferred_group="trips")
+    trip_journey_seconds: Mapped[List[Optional[int]]] = mapped_column(
+        ARRAY(Integer), deferred=True, deferred_group="trips")
+    trip_free_flow_seconds: Mapped[List[Optional[float]]] = mapped_column(
+        ARRAY(Float), deferred=True, deferred_group="trips")
+    trip_delay_seconds: Mapped[List[Optional[float]]] = mapped_column(
+        ARRAY(Float), deferred=True, deferred_group="trips")
+    trip_status: Mapped[List[int]] = mapped_column(
+        ARRAY(SmallInteger), deferred=True, deferred_group="trips")
 
     created_at: Mapped[datetime] = utc_now_column()
 

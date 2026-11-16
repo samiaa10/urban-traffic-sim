@@ -10,7 +10,7 @@ import uuid
 from datetime import datetime, timezone
 
 from sqlalchemy import func, select, update
-from sqlalchemy.orm import selectinload
+from sqlalchemy.orm import selectinload, undefer_group
 
 from backend.db.models import (
     TRIP_STATUS_CODES,
@@ -86,6 +86,25 @@ class ScenarioRepository:
     def get_study(self, study_id):
         return self.session.get(ScenarioStudy, study_id)
 
+    def _lock_for_scenario(self, scenario_id):
+        """Lock a scenario's study, then the scenario (read fresh).
+
+        Every write that touches both locks them in this order, study
+        first: saving a result while the study is being cancelled would
+        otherwise deadlock (the two would wait for each other's lock).
+        """
+
+        study_id = self.session.scalar(
+            select(Scenario.study_id).where(Scenario.id == scenario_id)
+        )
+        if study_id is None:
+            return None
+
+        self._locked_study(study_id)
+        return self.session.get(
+            Scenario, scenario_id, with_for_update=True, populate_existing=True
+        )
+
     def _locked_study(self, study_id):
         """The study row, locked and read fresh: its counts are changed by
         UPDATE statements, so the copy in the session may be stale."""
@@ -116,7 +135,7 @@ class ScenarioRepository:
         query = select(Scenario).where(Scenario.id == scenario_id)
         if full:
             query = query.options(
-                selectinload(Scenario.result),
+                selectinload(Scenario.result).options(undefer_group("trips")),
                 selectinload(Scenario.roads),
                 selectinload(Scenario.areas),
                 selectinload(Scenario.timeseries),
@@ -210,6 +229,13 @@ class ScenarioRepository:
     def start_scenario(self, scenario_id):
         """Queued -> running. False if it was cancelled meanwhile."""
 
+        study_id = self.session.scalar(
+            select(Scenario.study_id).where(Scenario.id == scenario_id)
+        )
+        if study_id is None:
+            return False
+        self._locked_study(study_id)      # study first (see _lock_for_scenario)
+
         result = self.session.execute(
             update(Scenario)
             .where(Scenario.id == scenario_id, Scenario.status == ScenarioStatus.QUEUED)
@@ -224,7 +250,7 @@ class ScenarioRepository:
         for example because its study was cancelled meanwhile.
         """
 
-        scenario = self.session.get(Scenario, scenario_id, with_for_update=True, populate_existing=True)
+        scenario = self._lock_for_scenario(scenario_id)
         if scenario is None or scenario.status != ScenarioStatus.RUNNING:
             return False
 
@@ -317,7 +343,7 @@ class ScenarioRepository:
         return True
 
     def fail_scenario(self, scenario_id, error):
-        scenario = self.session.get(Scenario, scenario_id, with_for_update=True, populate_existing=True)
+        scenario = self._lock_for_scenario(scenario_id)
         if scenario is None or scenario.status not in UNFINISHED_SCENARIO:
             return False
 
@@ -339,46 +365,37 @@ class ScenarioRepository:
 # Rows -> the dict run_scenario returns
 # ------------------------------------------------------------
 
-def result_from_rows(scenario):
+def summary_from_rows(scenario):
+    """Enough of a completed scenario to rank it (summary, emergencies,
+    execution), without loading its per-trip arrays; None if no result."""
+
+    return result_from_rows(scenario, trips=False)
+
+
+def result_from_rows(scenario, trips=True):
     """A completed scenario (loaded with result, roads, areas, timeseries)
-    as run_scenario's result dict; None if it has no result."""
+    as run_scenario's result dict; None if it has no result. trips=False
+    leaves out the per-trip arrays (and roads, areas, time series)."""
 
     r = scenario.result
     if r is None:
         return None
+
+    if not trips:
+        return {
+            "trip_signature": scenario.trip_signature,
+            "summary": _summary(r),
+            "emergencies": _emergencies(r),
+            "execution": _execution(r),
+        }
 
     return {
         "engine_version": r.engine_version,
         "graph_sha256": None,
         "spec_fingerprint": scenario.spec_fingerprint,
         "trip_signature": scenario.trip_signature,
-        "summary": {
-            "trips_requested": r.trips_requested,
-            "trips_spawned": r.trips_spawned,
-            "trips_unroutable": r.trips_unroutable,
-            "trips_finished": r.trips_finished,
-            "completion_percent": r.completion_percent,
-            "total_delay_vehicle_hours": r.total_delay_vehicle_hours,
-            "total_travel_vehicle_hours": r.total_travel_vehicle_hours,
-            "mean_delay_seconds": r.mean_delay_seconds,
-            "p95_delay_seconds": r.p95_delay_seconds,
-            "max_delay_seconds": r.max_delay_seconds,
-            "mean_increase_seconds": r.mean_increase_seconds,
-            "p95_increase_seconds": r.p95_increase_seconds,
-            "max_increase_seconds": r.max_increase_seconds,
-            "reroutes": r.reroutes,
-            "simulated_seconds": r.simulated_seconds,
-            "hit_time_limit": r.hit_time_limit,
-        },
-        "emergencies": {
-            "requested": r.emergencies_requested,
-            "dispatched": r.emergencies_dispatched,
-            "refused": r.emergencies_refused,
-            "arrived": r.emergencies_arrived,
-            "mean_response_seconds": r.emergency_mean_response_seconds,
-            "worst_response_seconds": r.emergency_worst_response_seconds,
-            "within_target_percent": r.emergency_within_target_percent,
-        },
+        "summary": _summary(r),
+        "emergencies": _emergencies(r),
         "trips": {
             "origin": list(r.trip_origin),
             "destination": list(r.trip_destination),
@@ -428,11 +445,48 @@ def result_from_rows(scenario):
             }
             for row in scenario.timeseries
         ],
-        "execution": {
-            "wall_seconds": r.wall_seconds,
-            "cpu_seconds": r.cpu_seconds,
-            "peak_rss_mb": r.peak_rss_mb,
-            "vehicle_seconds": r.vehicle_seconds,
-            "vehicle_seconds_per_second": r.vehicle_seconds_per_second,
-        },
+        "execution": _execution(r),
+    }
+
+
+def _summary(r):
+    return {
+        "trips_requested": r.trips_requested,
+        "trips_spawned": r.trips_spawned,
+        "trips_unroutable": r.trips_unroutable,
+        "trips_finished": r.trips_finished,
+        "completion_percent": r.completion_percent,
+        "total_delay_vehicle_hours": r.total_delay_vehicle_hours,
+        "total_travel_vehicle_hours": r.total_travel_vehicle_hours,
+        "mean_delay_seconds": r.mean_delay_seconds,
+        "p95_delay_seconds": r.p95_delay_seconds,
+        "max_delay_seconds": r.max_delay_seconds,
+        "mean_increase_seconds": r.mean_increase_seconds,
+        "p95_increase_seconds": r.p95_increase_seconds,
+        "max_increase_seconds": r.max_increase_seconds,
+        "reroutes": r.reroutes,
+        "simulated_seconds": r.simulated_seconds,
+        "hit_time_limit": r.hit_time_limit,
+    }
+
+
+def _emergencies(r):
+    return {
+        "requested": r.emergencies_requested,
+        "dispatched": r.emergencies_dispatched,
+        "refused": r.emergencies_refused,
+        "arrived": r.emergencies_arrived,
+        "mean_response_seconds": r.emergency_mean_response_seconds,
+        "worst_response_seconds": r.emergency_worst_response_seconds,
+        "within_target_percent": r.emergency_within_target_percent,
+    }
+
+
+def _execution(r):
+    return {
+        "wall_seconds": r.wall_seconds,
+        "cpu_seconds": r.cpu_seconds,
+        "peak_rss_mb": r.peak_rss_mb,
+        "vehicle_seconds": r.vehicle_seconds,
+        "vehicle_seconds_per_second": r.vehicle_seconds_per_second,
     }
