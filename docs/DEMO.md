@@ -156,3 +156,44 @@ curl "http://127.0.0.1:8000/optimiser/stations?reuse=true"
 ```
 
 Now stop the backend (Ctrl+C) and start it again. `/simulations` still lists the run, now with `"status": "interrupted"` and `"live": false`, and its history is unchanged. A live run cannot be resumed after a restart (its vehicles were only in memory), so `POST /simulations/<ID>/step` answers 409. `DELETE /simulations/<ID>?purge=true` deletes a run and its history.
+
+### 10. Scenario analysis: what does a disruption cost the whole network? (Stage 4)
+
+Needs a database (`DATABASE_URL`, or `docker compose up --build`).
+
+**In the web interface**, open **Scenarios** in the header. There are two scenarios to start with, *Baseline* and *Road closure*:
+
+1. In *Road closure* click **Close a road**, then click a road on the map (the toolbar above the map says the next click picks a road). The road is drawn dashed on the map and listed as `Closed <junction>-<junction>`.
+2. Click **Run 2 scenarios**. Each is a full simulation of every trip on the Norwich network, run in the background; the progress bar follows them.
+3. When they finish you get the ranking, a plain-English explanation (by how much the closure cost, how many trips took longer, which roads lost the extra time), a bar chart and a chart of delay per simulated minute. Click a scenario's name for its details: its most delayed roads are drawn on the map in amber.
+
+**Large study:** open **Large study: random closures**, choose 100 scenarios with 3 closures each, and run it. It takes several minutes (about 13 to 16 s per scenario per worker, depending on the vehicles: see the benchmark); the spread of network delay shows how the network copes with disruption in general, and how often a closure actually helps.
+
+**Through the API**, a study is a list of scenarios; it answers 202 at once and runs in the background:
+
+```bash
+curl -X POST "http://127.0.0.1:8000/scenarios/studies" -H "Content-Type: application/json" -d '{
+  "name": "Accident on a busy road",
+  "baseline": 0,
+  "scenarios": [
+    {"name": "Baseline", "seed": 1, "demand": {"vehicles": 500, "spread_seconds": 300}},
+    {"name": "Accident", "seed": 1, "demand": {"vehicles": 500, "spread_seconds": 300},
+     "accidents": [{"start": <NODE_A>, "destination": <NODE_B>, "severity": "severe", "start_at": 120}]}
+  ]
+}'
+
+# progress, then the ranking and explanation
+curl "http://127.0.0.1:8000/scenarios/studies/<STUDY_ID>"
+
+# one scenario in full: roads and areas hit hardest, delay per minute, difference from the baseline
+curl "http://127.0.0.1:8000/scenarios/<SCENARIO_ID>"
+
+# a generated study: the baseline, then each road closed in turn
+curl -X POST "http://127.0.0.1:8000/scenarios/studies/sweep" -H "Content-Type: application/json" -d '{
+  "base": {"name": "Weekday", "seed": 1, "demand": {"vehicles": 500}},
+  "kind": "each_closure",
+  "roads": [[<NODE_A>, <NODE_B>], [<NODE_C>, <NODE_D>]]
+}'
+```
+
+`GET /scenarios/nearest-road?latitude=...&longitude=...` finds the junction pair of the road nearest a point, and `GET /scenarios/metrics` lists what studies can be ranked by. The same seed always gives the same trips, so comparing a disruption with its baseline is trip by trip.

@@ -34,6 +34,11 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Saved optimiser results.** Every optimiser answer is saved and can be listed and fetched again (`/optimiser/runs`); `reuse=true` answers an identical request from the database in about 6 ms instead of computing it again (about 750 ms).
 - **Database migrations** with Alembic; the API refuses to start on a database that is not up to date.
 - **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
+- **Network-wide impact analysis.** For any simulated situation: total delay against free-flow conditions (vehicle-hours lost to congestion, accidents and closures), average, 95th percentile and worst journey-time increases, and the roads and 500 m areas that lose the most time, all measured from full simulations (delay is exact: a lone vehicle loses exactly 0 s, and road delay adds up exactly to trip delay).
+- **Scenario simulation engine.** Describe a scenario (background demand, surges, road closures and accidents with start and end times, rerouting on or off, emergency stations and emergencies, a seed) and run it as a full simulation of the real Norwich network. The same scenario always gives the same result, and scenarios with the same seed have the same trips, so a disruption can be compared with its baseline trip by trip.
+- **Scenario comparison.** Rank scenarios by clearly defined metrics (network delay, travel time, journey-time increase, completion, emergency response) and get a plain-English explanation of why one did better: what differs, how many trips were slower or faster, and which roads lost the extra time.
+- **Large studies in the background.** Run hundreds or thousands of scenarios (one per closed road, many random closures, many seeds, station layouts) as a background job in a pool of worker processes; the API answers at once and reports progress. Measured: 400 full simulations in 21.5 minutes on 4 workers ([benchmark](docs/scenario_benchmark.md)).
+- **Scenario analysis in the web interface.** Build scenarios, pick closures and accidents by clicking the map, run them, and see the ranking, explanation, charts of delay over time, and the most affected roads drawn on the map.
 
 ## Tech stack
 
@@ -95,7 +100,7 @@ uvicorn backend.api.main:app --reload
 
 The API runs at `http://127.0.0.1:8000`. FastAPI's interactive documentation is at `http://127.0.0.1:8000/docs`.
 
-The backend reads five optional environment variables:
+The backend reads seven optional environment variables:
 
 | Variable | Default | What it does |
 |---|---|---|
@@ -104,6 +109,8 @@ The backend reads five optional environment variables:
 | `NORWICH_SIM_GRAPH` | `data/osm/norwich_graph.pkl` | A different road-graph file (the API tests use a tiny one) |
 | `DATABASE_URL` | *(not set)* | A PostgreSQL URL (`postgresql://user:password@host:5432/name`; `postgres://` also works) to save runs and optimiser results. Not set: everything stays in memory, as before. See step 6 |
 | `MAX_LIVE_RUNS` | `8` | How many simulation runs may be in memory at once (1 to 100). Starting one more stops the run idle longest |
+| `SCENARIO_WORKERS` | `min(4, CPUs)` | Worker processes that run scenario studies (0 to 64; 0 runs them one at a time inside the API process). Each holds its own copy of the map, 80 to 100 MB |
+| `MAX_STUDY_SCENARIOS` | `1000` | The most scenarios one study may have (1 to 5,000) |
 
 Run the backend as **one** process (no `--workers` above 1): live simulation runs are kept in that process's memory.
 
@@ -181,14 +188,14 @@ The tests use small hand-built road networks (`backend/tests/helpers.py`, and a 
 
 `backend/tests/test_api.py` and `test_sessions.py` test the HTTP endpoints through FastAPI's `TestClient`, so they need `fastapi` and `httpx` (both in `requirements.txt`); if either is missing those files are skipped and everything else still runs. The checks of `render.yaml`, `docker-compose.yml` and the CI workflow need `pyyaml` and are skipped without it.
 
-**Database tests.** `backend/tests/db/` (74 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
+**Database tests.** `backend/tests/db/` (104 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
 
 ```bash
 createdb norwich_sim_test
 TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
 ```
 
-Without `TEST_DATABASE_URL` they are skipped: **503 tests pass and 73 are skipped**; with it, **all 576 run**. Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+Without `TEST_DATABASE_URL` they are skipped: **567 tests pass and 103 are skipped**; with it, **all 670 run**. Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
 
 What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 
@@ -203,15 +210,15 @@ npm test           # runs both kinds of test below
 There are two kinds of frontend test:
 
 - **Logic tests** (`frontend/tests/`, `npm run test:unit`) use Node's built-in test runner and add no dependencies. They test the logic behind the simulation screen (status messages, traffic summary, route conversion), the optimiser's requests and error handling (with `fetch` replaced by a fake), and the optimiser result tables (rendered to HTML).
-- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 58 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
+- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 67 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
 
 The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
 
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 79) and the interaction tests (`npm run test:ui`, 58), as separate steps;
-- a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py`.
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 94) and the interaction tests (`npm run test:ui`, 67), as separate steps;
+- a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
 ## Benchmarks
 
@@ -339,6 +346,24 @@ DATABASE_URL=postgresql://... python -m backend.db.benchmark_persistence --save
 
 Two apps on the Norwich map, one saving to PostgreSQL and one not, run identical simulations and take turns stepping. Saving made no measurable difference to a step (within ±3%, which is noise) at 2, 502 and 2,002 vehicles, with and without a surge: only 2 of 120 steps wrote anything, because a step writes only when something happened (and a metrics snapshot every simulated minute). For the optimiser (default candidates, 200 scenarios), computing took about 730 to 780 ms, saving added 3 to 5 ms, and a saved answer came back in 5 to 7 ms. Full results: [`docs/persistence_benchmark.md`](docs/persistence_benchmark.md).
 
+### Scenario engine
+
+```bash
+DATABASE_URL=postgresql://... python -m backend.scenarios.benchmark_scenarios --save
+```
+
+Full simulations on the Norwich map, on this Mac (4 performance + 4 efficiency cores):
+
+| | |
+|---|---|
+| One scenario | 200 vehicles 5.7 s, 500 vehicles 16.2 s, 1,000 vehicles 38.5 s, 2,000 vehicles 104.6 s; 78 to 99 MB |
+| Cost of measuring the impact | +2.2% |
+| Parallel speed-up (16 scenarios of 500 vehicles) | 2 workers 1.97x, 4 workers 2.61x, 8 workers 3.52x |
+| Saving a result | median 17 ms |
+| A 400-scenario study (random closures, 300 trips each) | 21.5 minutes on 4 workers (about 1,100 an hour), 0 failures |
+
+Speed-up flattens beyond 2 workers because each scenario itself slows down as more run at once on this machine's mixed cores; the job manager keeps every worker busy. In the 400-scenario study, closing 3 random roads within 1.5 km of the centre added a median 0.18 vehicle-hours of travel (worst 1.23), but 77 of the 399 closure sets made total travel shorter, by moving traffic off congested roads. Full results and how to read them: [`docs/scenario_benchmark.md`](docs/scenario_benchmark.md).
+
 ## Deploying to Render
 
 This puts the app on the internet for free: the React frontend as a **static site** and the FastAPI backend as a **web service**, both built from this repository.
@@ -352,7 +377,8 @@ This puts the app on the internet for free: the React frontend as a **static sit
 | Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"NORWICH//SIM","status":"online"}`, then use the site |
 | Map data | The map file is committed in Git, so the deployed backend has it. Nothing is written to disk, so the free plan's temporary filesystem is not a problem |
 | Logs | The backend's start-up and dispatch log lines appear in the service's **Logs** tab. Add a `LOG_LEVEL` environment variable (for example `DEBUG`) to change how much is logged; it is optional and not in `render.yaml` |
-| Database | None: `render.yaml` sets no `DATABASE_URL`, so the deployed backend keeps runs in memory only, as before Stage 3. To save runs, see [Adding a database](#adding-a-database) |
+| Database | None: `render.yaml` sets no `DATABASE_URL`, so the deployed backend keeps runs in memory only, as before Stage 3, and scenario studies are unavailable (they answer 503). To save runs and run studies, see [Adding a database](#adding-a-database) |
+| Scenario studies | With a database, set `SCENARIO_WORKERS=0` on the free plan (0.1 CPU, 512 MB: one worker process alone holds 80 to 100 MB) and keep studies small; large studies belong on a bigger machine |
 
 *These figures are Render's free-plan limits at the time of writing; check [render.com/pricing](https://render.com/pricing) if they matter to you.*
 
@@ -453,6 +479,7 @@ Optional. Create a PostgreSQL database on Render (**New +** > **Postgres**; chec
 ├── backend/
 │   ├── api/          FastAPI application: main.py (entry point), app.py, routes/, run registry, recorder
 │   ├── db/           PostgreSQL: models, repositories, Alembic migrations, persistence benchmark
+│   ├── scenarios/    scenario engine: spec, runner, impact measures, comparison, background jobs, sweeps
 │   ├── routing/      graph, Dijkstra, A*, OSM loader, routing benchmarks
 │   ├── simulation/   vehicles, traffic, closures, rerouting, emergencies, stations
 │   ├── optimiser/    emergency station optimiser (+ CLI and validation)
@@ -481,6 +508,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **Fleets and surges have no buttons in the web interface yet.** They work through the API (see the demo guide). Vehicles added that way do appear and move on the map, because the map draws every vehicle `/simulation/step` returns.
 - **Dispatch picks the station in a straight line.** The station is the nearest one (by latitude/longitude) that has an ambulance free, not the one with the shortest drive; only the ambulance's route itself uses the road network. If no ambulance is free the emergency is refused rather than queued.
 - **Live runs live in memory.** Runs have IDs and are kept apart, but they exist in one process's memory: the backend must run as a single worker, and a run cannot be resumed after a restart. With a database its history survives (it comes back `interrupted`); without one, nothing does. After a crash, a saved run's simulated time and vehicle counts can be up to a minute (simulated) behind; its events, incidents and emergencies are saved as they happen.
+- **Scenario results have limits worth knowing.** Each scenario keeps its 25 most delayed roads and 10 most delayed areas (totals and per-trip figures are complete). A vehicle crossing into another road during a second has that second counted on the first road. Studies running when the server stops are marked interrupted, not resumed. The web interface shows the study you just ran; past studies are listed and compared through the API (`/scenarios/studies`, `/scenarios/compare`).
 - **History has no screen yet.** Saved runs and optimiser results are available through the API but not shown in the web interface. The optimiser panel plans around the default run's closed roads rather than passing its own run's ID.
 - **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with `/simulation/fleet` or `/traffic/surge`.
 - **Ambulances return to base instantly** after a call rather than driving back.
@@ -502,4 +530,6 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 | `503 ... History needs a database` | The backend was started without `DATABASE_URL`; history and saved optimiser results need one. |
 | `409 Simulation has ended (interrupted)` | The run was live when the backend restarted (or it was stopped or replaced). Its history is still at `/simulations/{id}/history`; start a new run to keep simulating. |
 | `docker compose up` says a port is already allocated | Something else uses 8080 or 8000. Set `FRONTEND_PORT` / `BACKEND_PORT` in a `.env` file. |
+| A scenario study answers `503 ... need a database` | Scenario studies are stored in PostgreSQL; start the backend with `DATABASE_URL`. |
+| A study stays at "0 of N scenarios" | The first scenarios are still running (500 vehicles take about 16 s each), or `SCENARIO_WORKERS` processes could not start: check the backend log. |
 | Database tests are all skipped | Set `TEST_DATABASE_URL` to a PostgreSQL database whose name contains `test` (it is wiped). |
