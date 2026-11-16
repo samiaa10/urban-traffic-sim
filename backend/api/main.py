@@ -17,6 +17,7 @@ from backend.api.settings import (
     log_level,
     max_live_runs,
     max_study_scenarios,
+    resume_studies,
     scenario_workers,
 )
 
@@ -56,6 +57,8 @@ app = create_app(
     # at a time in this process) and the largest study allowed
     scenario_workers=scenario_workers(os.environ.get("SCENARIO_WORKERS")),
     max_study_scenarios=max_study_scenarios(os.environ.get("MAX_STUDY_SCENARIOS")),
+    # Queue studies a restart interrupted again (default yes)
+    resume_studies=resume_studies(os.environ.get("RESUME_STUDIES")),
 )
 
 context = app.state.context

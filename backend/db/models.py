@@ -181,6 +181,13 @@ class SimulationRun(Base):
     vehicles_total: Mapped[int] = mapped_column(Integer, server_default=text("0"))
     vehicles_finished: Mapped[int] = mapped_column(Integer, server_default=text("0"))
 
+    # The ended run this one was restarted from (its saved setup), if any
+    restarted_from: Mapped[Optional[uuid.UUID]] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("simulation_runs.id", ondelete="SET NULL"),
+        index=True,
+    )
+
     created_at: Mapped[datetime] = utc_now_column()
     updated_at: Mapped[datetime] = utc_now_column(onupdate=func.now())
     ended_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))

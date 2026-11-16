@@ -44,6 +44,9 @@ class LiveRun:
         self.start = start
         self.destination = destination
 
+        # Set when the run is a restart of an ended run (its id, a UUID)
+        self.restarted_from = None
+
         # Wall-clock time (UTC) the run was started
         self.created_at = datetime.now(timezone.utc)
 

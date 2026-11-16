@@ -38,6 +38,7 @@ def open_database(url):
 
     database = Database(url)
     database.check_schema()
+    database.interrupted_studies = []
 
     from backend.db.scenario_repository import ScenarioRepository
 
@@ -55,6 +56,7 @@ def open_database(url):
             "Marked %d scenario study(ies) from before the restart as interrupted",
             len(studies),
         )
+    database.interrupted_studies = studies
 
     return database
 
@@ -67,14 +69,16 @@ def create_app(
     metrics_interval=METRICS_INTERVAL,
     scenario_workers=0,
     max_study_scenarios=DEFAULT_MAX_STUDY_SCENARIOS,
+    resume_studies=False,
 ):
     """A new app with its own road graph and (empty) set of live runs.
 
     cors_origins is a list of origins (None: the local dev server only).
     database_url (a SQLAlchemy URL) turns on saving runs; None keeps them
     in memory only. scenario_workers is how many processes run scenario
-    studies (0: one at a time on a thread). backend/api/main.py reads these
-    from the environment.
+    studies (0: one at a time on a thread); resume_studies queues studies a
+    restart interrupted again. backend/api/main.py reads these from the
+    environment.
     """
 
     if cors_origins is None:
@@ -128,6 +132,19 @@ def create_app(
             scenario_workers,
             world=context.scenario_world() if scenario_workers == 0 else None,
         )
+
+        if resume_studies:
+            from backend.db.scenario_repository import ScenarioRepository
+
+            for study_id in database.interrupted_studies:
+                with database.transaction() as session:
+                    requeued = ScenarioRepository(session).resume_study(study_id)
+                if requeued:
+                    context.jobs.submit_study(study_id)
+                    logger.info(
+                        "Resumed scenario study %s: %d scenario(s) queued again",
+                        study_id, requeued,
+                    )
 
     for module in (
         routing,

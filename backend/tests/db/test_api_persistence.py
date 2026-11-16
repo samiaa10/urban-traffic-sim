@@ -482,3 +482,89 @@ def test_a_surges_final_counts_are_saved_when_it_ends(make_app):
     assert live["active"] is False
     assert (saved["spawned"], saved["failed"]) == (live["spawned"], live["failed"])
     assert saved["spawned"] > 0
+
+
+# ------------------------------------------------------------
+# Restarting an ended run from its saved setup
+# ------------------------------------------------------------
+
+def test_an_ended_run_restarts_from_its_saved_setup(make_app):
+    before = TestClient(make_app())
+    app = before.app
+    old_id = start(before)
+    add_ambulance(before, app)
+    before.post("/incident/block", params={"start": 5, "destination": 6})
+    before.post("/incident/accident", params={
+        "start": 9, "destination": 10, "severity": "severe", "duration_seconds": 100,
+    })
+    before.post("/incident/block", params={"start": 1, "destination": 2})
+    before.post("/incident/unblock", params={"start": 1, "destination": 2})
+    before.post("/simulation/fleet", params={"count": 4, "seed": 7})
+    before.post("/traffic/rerouting", params={"enabled": False})
+    steps(before, 30)
+
+    # The server stops; the run is interrupted
+    after = TestClient(make_app())
+    assert after.get(f"/simulations/{old_id}").json()["status"] == "interrupted"
+
+    response = after.post(f"/simulations/{old_id}/restart")
+    assert response.status_code == 201, response.text
+    body = response.json()
+    new_id = body["simulation_id"]
+
+    assert body["restarted_from"] == old_id
+    # Only what was still in place when it ended: the reopened road is not
+    assert body["applied"] == {
+        "stations": 1, "ambulances": 1, "closures": 1, "accidents": 1,
+        "fleet_vehicles": body["applied"]["fleet_vehicles"],
+    }
+    assert body["applied"]["fleet_vehicles"] >= 1
+    assert len(body["route"]) >= 2
+
+    run = after.get(f"/simulations/{new_id}").json()
+    assert (run["status"], run["live"], run["is_default"]) == ("active", True, True)
+    assert run["restarted_from"] == old_id
+    assert run["rerouting_enabled"] is False
+
+    incidents = history(after, new_id, "/incidents")["incidents"]
+    assert {(i["kind"], frozenset((i["start_node"], i["end_node"]))) for i in incidents} == {
+        ("closure", frozenset((5, 6))), ("accident", frozenset((9, 10))),
+    }
+    accident = [i for i in incidents if i["kind"] == "accident"][0]
+    # It had 100 s and was 30 s in: 70 s left
+    assert accident["planned_end_at"] == 70
+    assert len(history(after, new_id, "/stations")["stations"][0]["vehicles"]) == 1
+
+    # The restarted run works like any other
+    assert after.post("/simulation/step").status_code == 200
+
+
+def test_a_restarted_fleet_has_the_same_trips(make_app):
+    client = TestClient(make_app())
+    old_id = start(client)
+    client.post("/simulation/fleet", params={"count": 5, "seed": 3})
+    before = [(v["vehicle_id"], v["latitude"], v["longitude"]) for v in client.post("/simulation/step").json()["vehicles"]]
+    client.delete(f"/simulations/{old_id}")
+
+    client.post(f"/simulations/{old_id}/restart")
+    after = [(v["vehicle_id"], v["latitude"], v["longitude"]) for v in client.post("/simulation/step").json()["vehicles"]]
+
+    assert after == before
+
+
+def test_only_an_ended_run_can_be_restarted(client):
+    live_id = start(client)
+
+    assert client.post(f"/simulations/{live_id}/restart").status_code == 409
+    assert client.post("/simulations/00000000-0000-0000-0000-000000000000/restart").status_code == 404
+
+
+def test_deleting_the_old_run_keeps_the_restarted_one(client):
+    old_id = start(client)
+    client.delete(f"/simulations/{old_id}")
+    new_id = client.post(f"/simulations/{old_id}/restart").json()["simulation_id"]
+
+    client.delete(f"/simulations/{old_id}", params={"purge": True})
+
+    run = client.get(f"/simulations/{new_id}").json()
+    assert run["status"] == "active" and run["restarted_from"] is None

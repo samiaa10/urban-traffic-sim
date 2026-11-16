@@ -127,6 +127,7 @@ class RunRecorder:
                 graph_sha256,
                 rerouting_enabled=run.traffic.policy.enabled,
                 vehicles_total=len(run.simulation.vehicles),
+                restarted_from=run.restarted_from,
             )
             return True
 

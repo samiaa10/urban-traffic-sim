@@ -28,10 +28,11 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def build_run(context, start, destination):
+def build_run(context, start, destination, restarted_from=None):
     """A new run with two vehicles: start -> destination and back.
 
     Returns the run and the details /simulation/start reports.
+    restarted_from (a UUID) links it to the ended run it restarts.
     """
 
     graph = context.graph
@@ -75,6 +76,7 @@ def build_run(context, start, destination):
         traffic = TrafficManager(context.network, simulation)
 
     run = LiveRun(simulation, traffic, start, destination)
+    run.restarted_from = restarted_from
 
     # Saved before anyone can use it; a run that cannot be saved is not
     # started (it would have no history)
@@ -289,6 +291,140 @@ def stop_simulation(
         return {"status": "simulation deleted", "simulation_id": str(run_uuid)}
 
     return {"status": "simulation stopped", "simulation_id": run.id}
+
+
+@router.post("/simulations/{simulation_id}/restart", status_code=201)
+def restart_simulation(
+    simulation_id: str,
+    make_default: bool = True,
+    context: AppContext = Depends(get_context)
+):
+    """Start a new run from an ended run's saved setup.
+
+    A run cannot carry on after it ends (its vehicles were only in
+    memory), but its setup is saved, so it can be started again: the same
+    route, rerouting setting, stations and ambulances, the closures and
+    accidents still in place when it ended (accidents with the time they
+    had left), and its fleets (with their saved seeds, so the same trips).
+    Vehicles start from the beginning; surges are not repeated. The new
+    run is linked to the old one (restarted_from) and, by default, becomes
+    the default run, as /simulation/start would.
+    """
+
+    if context.database is None:
+        raise HTTPException(
+            status_code=503,
+            detail="Restarting needs a database (DATABASE_URL is not set)"
+        )
+
+    run_uuid = parse_run_id(simulation_id)
+
+    if context.registry.get(str(run_uuid)) is not None:
+        raise HTTPException(
+            status_code=409,
+            detail="The simulation is still running; only an ended one can be restarted"
+        )
+
+    from backend.db.models import IncidentEndReason, IncidentKind
+    from backend.db.repository import RunRepository
+
+    with context.database.transaction() as session:
+        repo = RunRepository(session)
+        row = repo.get_run(run_uuid)
+
+        if row is None:
+            raise HTTPException(status_code=404, detail="Simulation not found")
+
+        setup = {
+            "start": row.start_node,
+            "destination": row.destination_node,
+            "rerouting": row.rerouting_enabled,
+            "stations": [
+                {
+                    "latitude": s.latitude, "longitude": s.longitude,
+                    "type": s.station_type,
+                    "vehicles": [(v.vehicle_type, v.speed) for v in s.vehicles],
+                }
+                for s in row.stations
+            ],
+            "incidents": [
+                {
+                    "kind": i.kind,
+                    "segment": (
+                        (i.start_latitude, i.start_longitude),
+                        (i.end_latitude, i.end_longitude),
+                    ),
+                    "severity": i.severity,
+                    "remaining": (
+                        max(1.0, i.planned_end_sim_time - i.ended_sim_time)
+                        if i.kind == IncidentKind.ACCIDENT else None
+                    ),
+                }
+                for i in repo.incidents(run_uuid)
+                if i.end_reason == IncidentEndReason.RUN_ENDED
+            ],
+            "fleets": [(f.requested, f.seed) for f in repo.fleet_spawns(run_uuid)],
+        }
+
+    run, details = build_run(context, setup["start"], setup["destination"], run_uuid)
+    simulation, traffic = run.simulation, run.traffic
+    applied = {"stations": 0, "ambulances": 0, "closures": 0, "accidents": 0, "fleet_vehicles": 0}
+
+    with run.lock:
+        if not setup["rerouting"]:
+            traffic.policy.enabled = False
+            run.recorder.rerouting_changed(False)
+
+        for index, station_setup in enumerate(setup["stations"]):
+            station = simulation.add_station(
+                station_setup["latitude"], station_setup["longitude"], station_setup["type"]
+            )
+            run.recorder.station_added(index, station)
+            applied["stations"] += 1
+            location = station.get_location()
+            for vehicle_type, speed in station_setup["vehicles"]:
+                vehicle = simulation.add_emergency_vehicle(
+                    [location, location], station, speed=speed, vehicle_type=vehicle_type
+                )
+                run.recorder.vehicle_added(index, simulation.vehicles.index(vehicle), vehicle)
+                applied["ambulances"] += 1
+
+        for incident in setup["incidents"]:
+            if incident["kind"] == IncidentKind.CLOSURE:
+                simulation.block_segment(incident["segment"])
+                applied["closures"] += 1
+            else:
+                simulation.add_accident(
+                    tuple(sorted(incident["segment"])), incident["severity"], incident["remaining"]
+                )
+                applied["accidents"] += 1
+
+        if setup["incidents"]:
+            rerouting.reroute_affected_vehicles(
+                context.graph, simulation, context.node_by_point,
+                route_finder=traffic.route_finder(),
+            )
+            traffic.process_events()
+            run.recorder.sync()
+
+        for requested, seed in setup["fleets"]:
+            generator = random.Random(seed) if seed is not None else None
+            outcome = traffic.spawn_vehicles(requested, generator)
+            run.recorder.fleet_added(outcome, seed)
+            applied["fleet_vehicles"] += outcome["spawned"]
+
+        route = list(simulation.vehicles[0].route)
+
+    add_run(context, run, make_default=make_default)
+    logger.info("Simulation %s restarted from %s", run.id, simulation_id)
+
+    return {
+        "status": "simulation restarted",
+        **details,
+        "restarted_from": str(run_uuid),
+        "applied": applied,
+        "route": route,
+    }
 
 
 # ------------------------------------------------------------

@@ -150,6 +150,22 @@ def scenario_workers(value, cpu_count=None):
     return workers
 
 
+def resume_studies(value):
+    """Turn RESUME_STUDIES into whether scenario studies interrupted by a
+    restart are queued again at start-up. Not set: yes."""
+
+    if value is None or not value.strip():
+        return True
+
+    text = value.strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+
+    raise ValueError("RESUME_STUDIES must be true or false: " + value)
+
+
 DEFAULT_MAX_STUDY_SCENARIOS = 1000
 
 

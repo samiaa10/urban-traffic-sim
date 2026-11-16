@@ -491,3 +491,9 @@ def test_without_a_database_optimiser_answers_are_not_saved(client):
     assert answer["optimiser_run_id"] is None
     assert answer["reused"] is False
     assert client.get("/optimiser/runs").status_code == 503
+
+
+def test_restarting_needs_a_database(client):
+    assert client.post(
+        "/simulations/00000000-0000-0000-0000-000000000000/restart"
+    ).status_code == 503

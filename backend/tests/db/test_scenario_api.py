@@ -317,6 +317,8 @@ def test_deleting_a_study(client, app):
 
 
 def test_studies_left_unfinished_by_a_restart_are_interrupted(make_scenario_app):
+    """With resuming switched off (resume_studies=False)."""
+
     first = make_scenario_app()
     before = TestClient(first)
     created = before.post("/scenarios/studies", json={
@@ -326,7 +328,7 @@ def test_studies_left_unfinished_by_a_restart_are_interrupted(make_scenario_app)
     # Stop handing out work, as a server that went down would
     first.state.context.jobs.shutdown()
 
-    after = TestClient(make_scenario_app())
+    after = TestClient(make_scenario_app(resume_studies=False))
     study = after.get(f"/scenarios/studies/{created['study_id']}").json()
 
     assert study["status"] == "interrupted"
@@ -380,3 +382,68 @@ def test_worker_processes_give_the_same_results_as_running_in_process(make_scena
         assert stored["summary"] == direct["summary"], spec["name"]
         assert stored["roads"] == direct["roads"], spec["name"]
         assert stored["timeseries"] == direct["timeseries"], spec["name"]
+
+
+# ------------------------------------------------------------
+# Resuming studies
+# ------------------------------------------------------------
+
+def test_a_restart_resumes_unfinished_studies_and_keeps_finished_results(make_scenario_app, grid_graph_file):
+    """The server stops part-way through; at the next start the study is
+    queued again, only its unfinished scenarios run, and every result is
+    what an uninterrupted run gives (scenarios are deterministic)."""
+
+    import pickle
+
+    from backend.scenarios.runner import World, run_scenario
+
+    specs = [scenario(f"S{i}", seed=i + 1) for i in range(5)]
+
+    first = make_scenario_app()
+    before = TestClient(first)
+    created = before.post("/scenarios/studies", json={"scenarios": specs}).json()
+    jobs = first.state.context.jobs
+    jobs.shutdown()               # stop handing out work: a crash part-way
+    jobs.wait_until_idle(timeout=60)
+
+    partly = before.get(f"/scenarios/studies/{created['study_id']}").json()
+    done_before = {s["name"] for s in partly["scenarios"] if s["status"] == "completed"}
+    assert len(done_before) < 5
+
+    app = make_scenario_app(resume_studies=True)
+    after = TestClient(app)
+    assert app.state.context.jobs.wait_until_idle(timeout=120)
+    study = after.get(f"/scenarios/studies/{created['study_id']}").json()
+
+    assert study["status"] == "completed"
+    assert study["completed"] == 5
+    assert [s["status"] for s in study["scenarios"]] == ["completed"] * 5
+
+    with open(grid_graph_file, "rb") as file:
+        world = World(pickle.load(file))
+    for spec, row in zip(specs, study["scenarios"]):
+        stored = after.get(f"/scenarios/{row['scenario_id']}").json()["result"]
+        assert stored["summary"] == run_scenario(world, spec)["summary"], spec["name"]
+
+
+def test_a_cancelled_study_can_be_resumed_by_hand(client, app):
+    created = client.post("/scenarios/studies", json={
+        "scenarios": [scenario(f"S{i}", demand={"vehicles": 60}) for i in range(4)],
+    }).json()
+    client.post(f"/scenarios/studies/{created['study_id']}/cancel")
+    assert app.state.context.jobs.wait_until_idle(timeout=120)
+
+    resumed = client.post(f"/scenarios/studies/{created['study_id']}/resume")
+
+    assert resumed.status_code == 200
+    assert resumed.json()["requeued"] >= 1
+    assert app.state.context.jobs.wait_until_idle(timeout=120)
+    study = client.get(f"/scenarios/studies/{created['study_id']}").json()
+    assert study["status"] == "completed" and study["completed"] == 4
+
+
+def test_only_interrupted_or_cancelled_studies_can_be_resumed(client, app):
+    study = run_study(client, app, [scenario("Done")])
+
+    assert client.post(f"/scenarios/studies/{study['study_id']}/resume").status_code == 409
+    assert client.post("/scenarios/studies/00000000-0000-0000-0000-000000000000/resume").status_code == 404
