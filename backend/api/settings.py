@@ -123,3 +123,49 @@ def database_url(value):
         "DATABASE_URL must be a PostgreSQL URL (postgresql://...): "
         + url.split("://")[0] + "://..."
     )
+
+
+def scenario_workers(value, cpu_count=None):
+    """Turn SCENARIO_WORKERS into how many processes run scenarios.
+
+    Not set: min(4, number of CPUs). 0 runs scenarios one at a time on a
+    thread in the API process (no extra processes: for small machines and
+    tests). Each worker process holds its own copy of the map (about
+    80-100 MB on Norwich, see docs/scenario_benchmark.md).
+    """
+
+    import os
+
+    if value is None or not value.strip():
+        return min(4, cpu_count or os.cpu_count() or 1)
+
+    try:
+        workers = int(value.strip())
+    except ValueError:
+        raise ValueError("SCENARIO_WORKERS must be a whole number: " + value)
+
+    if not 0 <= workers <= 64:
+        raise ValueError("SCENARIO_WORKERS must be between 0 and 64: " + value)
+
+    return workers
+
+
+DEFAULT_MAX_STUDY_SCENARIOS = 1000
+
+
+def max_study_scenarios(value):
+    """Turn MAX_STUDY_SCENARIOS into the most scenarios one study may have
+    (default 1000; the database allows up to 5000)."""
+
+    if value is None or not value.strip():
+        return DEFAULT_MAX_STUDY_SCENARIOS
+
+    try:
+        count = int(value.strip())
+    except ValueError:
+        raise ValueError("MAX_STUDY_SCENARIOS must be a whole number: " + value)
+
+    if not 1 <= count <= 5000:
+        raise ValueError("MAX_STUDY_SCENARIOS must be between 1 and 5000: " + value)
+
+    return count

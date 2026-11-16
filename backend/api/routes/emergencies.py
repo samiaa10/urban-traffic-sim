@@ -8,12 +8,9 @@ from backend.api.context import AppContext
 from backend.api.routes.common import (
     default_run,
     get_context,
-    nearest_node_id,
-    path_points,
     run_route,
 )
 from backend.api.sessions import LiveRun
-from backend.routing.a_star import a_star
 from backend.simulation import dispatch
 
 
@@ -30,72 +27,33 @@ def create_emergency(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
-    graph = context.graph
-
     with run.lock:
-        simulation = run.simulation
-
-        emergency = simulation.create_emergency(
-            latitude,
-            longitude,
-            emergency_type
+        outcome = dispatch.dispatch_emergency(
+            context.graph, run.simulation, latitude, longitude, emergency_type
         )
+        emergency = outcome["emergency"]
 
-        # Find the nearest station with an available vehicle
-        vehicle = simulation.dispatch_from_nearest_station(emergency)
-
-        if vehicle is None:
-            simulation.cancel_emergency(emergency)
+        if outcome["status"] == "no_vehicle":
             run.recorder.emergency_refused(emergency, "no_vehicle")
             raise HTTPException(
                 status_code=404,
                 detail="No available emergency vehicle"
             )
 
-        nearest_emergency_node = nearest_node_id(graph, latitude, longitude)
-
-        current_location = vehicle.get_current_location()
-
-        logger.debug(
-            "Dispatching vehicle from %s to emergency at (%s, %s); "
-            "route before dispatch: %s",
-            current_location,
-            latitude,
-            longitude,
-            vehicle.route,
-        )
-
-        nearest_vehicle_node = nearest_node_id(
-            graph,
-            current_location["latitude"],
-            current_location["longitude"]
-        )
-
-        # Plan around current traffic and closed roads
-        path, distance, nodes_explored = a_star(
-            graph,
-            nearest_vehicle_node,
-            nearest_emergency_node,
-            return_stats=True,
-            traffic=simulation.get_traffic_density(),
-            blocked_segments=simulation.get_blocked_segments()
-        )
-
-        if not path:
-            vehicle_index = simulation.vehicles.index(vehicle)
-            simulation.cancel_emergency(emergency)
-            run.recorder.emergency_refused(emergency, "no_route", vehicle_index)
+        if outcome["status"] == "no_route":
+            run.recorder.emergency_refused(
+                emergency, "no_route", outcome["vehicle_index"]
+            )
             raise HTTPException(
                 status_code=404,
                 detail="No route to emergency"
             )
 
-        new_route = path_points(graph, path)
-
-        # Give the emergency vehicle its new route
-        vehicle.set_route(new_route, reset_distance=True)
-
-        vehicle_id = simulation.vehicles.index(vehicle)
+        path = outcome["path"]
+        distance = outcome["distance"]
+        nodes_explored = outcome["nodes_explored"]
+        new_route = outcome["route"]
+        vehicle_id = outcome["vehicle_index"]
 
         run.recorder.emergency_dispatched(
             emergency, vehicle_id, distance, nodes_explored

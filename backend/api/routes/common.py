@@ -10,6 +10,7 @@ from fastapi import Depends, HTTPException, Request
 
 from backend.api.context import AppContext
 from backend.api.sessions import LiveRun
+from backend.simulation import dispatch
 
 
 # Per-run endpoints live under this prefix
@@ -180,20 +181,7 @@ def path_points(graph, path):
 def nearest_node_id(graph, latitude, longitude):
     """The junction closest to a point (straight-line, in degrees)."""
 
-    nearest = None
-    nearest_distance = float("inf")
-
-    for node, data in graph.nodes.items():
-        distance = math.sqrt(
-            (data["latitude"] - latitude) ** 2
-            + (data["longitude"] - longitude) ** 2
-        )
-
-        if distance < nearest_distance:
-            nearest_distance = distance
-            nearest = node
-
-    return nearest
+    return dispatch.nearest_junction(graph, latitude, longitude)
 
 
 def closures_for(context, simulation_id):

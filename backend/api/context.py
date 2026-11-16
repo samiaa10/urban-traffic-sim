@@ -29,7 +29,7 @@ class AppContext:
 
     def __init__(
         self, graph, max_live_runs=8, graph_file=None, database=None,
-        metrics_interval=METRICS_INTERVAL,
+        metrics_interval=METRICS_INTERVAL, max_study_scenarios=1000,
     ):
         self.graph = graph
         self.graph_file = Path(graph_file) if graph_file else None
@@ -40,6 +40,13 @@ class AppContext:
         # backend.db.database.Database, or None: runs are not saved
         self.database = database
         self.metrics_interval = metrics_interval
+
+        # Scenario studies (Stage 4): the JobManager that runs them (set by
+        # create_app when there is a database) and the largest allowed
+        self.jobs = None
+        self.max_study_scenarios = max_study_scenarios
+        self._scenario_world = None
+        self._scenario_world_lock = threading.Lock()
 
         # Lets us turn a route point back into its junction id (rerouting)
         self.node_by_point = rerouting.build_node_lookup(graph)
@@ -58,6 +65,17 @@ class AppContext:
         # managers one at a time means no other run can plan a route with
         # half-built tables.
         self.network_lock = threading.Lock()
+
+    def scenario_world(self):
+        """The scenario engine's World for this map (built on first use:
+        its own RoadNetwork with landmarks and demand model). Used to check
+        scenario specs and, with SCENARIO_WORKERS=0, to run them."""
+
+        with self._scenario_world_lock:
+            if self._scenario_world is None:
+                from backend.scenarios.runner import World
+                self._scenario_world = World(self.graph, self.graph_sha256)
+            return self._scenario_world
 
     def attach_recorder(self, run):
         """Give a new run its recorder and save it. False if the database

@@ -18,9 +18,104 @@ This file joins them into one scenario you can watch from start to finish:
 Nothing here talks to FastAPI, so all of it can be tested on a tiny map.
 """
 
+import logging
+import math
+
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
 from backend.simulation.simulation import segment_between
+
+
+logger = logging.getLogger(__name__)
+
+
+def nearest_junction(graph, latitude, longitude):
+    """The junction closest to a point (straight line, in degrees)."""
+
+    nearest = None
+    nearest_distance = float("inf")
+
+    for node, data in graph.nodes.items():
+        distance = math.sqrt(
+            (data["latitude"] - latitude) ** 2
+            + (data["longitude"] - longitude) ** 2
+        )
+
+        if distance < nearest_distance:
+            nearest_distance = distance
+            nearest = node
+
+    return nearest
+
+
+def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="ambulance"):
+    """Raise an emergency and send the nearest available vehicle to it.
+
+    The nearest station (straight line) with a vehicle free sends it along
+    an A* route that accounts for current traffic and closed roads. Used by
+    /emergency/create and by the scenario runner, so both dispatch the
+    same way.
+
+    Returns a dict with "status": "dispatched", "no_vehicle" (nothing
+    free: the emergency is cancelled) or "no_route" (the vehicle cannot
+    reach it: the emergency is cancelled and the vehicle freed), plus
+    "emergency", "vehicle", "vehicle_index", and when dispatched "path",
+    "route", "distance" (metres) and "nodes_explored".
+    """
+
+    emergency = simulation.create_emergency(latitude, longitude, emergency_type)
+    vehicle = simulation.dispatch_from_nearest_station(emergency)
+
+    outcome = {"emergency": emergency, "vehicle": vehicle, "vehicle_index": None}
+
+    if vehicle is None:
+        simulation.cancel_emergency(emergency)
+        return {**outcome, "status": "no_vehicle"}
+
+    target = nearest_junction(graph, latitude, longitude)
+    here = vehicle.get_current_location()
+
+    logger.debug(
+        "Dispatching vehicle from %s to emergency at (%s, %s); "
+        "route before dispatch: %s",
+        here, latitude, longitude, vehicle.route,
+    )
+
+    start = nearest_junction(graph, here["latitude"], here["longitude"])
+
+    # Plan around current traffic and closed roads
+    path, distance, nodes_explored = a_star(
+        graph,
+        start,
+        target,
+        return_stats=True,
+        traffic=simulation.get_traffic_density(),
+        blocked_segments=simulation.get_blocked_segments(),
+    )
+
+    vehicle_index = simulation.vehicles.index(vehicle)
+
+    if not path:
+        simulation.cancel_emergency(emergency)
+        return {**outcome, "status": "no_route", "vehicle_index": vehicle_index}
+
+    route = [
+        {"latitude": graph.nodes[n]["latitude"], "longitude": graph.nodes[n]["longitude"]}
+        for n in path
+    ]
+
+    # Give the emergency vehicle its new route
+    vehicle.set_route(route, reset_distance=True)
+
+    return {
+        **outcome,
+        "status": "dispatched",
+        "vehicle_index": vehicle_index,
+        "path": path,
+        "route": route,
+        "distance": distance,
+        "nodes_explored": nodes_explored,
+    }
 
 
 def remaining_on_current_road(vehicle):

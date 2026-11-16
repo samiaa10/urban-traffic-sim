@@ -15,9 +15,11 @@ it only through the frontend's nginx, exactly as a browser does:
   3. a simulation run on the real Norwich map: station, ambulance,
      emergency, road closure, steps; the history endpoints show them
   4. an optimiser result is saved and can be fetched back
-  5. the backend container is restarted: the run comes back as
-     "interrupted" with its history, the optimiser result is still
-     there, and nginx still reaches the restarted backend
+  5. a scenario study (two full simulations on the Norwich map) runs in
+     the backend's worker processes and is ranked
+  6. the backend container is restarted: the run comes back as
+     "interrupted" with its history, the optimiser result and the study
+     are still there, and nginx still reaches the restarted backend
 
 It runs under its own Compose project name with its own volume, which is
 deleted afterwards (unless --keep), so it never touches your data. On a
@@ -57,12 +59,20 @@ def compose(*args, capture=False):
     return result.stdout if capture else None
 
 
-def request(method, path, params=None, expect=200, base=None):
+def request(method, path, params=None, expect=200, base=None, json_body=None):
     url = (base or API) + path
     if params:
         url += "?" + urllib.parse.urlencode(params)
 
-    req = urllib.request.Request(url, method=method, data=b"" if method != "GET" else None)
+    data = None
+    headers = {}
+    if json_body is not None:
+        data = json.dumps(json_body).encode()
+        headers["Content-Type"] = "application/json"
+    elif method != "GET":
+        data = b""
+
+    req = urllib.request.Request(url, method=method, data=data, headers=headers)
 
     try:
         with urllib.request.urlopen(req, timeout=120) as response:
@@ -158,9 +168,30 @@ def run_checks():
     answer = request("GET", "/optimiser/stations", {"scenarios": 20})
     check(answer["optimiser_run_id"] is not None, "the optimiser result was saved")
 
+    # 4. A scenario study in the worker processes
+    created = request("POST", "/scenarios/studies", expect=202, json_body={
+        "name": "Smoke study",
+        "scenarios": [
+            {"name": "Baseline", "seed": 1, "demand": {"vehicles": 100}},
+            {"name": "Busier", "seed": 1, "demand": {"vehicles": 200}},
+        ],
+        "baseline": 0,
+    })
+    study_path = f"/scenarios/studies/{created['study_id']}"
+    deadline = time.time() + 300
+    while True:
+        study = request("GET", study_path)
+        if study["status"] not in ("queued", "running") or time.time() > deadline:
+            break
+        time.sleep(2)
+    check(study["status"] == "completed" and study["completed"] == 2,
+          "a scenario study ran in the worker processes")
+    check([row["name"] for row in study["ranking"]] == ["Baseline", "Busier"],
+          "and ranked the busier scenario second on network delay")
+
     events_before = request("GET", base + "/history/events")["events"]
 
-    # 4. Restart the backend
+    # 5. Restart the backend
     compose("restart", "backend")
     wait_until_up("/")
 
@@ -179,6 +210,10 @@ def run_checks():
     saved = request("GET", f"/optimiser/runs/{answer['optimiser_run_id']}")
     check(saved["answer"]["results"] == answer["results"],
           "the optimiser result survived the restart unchanged")
+
+    kept = request("GET", study_path)
+    check(kept["status"] == "completed" and kept["ranking"] == study["ranking"],
+          "the scenario study survived the restart unchanged")
 
 
 def main():

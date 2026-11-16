@@ -15,6 +15,9 @@ export function setApiBase(url: string) {
   apiBase = url.replace(/\/+$/, "")
 }
 
+// Full address of a backend path (other modules use the same base)
+export const apiUrl = (path: string) => `${apiBase}${path}`
+
 // ------------------------------------------------
 // One-station ranking: /optimiser/stations
 // ------------------------------------------------

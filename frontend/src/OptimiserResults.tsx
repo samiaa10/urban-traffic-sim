@@ -27,7 +27,7 @@ type Bar = {
   best?: boolean
 }
 
-function BarChart({
+export function BarChart({
   title,
   bars,
   max,

@@ -16,6 +16,8 @@ from backend.api.settings import (
     database_url,
     log_level,
     max_live_runs,
+    max_study_scenarios,
+    scenario_workers,
 )
 
 
@@ -50,6 +52,10 @@ app = create_app(
     max_live=max_live_runs(os.environ.get("MAX_LIVE_RUNS")),
     # PostgreSQL for saving runs and optimiser results; not set = in memory
     database_url=database_url(os.environ.get("DATABASE_URL")),
+    # Processes that run scenario studies (default min(4, CPUs); 0 = one
+    # at a time in this process) and the largest study allowed
+    scenario_workers=scenario_workers(os.environ.get("SCENARIO_WORKERS")),
+    max_study_scenarios=max_study_scenarios(os.environ.get("MAX_STUDY_SCENARIOS")),
 )
 
 context = app.state.context

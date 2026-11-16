@@ -9,6 +9,7 @@ The project has two parts that talk over HTTP, plus an optional database:
 - **Backend** (`backend/`): Python. It holds the road graph, calculates routes, runs simulations (several at once, each with its own ID), and exposes everything through a FastAPI app.
 - **Frontend** (`frontend/`): React + TypeScript. It draws the map and calls the backend.
 - **PostgreSQL** (optional, Stage 3): when `DATABASE_URL` is set, every simulation run's history and every optimiser result is saved, and survives restarts. Without it the backend keeps everything in memory, exactly as before Stage 3. See [Persistence](#persistence).
+- **Scenario engine** (Stage 4, `backend/scenarios/`): full simulations of different situations (demand, closures, accidents, surges, station layouts), run as background studies in worker processes, stored in PostgreSQL, ranked and explained; measured network-wide (delay, journey-time increase, the roads and areas hit hardest). See [Scenarios](#scenarios).
 
 `docker compose up --build` runs all three, with nginx serving the frontend; see [Containers](#containers).
 
@@ -90,15 +91,26 @@ backend/
 │       ├── stations.py         Stations and their vehicles
 │       ├── traffic.py          Surges, traffic status, the rerouting switch
 │       ├── optimiser.py        /optimiser/stations, /optimiser/station-set, /optimiser/runs (saved results)
-│       └── history.py          /simulations/{id}/history/... (read from the database)
+│       ├── history.py          /simulations/{id}/history/... (read from the database)
+│       └── scenarios.py        /scenarios/...: studies, sweeps, results, comparison, presets, nearest road
+├── scenarios/                  The scenario engine (Stage 4; see Scenarios)
+│   ├── spec.py                 ScenarioSpec: what a scenario is; validation against the map
+│   ├── runner.py               run_scenario: one full simulation, start to finish; World (per-process map data)
+│   ├── impact.py               ImpactTracker: delay per trip, per road, per area, per minute
+│   ├── compare.py              Metrics, ranking, trip-by-trip and road-by-road comparison, explanations
+│   ├── jobs.py                 JobManager: studies in a pool of worker processes; results stored by the API process
+│   ├── sweep.py                Large studies from one scenario: seeds, each closure, random closures, station layouts
+│   └── benchmark_scenarios.py  Cost by fleet size, measuring overhead, parallel speed-up, saving, a 400-scenario study
+│                               (--save writes docs/scenario_benchmark.md)
 ├── db/
 │   ├── models.py               SQLAlchemy 2.0 models: the 13 tables (see Persistence)
 │   ├── repository.py           RunRepository and OptimiserRepository: all database reads and writes
+│   ├── scenario_repository.py  ScenarioRepository: studies, scenarios and their results
 │   ├── serializers.py          Rows -> the API's JSON (including rebuilding optimiser answers exactly)
 │   ├── database.py             Database: engine, transactions, refuses an un-migrated schema
 │   ├── engine.py               Engine and session factory
 │   ├── benchmark_persistence.py  What saving costs a step; optimiser compute vs saved (--save writes docs/persistence_benchmark.md)
-│   └── migrations/             Alembic environment and versions/ (0001_initial_schema.py)
+│   └── migrations/             Alembic environment and versions/ (0001_initial_schema.py, 0002_scenario_studies.py)
 ├── routing/
 │   ├── graph.py                Graph class (nodes with lat/lon, weighted directed edges)
 │   ├── osm_loader.py           Downloads the Norwich network and saves it as a pickle
@@ -136,6 +148,8 @@ frontend/
 ├── src/simulationHelpers.ts    Plain functions App uses: status text, emergency text, traffic summary, route conversion,
 │                               which run a request is for (runPath, simulationIdFrom)
 ├── src/OptimiserPanel.tsx      Station optimiser controls, results area and map markers (single-station and station-set)
+├── src/ScenarioWorkspace.tsx   Scenario analysis: builder (roads picked on the map), study progress, ranking, charts, details
+├── src/scenarios.ts            Scenario types, requests, study requests from the builder, formatting, chart helpers
 ├── src/OptimiserResults.tsx    The optimiser's summaries, bar charts and tables (no Leaflet, so testable)
 ├── src/components.tsx          Shared pieces: inline icons, logo, panel and KPI card, spinner
 ├── src/mapStyles.ts            Colours, marker sizes and line weights used on the map (shared by the map, legend and tests)
@@ -152,7 +166,8 @@ frontend/
 ├── Dockerfile, nginx.conf      Frontend image: Vite build served by nginx, which forwards /api to the backend
 └── vite.config.ts, package.json, tsconfig.json, tsconfig.app.json, tsconfig.node.json, eslint.config.js
 
-docs/                           This file, the demo guide, saved benchmark reports (congestion, rerouting, traffic, persistence)
+docs/                           This file, the demo guide, saved benchmark reports (congestion, rerouting, traffic, persistence,
+                                scenarios)
 alembic.ini                     Alembic settings (the database address always comes from DATABASE_URL)
 backend/Dockerfile, .dockerignore   Backend image (also runs the migrations)
 docker-compose.yml              db -> migrate -> backend -> frontend
@@ -378,6 +393,76 @@ The schema is created and changed only by Alembic (`alembic.ini`, `backend/db/mi
 - The tests run upgrade, downgrade to empty and upgrade again, and check that the models and migrations agree (what `alembic check` does; CI also runs `alembic check`).
 - To change the schema: edit `models.py`, run `alembic revision --autogenerate -m "..."` against a migrated database, **read and fix** the generated file (enum types, data migrations, index choices), then run the database tests.
 
+## Scenarios
+
+Stage 4 added a **scenario engine** (`backend/scenarios/`): full simulations of different situations on the real network, run in the background, stored, ranked and explained. Everything is measured from complete simulations with the same `Simulation` and `TrafficManager` the live API uses; nothing is estimated from distance and speed.
+
+### What a scenario is (`spec.py`)
+
+A `ScenarioSpec` is everything needed to run a scenario again, exactly: a name and a **seed**; **demand** (how many background trips, and whether their departures are spread over a period); **surges** (trips into or out of a zone, each with a start time); **closures** and **accidents** (a road by its two junction ids, a start time, and an end time or duration); whether **dynamic rerouting** is on; emergency **stations** and **emergencies**; and a time limit. It is validated with pydantic (unknown fields, impossible values and out-of-range limits are refused) and against the map (`validate_against_graph`: the junctions exist and are adjacent). Limits keep one scenario bounded: at most 2,000 background trips and 7,200 simulated seconds.
+
+### Running one (`runner.py`)
+
+`run_scenario(world, spec)` builds a simulation and a traffic manager, then steps one simulated second at a time, applying the scenario's events at their times (closures through the same rerouting code as `/incident/block`, accidents as `/incident/accident`, emergencies through `dispatch.dispatch_emergency`, which `/emergency/create` also uses), until every trip has arrived, every surge has ended and every emergency is answered, or the time limit. The `World` holds what is built once per process from the map (the road network with its landmark tables, the demand model, the junction lookup, and a cache of free-flow trip times) and is reused by every scenario that process runs.
+
+**Reproducible.** Every random choice comes from a stream seeded from the spec: trips, each surge, the emergencies and the traffic manager each have their own (`Random(sha256("<seed>:<name>"))`), so adding emergencies does not change the trips. Trips are drawn first and routed when they leave; a trip a closure has cut off keeps its place (as "unroutable"). So two scenarios with the same **trip signature** (seed, demand and surges) have the same trips in the same order and can be compared trip by trip. A test runs the same spec twice and compares the results exactly; another checks that two worker processes give the same results as running in-process.
+
+### What is measured (`impact.py`)
+
+| Measure | Definition |
+|---|---|
+| **Delay of a trip** | Time spent on the road minus `distance_travelled / speed`. A vehicle moves at speed × speed factor, so this is exactly the time lost to traffic, accidents and waiting at closures. It excludes the unused rest of the second in which the vehicle arrives (`Vehicle.last_move_seconds`), so a vehicle alone on the network has a delay of exactly 0 (tested). |
+| **Network delay** | The sum over all trips, in vehicle-hours (trips still on their way at the time limit count what they lost so far). |
+| **Journey-time increase** | Journey time minus the free-flow time of the trip's fastest route (no traffic, no closures). Unlike delay it counts detours: a closure that sends a trip round has a cost even if the detour is free-flowing. Reported as mean, 95th percentile and worst, over completed trips. |
+| **Delay on a road** | Each second, the delay each vehicle picks up is added to the road it was on at the start of that second (the same snapshot the simulation moves vehicles by). The top 25 roads are kept. Summed over all roads it equals the network delay exactly (tested). |
+| **Areas** | Road delay grouped into fixed 500 m grid cells by road midpoint; the top 10 cells are kept. |
+| **Time series** | Every simulated minute: vehicles still driving and finished, delay in that minute, mean speed factor, closed roads, accidents. |
+| **Emergencies** | Dispatched, refused, arrived; mean and worst response time; share of all emergencies reached within the target. |
+| **Execution** | Wall and CPU time, peak memory of the process, vehicle-seconds simulated per second. |
+
+Two caveats, both deliberate. A vehicle that crosses into another road during a second has that whole second attributed to the first road. A vehicle rerouted part-way along a road drives a short "made-up" road to the next junction (`rerouting.find_restart_point`); delay there is counted under that road, which has no junction id (the interface labels it "part of a road (after a reroute)"). The network totals are exact either way. Measuring costs about 2% of a run ([benchmark](scenario_benchmark.md)).
+
+**Delay and journey-time increase can disagree, and that is information.** With rerouting on, vehicles avoid a crashed road, so slowdown delay can fall while journeys lengthen through detours; and closing a busy road can move traffic onto parallel roads and *reduce* total travel (a Braess-like effect: 77 of 399 random closure sets in the [large study](scenario_benchmark.md#5-a-large-study)). The explanations call this out.
+
+### Comparing and ranking (`compare.py`)
+
+`METRICS` defines each ranking metric with a label, unit, direction (lower or higher is better) and a one-line definition. `rank()` orders scenarios by one metric, best first, with the gap to the best, ties broken by total travel time then name; scenarios without a value (an emergency metric for a scenario without emergencies) come last. `paired()` compares two scenarios with the same trips trip by trip: trips slower, faster or unchanged (by more than 5 s), extra vehicle-hours, the worst increase, and trips newly cut off or unfinished. Scenarios with different trips are never paired, only compared on totals. `road_changes()` finds the roads whose delay changed most (exact for roads in both top-25 lists, a lower bound otherwise). `explain()` writes why the leader leads: by how much, how the two setups differ (`spec_differences`: closures, accidents, surges, demand, rerouting, stations, seed), the trip-by-trip evidence, the roads with the most extra delay, and the Braess-like note when a scenario that closes more roads loses less time.
+
+### Studies and background jobs (`jobs.py`, `sweep.py`)
+
+A **study** is a batch of scenarios compared with each other, optionally against a baseline. A study can be thousands of simulations of seconds to a minute and a half each, so the API never runs one inside a request: `POST /scenarios/studies` validates and stores the study and answers **202** at once.
+
+The `JobManager` runs it. Simulation is CPU-bound Python, so it uses a pool of **worker processes** (threads would share one core because of the GIL): `SCENARIO_WORKERS`, default `min(4, CPUs)`, started with `spawn`, each loading the map and building its `World` once. A dispatcher thread hands the pool only as many scenarios as there are workers, so a scenario marked `running` in the database really is running, and cancelling a study just stops handing out its remaining scenarios (any already running finish, and their results are dropped). Workers only simulate and return plain results; the API process writes each result in one transaction, so workers never touch the database. A scenario that raises is stored as `failed` with its error, and the study carries on. `SCENARIO_WORKERS=0` runs scenarios one at a time on a thread in the API process (small machines, tests). Studies left queued or running when the server stopped are marked `interrupted` at the next start, like live runs; they are not resumed.
+
+Every write that touches both a study and one of its scenarios locks the **study first**. (Saving a result used to lock the scenario then the study while cancelling locked them the other way round, which deadlocked; a test that cancels and restarts during a study found it.)
+
+`sweep.py` generates large studies from one scenario: the same scenario with many **seeds** (how much results vary by chance), **each road closed** in turn after a baseline, **random closures** of N roads drawn from the roads in a zone (Monte Carlo), or alternative **station layouts**.
+
+### Stored results (migration `0002`)
+
+```mermaid
+erDiagram
+    scenario_studies ||--o{ scenarios : contains
+    scenarios ||--o| scenario_results : "has (one)"
+    scenarios ||--o{ scenario_road_impacts : "top 25 roads"
+    scenarios ||--o{ scenario_area_impacts : "top 10 areas"
+    scenarios ||--o{ scenario_timeseries : "per minute"
+```
+
+| Table | One row per | Notes |
+|---|---|---|
+| `scenario_studies` | study | status (`queued`, `running`, `completed`, `cancelled`, `interrupted`), ranking metric, scenario / completed / failed counts (the database checks they add up and that a study has 1 to 5,000 scenarios), workers, map fingerprint, engine version, timings |
+| `scenarios` | scenario in a study | its position; at most one baseline per study (partial unique index); the validated spec as JSONB, with its fingerprint and trip signature as columns; status and, exactly when failed, the error |
+| `scenario_results` | completed scenario | every summary, emergency and execution figure as a typed column; per-trip data as parallel ordered arrays (trip ends, journey and free-flow time, delay, status code). The database checks every array has one entry per trip and that trip and emergency counts add up. The arrays are deferred columns, loaded only for a full scenario, never for listing or ranking a large study |
+| `scenario_road_impacts`, `scenario_area_impacts` | top road / area | keyed by rank |
+| `scenario_timeseries` | simulated minute | keyed by `(scenario_id, sim_time)` |
+
+The spec is stored as JSON because it is an input document (validated before it is stored, identified by its fingerprint); everything measured is in typed columns and child tables. Deleting a study deletes everything in it. `ScenarioRepository.result_from_rows` rebuilds a stored result into exactly the dict `run_scenario` returns, so comparisons of stored results equal comparisons of fresh ones (tested).
+
+### Performance
+
+Measured on the Norwich map ([full report](scenario_benchmark.md)): one scenario takes 5.7 s with 200 vehicles, 16.2 s with 500 and 104.6 s with 2,000 (bigger fleets congest more, so there is more to simulate); a worker peaks at 78 to 99 MB; saving a result takes about 17 ms. Two workers are 1.97 times as fast as one; four 2.61 times and eight 3.52 times, because on this 4 performance + 4 efficiency core machine each scenario slows down as more run at once. A 400-scenario random-closure study ran through the job manager and database in 21.5 minutes on 4 workers (about 1,100 scenarios an hour), with no failures.
+
 ## Containers
 
 `docker compose up --build` runs everything (`docker-compose.yml`):
@@ -391,7 +476,9 @@ db (postgres:16, volume pgdata, health check)
 
 Each service starts only when the one before it is healthy (or, for `migrate`, finished successfully). The backend image (`backend/Dockerfile`, built from the repository root) installs `requirements-deploy.txt` into a virtual environment in a first stage, then copies only the code, `alembic.ini` and the Norwich map, and runs as a non-root user; `.dockerignore` keeps tests, docs, the OpenStreetMap cache, `.venv` and `.git` out. The frontend image builds the site with `VITE_API_URL=/api`, so the browser only talks to nginx: no CORS set-up and no backend address baked into the build. nginx finds the backend through Docker's DNS each time (`resolver 127.0.0.11` with the address in a variable), because a fixed host name is looked up only once at start-up and would send every request to a restarted backend's old address (502).
 
-`scripts/compose_smoke_test.py` builds and starts the stack under its own project name and volume, checks it end to end through nginx (a run on the Norwich map, its saved history, an optimiser result), restarts the backend container, checks the run is `interrupted` with its history intact and the optimiser result unchanged, then removes everything. CI runs it on every push.
+Scenario studies run in worker processes inside the backend container (`SCENARIO_WORKERS`, 2 by default in Compose; each worker holds its own copy of the map, 80 to 100 MB).
+
+`scripts/compose_smoke_test.py` builds and starts the stack under its own project name and volume, checks it end to end through nginx (a run on the Norwich map, its saved history, an optimiser result, a two-scenario study run by the worker processes), restarts the backend container, checks the run is `interrupted` with its history intact and the optimiser result and study unchanged, then removes everything. CI runs it on every push.
 
 ## API endpoints
 
@@ -470,9 +557,27 @@ Both optimiser endpoints avoid the closed roads of the run named by `simulation_
 | GET | `/optimiser/runs/{id}` | One saved result: settings plus `answer`, exactly as the optimiser endpoint gave it |
 | DELETE | `/optimiser/runs/{id}` | Delete a saved result |
 
+**Scenario studies** (Stage 4; everything that stores or reads results needs a database, 503 without one):
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/scenarios/studies` | JSON `{name, scenarios: [ScenarioSpec, ...], baseline, metric}`. Validates every scenario (400 listing the problems by position), makes repeated names unique, stores the study and answers **202** with its id; it runs in the background. At most `MAX_STUDY_SCENARIOS` (default 1,000) scenarios |
+| POST | `/scenarios/studies/sweep` | A study generated from one scenario (`base`): `kind` = `seeds` (`count`, `first_seed`), `each_closure` (`roads`), `random_closures` (`count`, `closures_per_scenario`, optional `zone`, `sweep_seed`) or `station_layouts` (`layouts`). 202 |
+| GET | `/scenarios/studies?limit&offset` | Studies, newest first |
+| GET | `/scenarios/studies/{id}?metric` | Progress, each scenario's status and headline metrics, and once results are in, the ranking (by the study's metric or `metric`) and the explanation of it |
+| POST | `/scenarios/studies/{id}/cancel` | Stop handing out the study's remaining scenarios (409 if it has finished) |
+| DELETE | `/scenarios/studies/{id}` | Cancel and delete a study with all its results |
+| GET | `/scenarios/{id}` | One scenario: its spec, status, full result (summary, emergencies, top roads and areas, time series, execution, trip counts), its closures and accidents with coordinates, and, if its study has a completed baseline, the difference from it trip by trip and road by road |
+| GET | `/scenarios/compare?ids&metric&baseline` | Compare 2 to 20 completed scenarios from any studies: ranking, explanation, and each one against `baseline` |
+| GET | `/scenarios/metrics` | Each ranking metric's label, unit, direction and definition (no database needed) |
+| GET | `/scenarios/presets` | Starting points for the builder (no database needed) |
+| GET | `/scenarios/nearest-road?latitude&longitude` | The road (two adjacent junctions) nearest a point, for picking closures and accidents on the map (no database needed) |
+
 ## Frontend
 
 The frontend is mostly one React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. The station optimiser panel and its map markers live in `frontend/src/OptimiserPanel.tsx`; the result tables are in `OptimiserResults.tsx` and the requests and types in `optimiser.ts`. Logic that does not need React (status messages, traffic summary, route conversion) lives in `simulationHelpers.ts`. It calls the backend at the address in `config.ts` (the `VITE_API_URL` build setting, defaulting to `http://127.0.0.1:8000` for local development), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. Once `/simulation/start` has returned a `simulation_id`, all of those requests go to `/simulations/{id}/...` (`runUrl` in `App.tsx`, `runPath` in `simulationHelpers.ts`); with a backend that gives no ID they use the original paths. The optimiser panel does not pass the run's ID, so it plans around the default run's closed roads, which is the user's own run when one person uses the app. By default the backend's CORS setting only allows the origin `http://localhost:5173`; `CORS_ORIGINS` changes that (see `backend/api/settings.py`). In Docker the frontend is built with `VITE_API_URL=/api` and nginx forwards those requests, so CORS is not involved.
+
+The **Scenarios** section (`ScenarioWorkspace.tsx`, logic in `scenarios.ts`) sits in the main column under the optimiser results. The builder edits scenarios (vehicles, seed, rerouting, a city-centre surge) and picks closures and accidents on the map: "Close a road" makes the next map click call `/scenarios/nearest-road` instead of setting a route point (`App.tsx` holds the pending pick, and the map toolbar says what the next click will do). Running posts a study and checks it every 2 s (`STUDY_POLL_MS`) until it finishes; "Large study" posts a random-closure sweep. Results show progress, the explanation, a bar chart of the ranked metric, an SVG chart of delay per simulated minute, a spread of network delay for large studies, and the ranking table; a scenario's name opens its details, and its most delayed roads (amber) and closures (dashed) are drawn on the map. The page makes no request until the section is used: the metric list is kept in `scenarios.ts`, and a backend test checks each key exists in `compare.METRICS` with the same direction.
 
 ## Interface design
 
@@ -490,15 +595,17 @@ The screen is one workspace: a fixed navy header, a controls column on the left,
 
 `test_api.py` drives the real FastAPI app through `TestClient`. `main.py` reads the `NORWICH_SIM_GRAPH` environment variable (default: the Norwich pickle), and the test file points it at a small 4x4 grid map with a one-way dead end and an unconnected junction, so the endpoints are tested without the Norwich data. The file is skipped if `fastapi` or `httpx` is not installed. A fixture empties the run registry before every test; `api.simulation` and `api.traffic` still read the default run's simulation and traffic manager (a module `__getattr__` in `main.py`), so the tests that inspect them did not change. `test_sessions.py` and the database tests build apps with `create_app` directly, so each test gets a fresh app, and a second app on the same database is what a restart looks like.
 
-**Database tests.** `backend/tests/db/` (74 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`, for example `postgresql://norwich:norwich@localhost:5433/norwich_sim_test`. SQLite is deliberately not used as a stand-in: the schema relies on PostgreSQL enums, arrays, UUIDs, partial unique indexes and check constraints. The database is wiped and migrated at the start, so its name must contain `test`. Without `TEST_DATABASE_URL` the tests are skipped (73 of them; one needs no database), unless `REQUIRE_DATABASE_TESTS=1` (set in CI), which turns that into a failure. Each repository test runs inside a transaction that is rolled back; tests through the API commit for real and empty the tables afterwards.
+**Database tests.** `backend/tests/db/` (104 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`, for example `postgresql://norwich:norwich@localhost:5433/norwich_sim_test`. SQLite is deliberately not used as a stand-in: the schema relies on PostgreSQL enums, arrays, UUIDs, partial unique indexes and check constraints. The database is wiped and migrated at the start, so its name must contain `test`. Without `TEST_DATABASE_URL` the tests are skipped (103 of them; one needs no database), unless `REQUIRE_DATABASE_TESTS=1` (set in CI), which turns that into a failure. Each repository test runs inside a transaction that is rolled back; tests through the API commit for real and empty the tables afterwards.
 
 - `test_migrations`: every table and enum type created; upgrade, downgrade to empty (types included) and upgrade again; the models and migrations agree.
 - `test_run_repository`, `test_optimiser_repository`: what the repositories write, every database rule refusing bad data, cascades and `SET NULL`, data surviving a brand new engine, optimiser answers rebuilt to identical JSON, and request keys.
 - `test_api_persistence`, `test_optimiser_api`: through HTTP, a run's whole history (closures, accidents that expired or were cleared, emergencies from dispatch to arrival, refused emergencies, the block-ahead link, fleets, surges, metrics, the timeline), zero SQL on quiet steps, replace/stop/purge, a restart (live runs become `interrupted` with history intact; 409 when driven), a clean shutdown, refusing an un-migrated database, the database failing at start and mid-run, and saved optimiser results (identical round trip, reuse only for identical requests, links to runs, restart, delete).
 
+**Scenario engine tests.** `test_scenarios.py` (30, on a seeded 8 x 8 grid): the same spec gives the same result; separate random streams; trips keep their order under closures; a lone vehicle loses exactly 0 s; road delay sums exactly to trip delay; the time series accounts for every vehicle-second; cutting the grid in two lengthens journeys; an accident after departure slows its road; unroutable trips, surges, spread departures, rerouting off, the time limit, emergencies, more stations answering faster, and spec validation. `test_scenario_compare.py` (16): ranking, ties, missing values, trip-by-trip pairing, road changes and explanations. `test_scenario_sweeps_and_api.py` (10): sweeps, the endpoints that work without a database, and the frontend's metric list. In `backend/tests/db/`: `test_scenario_repository.py` (12: exact round trip, lifecycle, cancel, interrupt, cascade, database rules, stored vs fresh comparison) and `test_scenario_api.py` (17: a study end to end, details against the baseline, another ranking metric, comparison across studies, a failing scenario, validation, limits, sweeps, cancel, delete, restart, and two real worker processes giving the same results as in-process).
+
 **Frontend logic tests.** `frontend/tests/` holds tests run by `npm run test:unit`. They use Node's built-in test runner: `tsconfig.test.json` compiles the tests and the few source files they import (`simulationHelpers.ts`, `optimiser.ts`, `OptimiserResults.tsx`) into `.test-build/`, then `node --test` runs them. Components are rendered to HTML with `react-dom/server`; `fetch` is replaced by a fake. Source files that tests import must write their relative imports with the extension (`./optimiser.ts`).
 
-**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time; other timers, such as Testing Library's own, run normally). `setup.ts` unmounts the app and undoes every fake after each test. The marker sizes the tests look for (`POINT`, `VEHICLE`, `EMERGENCY_SPOT`, ...) are read from `mapStyles.ts`, so a design change to sizes does not break them. `npm run test:ui` type-checks the tests with `tsconfig.ui-tests.json` first, because Vitest does not check types. Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures), `layout.test.tsx` (page structure and landmarks, navigation, empty states, route steps, metric cards, the busy state of Calculate Route), `runIds.test.tsx` (with a backend that returns a `simulation_id`, every run request goes to `/simulations/{id}/...`: `withRunIds` in `helpers.ts` removes the original paths from the fake backend, so a request to one fails the test; the other files' fake backend returns no ID, so they cover the fallback). Real Leaflet and real browser layout are not covered.
+**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time; other timers, such as Testing Library's own, run normally). `setup.ts` unmounts the app and undoes every fake after each test. The marker sizes the tests look for (`POINT`, `VEHICLE`, `EMERGENCY_SPOT`, ...) are read from `mapStyles.ts`, so a design change to sizes does not break them. `npm run test:ui` type-checks the tests with `tsconfig.ui-tests.json` first, because Vitest does not check types. Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures), `layout.test.tsx` (page structure and landmarks, navigation, empty states, route steps, metric cards, the busy state of Calculate Route), `scenarios.test.tsx` (nothing fetched on load, picking a road on the map without starting a route, adding and removing scenarios, running a study: the request body, progress, ranking, explanation and charts, polling stopping, details and the map overlay, cancel, the random-closure sweep, refused and no-database studies; the fake backend records request bodies), `runIds.test.tsx` (with a backend that returns a `simulation_id`, every run request goes to `/simulations/{id}/...`: `withRunIds` in `helpers.ts` removes the original paths from the fake backend, so a request to one fails the test; the other files' fake backend returns no ID, so they cover the fallback). Real Leaflet and real browser layout are not covered.
 
 `npm test` runs both kinds (`test:unit`, then `test:ui`).
 
@@ -513,6 +620,11 @@ GitHub Actions (`.github/workflows/tests.yml`) has four jobs:
 - **Live runs are in one process's memory.** Runs have IDs and are kept apart, but the backend must run as a single worker, and a live run cannot survive a restart: only its history does (it comes back `interrupted`). Making runs resumable would mean saving or replaying every vehicle, which the [Restarts](#restarts) section explains was not worth it. Saved history is in PostgreSQL and is not tied to a process.
 - **Counters can lag after a crash.** A run's simulated time, vehicle counts and a running surge's counts are saved with other writes (at least every 60 simulated seconds), not every step, because a write costs about 2 ms and most steps change nothing else. Events, incidents and emergencies are saved as they happen.
 - **The default run is shared.** The original endpoints (and the optimiser panel, which does not pass an ID) act on the run most recently started with `/simulation/start`. The frontend uses its run's ID for everything else, so two visitors no longer step each other's vehicles, but a second visitor pressing Calculate Route still replaces the first visitor's run as the default (recorded as `replaced`), and the first visitor's next request answers 409 (404 without a database, which has no record of the old run).
+- **Scenario studies are not resumed after a restart.** Like live runs, they are marked `interrupted`; completed scenarios keep their results, the rest would have to be run again in a new study.
+- **Parallel efficiency depends on the machine.** On this 4 performance + 4 efficiency core Mac, 2 workers are 1.97 times as fast as one but 8 only 3.52 times, because each scenario slows as more run at once ([benchmark](scenario_benchmark.md)). The job manager keeps every worker busy and is not the limit; more performance cores should scale further, which was not measured.
+- **Road and area impacts keep only the top 25 roads and 10 areas per scenario**, so road-by-road comparisons are exact for roads in both lists and a lower bound otherwise. The network totals and per-trip figures are complete.
+- **Free-flow reference.** Journey-time increase is measured against the fastest route with no traffic and no closures, so in a closure scenario it includes the unavoidable detour as well as congestion; the trip-by-trip comparison with a baseline separates the closure's own effect.
+- **The interface shows the study you ran.** Past studies are listed and compared through the API (`/scenarios/studies`, `/scenarios/compare`) but have no screen yet.
 - **No history in the interface yet.** Saved runs and optimiser results are available through the API (`/simulations`, `/simulations/{id}/history/...`, `/optimiser/runs`) but the frontend has no screen for them.
 - The pickle format is quick to load but couples the data file to the `Graph` class and is not safe to load from untrusted sources.
 - `frontend/src/App.tsx` holds all the UI logic in one file. Splitting it into components and a small API client would be a natural clean-up.
