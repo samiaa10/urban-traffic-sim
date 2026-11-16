@@ -48,13 +48,14 @@ from sqlalchemy import (
     Index,
     Integer,
     MetaData,
+    SmallInteger,
     String,
     Text,
     UniqueConstraint,
     func,
     text,
 )
-from sqlalchemy.dialects.postgresql import ARRAY, UUID
+from sqlalchemy.dialects.postgresql import ARRAY, JSONB, UUID
 from sqlalchemy.orm import DeclarativeBase, Mapped, mapped_column, relationship
 
 
@@ -809,4 +810,320 @@ class OptimiserBaseline(Base):
 
     __table_args__ = (
         UniqueConstraint("optimiser_run_id", "position"),
+    )
+
+
+# ============================================================
+# Scenario studies (Stage 4)
+# ============================================================
+#
+#   scenario_studies ──< scenarios ──1 scenario_results
+#                                   ├─< scenario_road_impacts
+#                                   ├─< scenario_area_impacts
+#                                   └─< scenario_timeseries
+#
+# A study is one batch job: scenarios run in the background and are
+# compared with each other. A scenario's definition is kept as the
+# validated JSON document it was submitted as (ScenarioSpec), with its
+# fingerprint and trip signature as columns; everything measured is in
+# typed columns and child tables.
+
+class StudyStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"      # every scenario finished (some may have failed)
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"  # the server stopped while it was running
+
+
+class ScenarioStatus(str, enum.Enum):
+    QUEUED = "queued"
+    RUNNING = "running"
+    COMPLETED = "completed"
+    FAILED = "failed"            # the run raised an error (see error)
+    CANCELLED = "cancelled"
+    INTERRUPTED = "interrupted"
+
+
+# Trip statuses in scenario_results.trip_status
+TRIP_STATUS_CODES = {"finished": 0, "unfinished": 1, "unroutable": 2}
+
+
+class ScenarioStudy(Base):
+    __tablename__ = "scenario_studies"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    name: Mapped[str] = mapped_column(String(120))
+    status: Mapped[StudyStatus] = mapped_column(
+        pg_enum(StudyStatus, "study_status"), server_default=StudyStatus.QUEUED.value
+    )
+
+    # How the scenarios are ranked by default (a key of compare.METRICS)
+    metric: Mapped[str] = mapped_column(String(64))
+
+    scenario_count: Mapped[int] = mapped_column(Integer)
+    completed_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    failed_count: Mapped[int] = mapped_column(Integer, server_default=text("0"))
+    workers: Mapped[int] = mapped_column(Integer)
+
+    graph_sha256: Mapped[str] = mapped_column(String(64))
+    engine_version: Mapped[int] = mapped_column(Integer)
+
+    created_at: Mapped[datetime] = utc_now_column()
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    wall_seconds: Mapped[Optional[float]] = mapped_column(Float)
+
+    scenarios: Mapped[List["Scenario"]] = relationship(
+        back_populates="study", cascade="all, delete-orphan", passive_deletes=True,
+        order_by="Scenario.position",
+    )
+
+    __table_args__ = (
+        CheckConstraint("scenario_count BETWEEN 1 AND 5000", name="scenario_count_range"),
+        CheckConstraint(
+            "completed_count >= 0 AND failed_count >= 0 "
+            "AND completed_count + failed_count <= scenario_count",
+            name="counts_add_up",
+        ),
+        CheckConstraint("workers >= 1", name="workers_positive"),
+        CheckConstraint(
+            "(status IN ('queued', 'running')) = (finished_at IS NULL)",
+            name="finished_when_done",
+        ),
+        Index("ix_scenario_studies_created_at", "created_at"),
+    )
+
+
+class Scenario(Base):
+    __tablename__ = "scenarios"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scenario_studies.id", ondelete="CASCADE")
+    )
+    # Order within the study (0, 1, 2, ...)
+    position: Mapped[int] = mapped_column(Integer)
+    name: Mapped[str] = mapped_column(String(120))
+    is_baseline: Mapped[bool] = mapped_column(Boolean, server_default=text("false"))
+
+    # The validated ScenarioSpec, and what identifies it
+    spec: Mapped[dict] = mapped_column(JSONB)
+    seed: Mapped[int] = mapped_column(BigInteger)
+    spec_fingerprint: Mapped[str] = mapped_column(String(64), index=True)
+    trip_signature: Mapped[str] = mapped_column(String(16))
+
+    status: Mapped[ScenarioStatus] = mapped_column(
+        pg_enum(ScenarioStatus, "scenario_status"),
+        server_default=ScenarioStatus.QUEUED.value,
+    )
+    error: Mapped[Optional[str]] = mapped_column(Text)
+
+    started_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+    finished_at: Mapped[Optional[datetime]] = mapped_column(DateTime(timezone=True))
+
+    study: Mapped[ScenarioStudy] = relationship(back_populates="scenarios")
+    result: Mapped[Optional["ScenarioResult"]] = relationship(
+        back_populates="scenario", cascade="all, delete-orphan", passive_deletes=True,
+        uselist=False,
+    )
+    roads: Mapped[List["ScenarioRoadImpact"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True,
+        order_by="ScenarioRoadImpact.rank",
+    )
+    areas: Mapped[List["ScenarioAreaImpact"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True,
+        order_by="ScenarioAreaImpact.rank",
+    )
+    timeseries: Mapped[List["ScenarioTimeseries"]] = relationship(
+        cascade="all, delete-orphan", passive_deletes=True,
+        order_by="ScenarioTimeseries.sim_time",
+    )
+
+    __table_args__ = (
+        UniqueConstraint("study_id", "position"),
+        CheckConstraint("position >= 0", name="position_not_negative"),
+        CheckConstraint(
+            "(status = 'failed') = (error IS NOT NULL)", name="error_when_failed"
+        ),
+        # At most one baseline per study
+        Index(
+            "uq_scenarios_one_baseline_per_study", "study_id",
+            unique=True, postgresql_where=text("is_baseline"),
+        ),
+        Index("ix_scenarios_study_status", "study_id", "status"),
+    )
+
+
+class ScenarioResult(Base):
+    """Everything measured in one scenario run (one row per scenario)."""
+
+    __tablename__ = "scenario_results"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scenarios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    engine_version: Mapped[int] = mapped_column(Integer)
+
+    # Trips
+    trips_requested: Mapped[int] = mapped_column(Integer)
+    trips_spawned: Mapped[int] = mapped_column(Integer)
+    trips_unroutable: Mapped[int] = mapped_column(Integer)
+    trips_finished: Mapped[int] = mapped_column(Integer)
+    completion_percent: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Network-wide impact
+    total_delay_vehicle_hours: Mapped[float] = mapped_column(Float)
+    total_travel_vehicle_hours: Mapped[float] = mapped_column(Float)
+    mean_delay_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    p95_delay_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    max_delay_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    mean_increase_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    p95_increase_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    max_increase_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    reroutes: Mapped[int] = mapped_column(Integer)
+    simulated_seconds: Mapped[int] = mapped_column(Integer)
+    hit_time_limit: Mapped[bool] = mapped_column(Boolean)
+
+    # Emergencies (all None/0 when the scenario had none)
+    emergencies_requested: Mapped[int] = mapped_column(Integer)
+    emergencies_dispatched: Mapped[int] = mapped_column(Integer)
+    emergencies_refused: Mapped[int] = mapped_column(Integer)
+    emergencies_arrived: Mapped[int] = mapped_column(Integer)
+    emergency_mean_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    emergency_worst_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
+    emergency_within_target_percent: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Execution
+    wall_seconds: Mapped[float] = mapped_column(Float)
+    cpu_seconds: Mapped[float] = mapped_column(Float)
+    peak_rss_mb: Mapped[float] = mapped_column(Float)
+    vehicle_seconds: Mapped[int] = mapped_column(BigInteger)
+    vehicle_seconds_per_second: Mapped[Optional[float]] = mapped_column(Float)
+
+    # Per trip, in trip order (the same order in every scenario with the
+    # same trip signature): ends, journey and free-flow time, delay, and
+    # status (TRIP_STATUS_CODES). NULL elements for trips with no route.
+    trip_origin: Mapped[List[Optional[int]]] = mapped_column(ARRAY(BigInteger))
+    trip_destination: Mapped[List[Optional[int]]] = mapped_column(ARRAY(BigInteger))
+    trip_journey_seconds: Mapped[List[Optional[int]]] = mapped_column(ARRAY(Integer))
+    trip_free_flow_seconds: Mapped[List[Optional[float]]] = mapped_column(ARRAY(Float))
+    trip_delay_seconds: Mapped[List[Optional[float]]] = mapped_column(ARRAY(Float))
+    trip_status: Mapped[List[int]] = mapped_column(ARRAY(SmallInteger))
+
+    created_at: Mapped[datetime] = utc_now_column()
+
+    scenario: Mapped[Scenario] = relationship(back_populates="result")
+
+    __table_args__ = (
+        CheckConstraint(
+            "trips_spawned + trips_unroutable = trips_requested "
+            "AND trips_finished <= trips_spawned",
+            name="trips_add_up",
+        ),
+        CheckConstraint(
+            "cardinality(trip_status) = trips_requested "
+            "AND cardinality(trip_origin) = trips_requested "
+            "AND cardinality(trip_destination) = trips_requested "
+            "AND cardinality(trip_journey_seconds) = trips_requested "
+            "AND cardinality(trip_free_flow_seconds) = trips_requested "
+            "AND cardinality(trip_delay_seconds) = trips_requested",
+            name="one_entry_per_trip",
+        ),
+        CheckConstraint(
+            "total_delay_vehicle_hours >= 0 "
+            "AND total_delay_vehicle_hours <= total_travel_vehicle_hours + 1e-9",
+            name="delay_within_travel",
+        ),
+        CheckConstraint(
+            "emergencies_dispatched + emergencies_refused <= emergencies_requested "
+            "AND emergencies_arrived <= emergencies_dispatched",
+            name="emergencies_add_up",
+        ),
+    )
+
+
+class ScenarioRoadImpact(Base):
+    """One of a scenario's most delayed roads."""
+
+    __tablename__ = "scenario_road_impacts"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scenarios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    rank: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    # None for the short "made-up" road a vehicle rerouted part-way along
+    # a road drives until the next junction
+    start_node: Mapped[Optional[int]] = mapped_column(BigInteger)
+    end_node: Mapped[Optional[int]] = mapped_column(BigInteger)
+    start_latitude: Mapped[float] = mapped_column(Float)
+    start_longitude: Mapped[float] = mapped_column(Float)
+    end_latitude: Mapped[float] = mapped_column(Float)
+    end_longitude: Mapped[float] = mapped_column(Float)
+
+    delay_vehicle_seconds: Mapped[float] = mapped_column(Float)
+    vehicle_seconds: Mapped[int] = mapped_column(Integer)
+    peak_vehicles: Mapped[int] = mapped_column(Integer)
+    delay_share: Mapped[float] = mapped_column(Float)
+
+    __table_args__ = (
+        CheckConstraint("rank >= 1", name="rank_positive"),
+        CheckConstraint("delay_vehicle_seconds > 0", name="delay_positive"),
+    )
+
+
+class ScenarioAreaImpact(Base):
+    """One of a scenario's most delayed 500 m areas."""
+
+    __tablename__ = "scenario_area_impacts"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scenarios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    rank: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    cell_row: Mapped[int] = mapped_column(Integer)
+    cell_col: Mapped[int] = mapped_column(Integer)
+    south: Mapped[float] = mapped_column(Float)
+    west: Mapped[float] = mapped_column(Float)
+    north: Mapped[float] = mapped_column(Float)
+    east: Mapped[float] = mapped_column(Float)
+    delay_vehicle_seconds: Mapped[float] = mapped_column(Float)
+    roads_affected: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint("rank >= 1", name="rank_positive"),
+        CheckConstraint("north > south AND east > west", name="cell_has_area"),
+    )
+
+
+class ScenarioTimeseries(Base):
+    """A scenario's traffic over one simulated minute."""
+
+    __tablename__ = "scenario_timeseries"
+
+    scenario_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True), ForeignKey("scenarios.id", ondelete="CASCADE"),
+        primary_key=True,
+    )
+    sim_time: Mapped[int] = mapped_column(Integer, primary_key=True)
+
+    active_vehicles: Mapped[int] = mapped_column(Integer)
+    finished_vehicles: Mapped[int] = mapped_column(Integer)
+    delay_vehicle_seconds: Mapped[float] = mapped_column(Float)
+    vehicle_seconds: Mapped[int] = mapped_column(Integer)
+    mean_speed_factor: Mapped[Optional[float]] = mapped_column(Float)
+    closed_roads: Mapped[int] = mapped_column(Integer)
+    accidents: Mapped[int] = mapped_column(Integer)
+
+    __table_args__ = (
+        CheckConstraint("sim_time > 0", name="time_positive"),
+        CheckConstraint(
+            "mean_speed_factor IS NULL OR (mean_speed_factor >= 0 AND mean_speed_factor <= 1)",
+            name="speed_factor_fraction",
+        ),
     )

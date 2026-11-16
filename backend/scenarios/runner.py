@@ -100,11 +100,13 @@ class _Trip:
         self.status = None
 
 
-def run_scenario(world, spec, progress=None):
+def run_scenario(world, spec, progress=None, measure=True):
     """Run `spec` (a ScenarioSpec or a dict) to the end. Returns a plain,
     picklable dict (see the bottom of this function).
 
     progress(sim_time) is called every simulated minute if given.
+    measure=False runs the same simulation without the impact accounting
+    (only to benchmark what the accounting costs; the results are empty).
     """
 
     if not isinstance(spec, ScenarioSpec):
@@ -132,7 +134,7 @@ def run_scenario(world, spec, progress=None):
         demand=world.demand,
     )
 
-    tracker = ImpactTracker(simulation, world.node_by_point)
+    tracker = ImpactTracker(simulation, world.node_by_point, measure=measure)
 
     # ---- Trips: drawn first, routed when they leave -----------------
     trips = []
@@ -288,7 +290,7 @@ def run_scenario(world, spec, progress=None):
             })
 
         # 4. Stop when nothing is left to happen
-        trips_done = all(v.finished for v in tracker.vehicles)
+        trips_done = tracker.all_finished
         emergencies_done = all(
             e["status"] != "dispatched" or e["emergency"].resolved for e in emergencies
         )
