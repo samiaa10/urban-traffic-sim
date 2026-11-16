@@ -20,6 +20,7 @@
     "tests",
     "src/optimiser.ts",
     "src/OptimiserResults.tsx",
+    "src/history.ts",
     "src/scenarios.ts",
     "src/simulationHelpers.ts"
   ]

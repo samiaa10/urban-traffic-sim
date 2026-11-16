@@ -29,6 +29,8 @@ import {
 } from "./components.tsx"
 import { COLOURS, LINE, MARKER } from "./mapStyles.ts"
 import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx"
+import { HistoryPanel } from "./HistoryPanel.tsx"
+import type { RestartedRun } from "./history.ts"
 import {
   allFinished,
   congestionColour,
@@ -154,6 +156,10 @@ function App() {
   } | null>(null)
   const [scenarioOverlay, setScenarioOverlay] =
     useState<ScenarioOverlay | null>(null)
+
+  // A saved study the History section asked to show
+  const [studyToOpen, setStudyToOpen] =
+    useState<{ id: string; nonce: number } | null>(null)
 
   // The running simulation's ID, from /simulation/start (null with an
   // older backend that gives none). A ref, not state: the polling timer
@@ -319,6 +325,51 @@ function App() {
         },
         1000
       )
+  }
+
+  // ------------------------------------------------
+  // WATCH A RESTARTED RUN (from the History section)
+  // ------------------------------------------------
+
+  // The same as the end of Calculate Route, for a run the backend
+  // restarted from a saved setup: draw its route, name it in every
+  // request, and start stepping it
+  const watchRestartedRun = (restarted: RestartedRun) => {
+    stopSimulationPolling()
+
+    const coordinates = toCoordinates(restarted.route)
+    setStart(coordinates[0])
+    setDestination(coordinates[coordinates.length - 1])
+    setRoute(coordinates)
+    setEmergencyLocation(null)
+    setEmergencyRoute([])
+    setEmergencyActive(false)
+    setIncidentRoute([])
+    setIncidentActive(false)
+    setEmergencyStatus(null)
+    setBlockedAhead([])
+    setCongestion([])
+    setSimulationTime(null)
+    setScenarioOverlay(null)
+
+    simulationId.current = restarted.simulation_id
+    setVehicles([
+      {
+        vehicle_id: 0,
+        latitude: restarted.vehicle_position.latitude,
+        longitude: restarted.vehicle_position.longitude,
+        distance_travelled: 0,
+        finished: false,
+        vehicle_type: "normal",
+        on_emergency: false,
+      },
+    ])
+    startSimulationPolling()
+    setRouteInfo({
+      distance: restarted.distance_metres,
+      nodesExplored: restarted.nodes_explored,
+    })
+    setResult("Restarted from a saved run")
   }
 
   // ------------------------------------------------
@@ -872,6 +923,10 @@ function App() {
             <Icon name="chart" size={16} />
             <span>Scenarios</span>
           </a>
+          <a href="#history">
+            <Icon name="clock" size={16} />
+            <span>History</span>
+          </a>
           <a
             href="https://github.com/samiaa10/urban-traffic-sim"
             target="_blank"
@@ -1400,6 +1455,13 @@ function App() {
             setRoadPick(label !== null && handler !== null ? { label, handler } : null)
           }
           onShowOnMap={setScenarioOverlay}
+          openStudy={studyToOpen}
+        />
+
+        {/* ---------------- SAVED RUNS AND STUDIES ---------------- */}
+        <HistoryPanel
+          onRestarted={watchRestartedRun}
+          onOpenStudy={(id) => setStudyToOpen({ id, nonce: Date.now() })}
         />
       </main>
     </div>
