@@ -38,6 +38,12 @@ class Vehicle:
         # (because of a closure). Reset when a new trip starts.
         self.reroutes = 0
 
+        # Seconds of the last move() actually spent driving: less than the
+        # time given when the vehicle arrived (or stopped at a closed road)
+        # part-way through. The scenario engine uses it to measure delay
+        # without counting the unused rest of the arrival second.
+        self.last_move_seconds = 0.0
+
         # Emergency vehicle state
         self.on_emergency = False
         self.available = True
@@ -185,6 +191,8 @@ class Vehicle:
         if self.position >= len(self.route) - 1:
 
             self.finished = True
+
+        self.last_move_seconds = time_seconds - max(time_left, 0.0)
 
     def get_current_location(self):
 
