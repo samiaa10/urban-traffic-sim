@@ -28,6 +28,7 @@ import {
   type LegendEntry,
 } from "./components.tsx"
 import { COLOURS, LINE, MARKER } from "./mapStyles.ts"
+import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx"
 import {
   allFinished,
   congestionColour,
@@ -145,6 +146,15 @@ function App() {
   const simulationInterval =
     useRef<number | null>(null)
 
+  // Scenario analysis: a road the next map click should pick (instead of
+  // a route point), and what the map shows for the selected scenario
+  const [roadPick, setRoadPick] = useState<{
+    label: string
+    handler: (latitude: number, longitude: number) => void
+  } | null>(null)
+  const [scenarioOverlay, setScenarioOverlay] =
+    useState<ScenarioOverlay | null>(null)
+
   // The running simulation's ID, from /simulation/start (null with an
   // older backend that gives none). A ref, not state: the polling timer
   // reads it, and nothing on screen shows it.
@@ -169,6 +179,13 @@ function App() {
   // ------------------------------------------------
 
   const handleMapClick = (location: Coordinate) => {
+    // Picking a road for a scenario: this click is for that only
+    if (roadPick) {
+      setRoadPick(null)
+      roadPick.handler(location[0], location[1])
+      return
+    }
+
     // First click = start
     if (!start) {
       setStart(location)
@@ -719,7 +736,9 @@ function App() {
   const bothPointsChosen = start !== null && destination !== null
 
   // What the next click on the map will do (see handleMapClick)
-  const nextClick = !start
+  const nextClick = roadPick
+    ? { label: roadPick.label, colour: COLOURS.closure }
+    : !start
     ? { label: "Start point", colour: COLOURS.start }
     : !destination
       ? { label: "Destination", colour: COLOURS.destination }
@@ -795,6 +814,16 @@ function App() {
       colour: COLOURS.chosen,
       symbol: "dot",
     },
+    scenarioOverlay !== null && scenarioOverlay.hotspots.length > 0 && {
+      label: "Most time lost",
+      colour: COLOURS.delayHotspot,
+      symbol: "wide",
+    },
+    scenarioOverlay !== null && scenarioOverlay.closures.length > 0 && {
+      label: "Scenario closure",
+      colour: COLOURS.closure,
+      symbol: "dash",
+    },
     ] as (LegendEntry | false)[]
   ).filter((entry): entry is LegendEntry => entry !== false)
 
@@ -838,6 +867,10 @@ function App() {
           <a href="#optimiser">
             <Icon name="stations" size={16} />
             <span>Optimiser</span>
+          </a>
+          <a href="#scenarios">
+            <Icon name="chart" size={16} />
+            <span>Scenarios</span>
           </a>
           <a
             href="https://github.com/samiaa10/urban-traffic-sim"
@@ -1294,6 +1327,35 @@ function App() {
               {/* CHOSEN SET OF STATIONS (numbered in pick order) */}
               {stationSet && <StationSetMarkers picks={stationSet.stations} />}
 
+              {/* SCENARIO: roads that lost the most time, and its closures */}
+              {scenarioOverlay?.hotspots.map((road) => (
+                <Polyline
+                  key={`hotspot-${road.rank}`}
+                  positions={[
+                    [road.start.latitude, road.start.longitude],
+                    [road.end.latitude, road.end.longitude],
+                  ]}
+                  pathOptions={{
+                    color: COLOURS.delayHotspot,
+                    weight: LINE.delayHotspot,
+                    opacity: 0.55,
+                    lineCap: "round",
+                  }}
+                />
+              ))}
+              {scenarioOverlay?.closures.map((road, index) => (
+                <Polyline
+                  key={`scenario-closure-${index}`}
+                  positions={[road.start, road.end]}
+                  pathOptions={{
+                    color: COLOURS.closure,
+                    weight: LINE.closure,
+                    dashArray: "6, 6",
+                    lineCap: "butt",
+                  }}
+                />
+              ))}
+
               {/* ALL VEHICLES */}
               {vehicles.map((vehicle) => {
                 const isAmbulance =
@@ -1330,6 +1392,14 @@ function App() {
           data={optimiser}
           setData={stationSet}
           loading={optimiserLoading}
+        />
+
+        {/* ---------------- SCENARIO ANALYSIS ---------------- */}
+        <ScenarioWorkspace
+          onPickRoad={(label, handler) =>
+            setRoadPick(label !== null && handler !== null ? { label, handler } : null)
+          }
+          onShowOnMap={setScenarioOverlay}
         />
       </main>
     </div>

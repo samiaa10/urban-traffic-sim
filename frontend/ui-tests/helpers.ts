@@ -6,6 +6,7 @@ import { act, screen } from "@testing-library/react"
 import { vi } from "vitest"
 
 import { MARKER } from "../src/mapStyles.ts"
+import { STUDY_POLL_MS } from "../src/scenarios.ts"
 import type {
   OptimiserResponse,
   StationSetResponse,
@@ -42,6 +43,8 @@ export type FakeRequest = {
   method: string
   path: string
   query: URLSearchParams
+  // The JSON body sent, if any
+  body?: unknown
 }
 
 // An endpoint answers with a reply, fails like a network error (an Error
@@ -79,7 +82,8 @@ export function mockBackend(backend: Backend) {
   ): Promise<Response> => {
     const url = new URL(input instanceof Request ? input.url : String(input))
     const method = (init?.method ?? "GET").toUpperCase()
-    const request = { method, path: url.pathname, query: url.searchParams }
+    const body = typeof init?.body === "string" ? JSON.parse(init.body) : undefined
+    const request = { method, path: url.pathname, query: url.searchParams, body }
     const key = `${method} ${url.pathname}`
 
     requests.push(request)
@@ -129,7 +133,8 @@ export function deferred<T>() {
 // The polling timer
 // ------------------------------------------------
 
-// How often App.tsx steps the simulation
+// How often App.tsx steps the simulation (scenario studies are checked
+// every STUDY_POLL_MS; controlPolling takes over both)
 const POLL_MILLISECONDS = 1000
 
 // Take over the app's polling timer. Other timers (for example the ones
@@ -149,7 +154,7 @@ export function controlPolling() {
     delay?: number,
     ...rest: unknown[]
   ) => {
-    if (delay !== POLL_MILLISECONDS) {
+    if (delay !== POLL_MILLISECONDS && delay !== STUDY_POLL_MS) {
       return realSetInterval(callback, delay, ...rest)
     }
 

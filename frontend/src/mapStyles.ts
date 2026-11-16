@@ -22,6 +22,9 @@ export const COLOURS = {
   rankBest: "#2f7d6b",
   rank: "#5b7699",
   chosen: "#173e60",
+  // Scenario analysis: the roads that lost the most time (amber, the
+  // palette's "waiting" colour), drawn wide and see-through
+  delayHotspot: "#a86d17",
 } as const
 
 // Point markers share one language: a solid fill with a white keyline,
@@ -39,6 +42,7 @@ export const MARKER = {
 
 // Line weights, from the widest (drawn underneath) to the narrowest
 export const LINE = {
+  delayHotspot: 10,
   closure: 8,
   congestion: 9,
   emergency: 4,
