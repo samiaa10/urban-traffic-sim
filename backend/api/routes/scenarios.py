@@ -506,6 +506,34 @@ def cancel_study(study_id: str, context: AppContext = Depends(get_context)):
     return {"status": "study cancelled", "study_id": study_id}
 
 
+@router.post("/studies/{study_id}/resume")
+def resume_study(study_id: str, context: AppContext = Depends(get_context)):
+    """Run an interrupted or cancelled study's unfinished scenarios again
+    (completed results are kept)."""
+
+    jobs = require_jobs(context)
+    from backend.db.scenario_repository import ScenarioRepository
+
+    study_uuid = parse_id(study_id, "Study")
+
+    with context.database.transaction() as session:
+        repo = ScenarioRepository(session)
+        if repo.get_study(study_uuid) is None:
+            raise HTTPException(status_code=404, detail="Study not found")
+        requeued = repo.resume_study(study_uuid)
+
+    if requeued is None:
+        raise HTTPException(
+            status_code=409,
+            detail="Only an interrupted or cancelled study can be resumed",
+        )
+
+    if requeued:
+        jobs.submit_study(study_uuid)
+
+    return {"status": "study resumed", "study_id": study_id, "requeued": requeued}
+
+
 @router.delete("/studies/{study_id}")
 def delete_study(study_id: str, context: AppContext = Depends(get_context)):
     jobs = require_jobs(context)

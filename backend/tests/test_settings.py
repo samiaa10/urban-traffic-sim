@@ -161,3 +161,16 @@ def test_study_size_limit():
     for bad in ("0", "5001", "many"):
         with pytest.raises(ValueError, match="MAX_STUDY_SCENARIOS"):
             max_study_scenarios(bad)
+
+
+from backend.api.settings import resume_studies  # noqa: E402
+
+
+def test_studies_are_resumed_by_default():
+    assert resume_studies(None) is True
+    assert resume_studies("") is True
+    assert resume_studies(" yes ") is True
+    assert resume_studies("FALSE") is False
+    assert resume_studies("0") is False
+    with pytest.raises(ValueError, match="RESUME_STUDIES"):
+        resume_studies("maybe")

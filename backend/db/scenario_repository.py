@@ -199,6 +199,42 @@ class ScenarioRepository:
         self.session.flush()
         return True
 
+    def resume_study(self, study_id):
+        """Put an interrupted or cancelled study back in the queue.
+
+        Its unfinished scenarios (interrupted or cancelled) are queued
+        again; completed and failed ones keep their results. Scenarios are
+        deterministic, so a re-run gives the result the first run would
+        have. Returns how many scenarios were queued again, or None if the
+        study cannot be resumed (unknown, still running or completed).
+        """
+
+        study = self._locked_study(study_id)
+        if study is None or study.status not in (
+            StudyStatus.INTERRUPTED, StudyStatus.CANCELLED
+        ):
+            return None
+
+        result = self.session.execute(
+            update(Scenario)
+            .where(
+                Scenario.study_id == study_id,
+                Scenario.status.in_((ScenarioStatus.INTERRUPTED, ScenarioStatus.CANCELLED)),
+            )
+            .values(status=ScenarioStatus.QUEUED, started_at=None, finished_at=None)
+        )
+
+        study.status = StudyStatus.QUEUED
+        study.finished_at = None
+        study.wall_seconds = None
+        self.session.flush()
+
+        # Nothing left to run (every scenario had finished): done again
+        if result.rowcount == 0:
+            self.finish_study_if_done(study_id)
+
+        return result.rowcount
+
     def interrupt_unfinished(self):
         """At start-up: studies left queued or running by a server that
         stopped are interrupted. Returns their ids."""

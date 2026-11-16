@@ -39,6 +39,9 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Scenario comparison.** Rank scenarios by clearly defined metrics (network delay, travel time, journey-time increase, completion, emergency response) and get a plain-English explanation of why one did better: what differs, how many trips were slower or faster, and which roads lost the extra time.
 - **Large studies in the background.** Run hundreds or thousands of scenarios (one per closed road, many random closures, many seeds, station layouts) as a background job in a pool of worker processes; the API answers at once and reports progress. Measured: 400 full simulations in 21.5 minutes on 4 workers ([benchmark](docs/scenario_benchmark.md)).
 - **Scenario analysis in the web interface.** Build scenarios, pick closures and accidents by clicking the map, run them, and see the ranking, explanation, charts of delay over time, and the most affected roads drawn on the map.
+- **Saved runs and studies in the web interface.** The History section lists the 20 most recent saved runs and studies, shows a run's saved history, and opens any past study in the scenario results.
+- **Restarting an ended run.** A run that ended (stopped, replaced, or interrupted by a server restart) can be started again from its saved setup: the same route, rerouting setting, stations and ambulances, the closures and accidents still in place when it ended (accidents with the time they had left), and its fleets with the same trips. Vehicles start from the beginning; the new run is linked to the old one (`POST /simulations/{id}/restart`, or **Restart** in the History section).
+- **Resuming interrupted studies.** Studies a server restart interrupts are resumed when it starts again (`RESUME_STUDIES`, on by default): completed scenarios keep their results and only the rest run again, giving the same results as an uninterrupted study. Interrupted or cancelled studies can also be resumed by hand (`POST /scenarios/studies/{id}/resume`, or **Resume** in the History section).
 
 ## Tech stack
 
@@ -139,11 +142,22 @@ alembic upgrade head                     # from the project root; creates the ta
 uvicorn backend.api.main:app --reload
 ```
 
-Run `alembic upgrade head` again after pulling changes that add a migration; the API refuses to start on an out-of-date schema and says so. Saved runs are listed at `/simulations`, and each run's history is under `/simulations/{id}/history` (see the [demo guide](docs/DEMO.md), part B9).
+Run `alembic upgrade head` again after pulling changes that add a migration; the API refuses to start on an out-of-date schema and says so. Saved runs are listed at `/simulations`, and each run's history is under `/simulations/{id}/history` (see the [demo guide](docs/DEMO.md), part B9). In the web interface, the **History** section (link in the header) lists saved runs and studies; it loads only when you click **Load saved runs and studies**.
+
+Studies left unfinished when the backend stops are resumed when it starts again. Set `RESUME_STUDIES=false` to leave them `interrupted` instead (they can still be resumed by hand).
 
 ### Docker
 
-To run everything (PostgreSQL, the migrations, the backend and the frontend) in containers, with Docker and Docker Compose installed:
+To run everything (PostgreSQL, the migrations, the backend and the frontend) in containers, with Docker and Docker Compose installed. On a Mac without Docker Desktop, [Colima](https://github.com/abiosoft/colima) works (the smoke test below passes with it):
+
+```bash
+brew install colima docker docker-compose
+mkdir -p ~/.docker/cli-plugins
+ln -sfn "$(brew --prefix)/opt/docker-compose/bin/docker-compose" ~/.docker/cli-plugins/docker-compose
+colima start --cpu 4 --memory 4          # once per login; `colima stop` when done
+```
+
+Then:
 
 ```bash
 docker compose up --build
@@ -377,8 +391,8 @@ This puts the app on the internet for free: the React frontend as a **static sit
 | Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"NORWICH//SIM","status":"online"}`, then use the site |
 | Map data | The map file is committed in Git, so the deployed backend has it. Nothing is written to disk, so the free plan's temporary filesystem is not a problem |
 | Logs | The backend's start-up and dispatch log lines appear in the service's **Logs** tab. Add a `LOG_LEVEL` environment variable (for example `DEBUG`) to change how much is logged; it is optional and not in `render.yaml` |
-| Database | None: `render.yaml` sets no `DATABASE_URL`, so the deployed backend keeps runs in memory only, as before Stage 3, and scenario studies are unavailable (they answer 503). To save runs and run studies, see [Adding a database](#adding-a-database) |
-| Scenario studies | With a database, set `SCENARIO_WORKERS=0` on the free plan (0.1 CPU, 512 MB: one worker process alone holds 80 to 100 MB) and keep studies small; large studies belong on a bigger machine |
+| Database | The Blueprint creates a free PostgreSQL database (`norwich-sim-db`) and connects the backend to it, so runs, histories and scenario studies are saved. **Render's free database expires 30 days after it is created** and is deleted 14 days after that unless upgraded; it has 1 GB and no backups. See [The database](#the-database) |
+| Scenario studies | The Blueprint sets `SCENARIO_WORKERS=0` (0.1 CPU, 512 MB: one worker process alone holds 80 to 100 MB), so scenarios run one at a time inside the API. Keep studies small; large studies belong on a bigger machine. A study the backend's sleep interrupts is resumed when it wakes |
 
 *These figures are Render's free-plan limits at the time of writing; check [render.com/pricing](https://render.com/pricing) if they matter to you.*
 
@@ -390,7 +404,7 @@ This puts the app on the internet for free: the React frontend as a **static sit
 ### Option A: one go, with the Blueprint (recommended)
 
 1. In the Render dashboard click **New +**, then **Blueprint**.
-2. Choose your repository and branch, then click **Connect**. Render reads `render.yaml` and lists two services: `norwich-sim-api` and `norwich-sim`.
+2. Choose your repository and branch, then click **Connect**. Render reads `render.yaml` and lists a database, `norwich-sim-db`, and two services: `norwich-sim-api` and `norwich-sim`. (A workspace can have only one free database; if you already have one, Render will say so.)
 3. Render asks for two values (they are not stored in Git). If the service names are free, the web addresses will be:
 
    | Variable | Belongs to | Value to enter |
@@ -415,11 +429,13 @@ Use this if you prefer to type the settings in yourself. Create the backend firs
 | Branch | your main branch |
 | Root Directory | *(leave empty)* |
 | Build Command | `pip install -r requirements-deploy.txt` |
-| Start Command | `uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT` |
+| Start Command | `alembic upgrade head && uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT` |
 | Instance Type | Free |
 | Health Check Path (Advanced) | `/` |
 | Env var `PYTHON_VERSION` | `3.12.3` |
 | Env var `CORS_ORIGINS` | the frontend's address, added after the frontend exists (below) |
+| Env var `DATABASE_URL` | the database's **Internal Database URL** (see [The database](#the-database)); without it runs are kept in memory only |
+| Env var `SCENARIO_WORKERS` | `0` |
 
 **Frontend: New + > Static Site**
 
@@ -454,19 +470,21 @@ Every push to the deployed branch redeploys both services automatically.
 | Backend build or start fails with a numpy or pickle error | The Python or numpy version is not what the map was saved with. Keep `PYTHON_VERSION` at `3.12.3` and `numpy>=2` in `requirements-deploy.txt` |
 | Frontend build fails at `npm ci` | `package-lock.json` is out of date: run `npm install` in `frontend/` locally and commit the lockfile |
 
-### Adding a database
+### The database
 
-Optional. Create a PostgreSQL database on Render (**New +** > **Postgres**; check Render's current free-database limits, which have included an expiry date), then:
+With the Blueprint, Render creates the database and sets the backend's `DATABASE_URL` to it. The backend's start command runs `alembic upgrade head` before starting, so the schema is created on the first deploy and brought up to date by every deploy that adds a migration (when it is already up to date this does nothing). The log then shows `Database schema is up to date`.
 
-1. From your own computer, bring its schema up to date using the database's **External Database URL**: `DATABASE_URL=<external URL> alembic upgrade head`.
-2. On the backend's **Environment** tab add `DATABASE_URL` with the **Internal Database URL**. It restarts and logs `Database schema is up to date`.
-3. Repeat step 1 whenever a change adds a migration (the backend refuses to start until you do, and says so).
+By hand (Option B): **New +** > **Postgres**, plan Free, then set the backend's `DATABASE_URL` to its **Internal Database URL** and use the start command in the table above.
+
+**The free database expires.** Render's free PostgreSQL stops working 30 days after it is created, and is deleted 14 days after that unless you upgrade it; it has no backups. Once it has expired the backend can no longer reach it. To carry on for free, delete the expired database, create a new free one, and set the backend's `DATABASE_URL` to its Internal Database URL (the start command creates the tables); saved runs and studies are lost. To keep the app running without any database, delete `DATABASE_URL` from the backend's environment: runs are then kept in memory only, and history and studies answer 503.
+
+*These are Render's free-database terms at the time of writing; check [render.com/docs/free](https://render.com/docs/free).*
 
 ### Limits of this deployment
 
 - **Runs are kept apart, but there is one default run.** Each visitor's simulation has its own ID and its own vehicles and closures. Starting a new route makes that run the default and replaces the previous default, so if two people start routes at the same time, the first one's run is replaced (and their next step fails). Fine for a portfolio demo where one visitor looks at a time; not a multi-user service.
 - **The optimiser is open to anyone**, and searches use the shared free CPU. There is no login or rate limiting.
-- Restarting or waking the backend ends every live run. Without a database nothing is kept; with one, their history is kept and they are marked `interrupted`.
+- Restarting or waking the backend ends every live run. Without a database nothing is kept; with one, their history is kept, they are marked `interrupted`, and they can be restarted from their setup in the History section. Studies that were running are resumed.
 
 ## Demo
 
@@ -507,9 +525,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **Finished vehicles stay in the vehicle list** (their position in the list is their id in the API), so every `/simulation/step` response grows as fleets and surges add vehicles. Stepping skips them cheaply, but a long surge produces a large response.
 - **Fleets and surges have no buttons in the web interface yet.** They work through the API (see the demo guide). Vehicles added that way do appear and move on the map, because the map draws every vehicle `/simulation/step` returns.
 - **Dispatch picks the station in a straight line.** The station is the nearest one (by latitude/longitude) that has an ambulance free, not the one with the shortest drive; only the ambulance's route itself uses the road network. If no ambulance is free the emergency is refused rather than queued.
-- **Live runs live in memory.** Runs have IDs and are kept apart, but they exist in one process's memory: the backend must run as a single worker, and a run cannot be resumed after a restart. With a database its history survives (it comes back `interrupted`); without one, nothing does. After a crash, a saved run's simulated time and vehicle counts can be up to a minute (simulated) behind; its events, incidents and emergencies are saved as they happen.
-- **Scenario results have limits worth knowing.** Each scenario keeps its 25 most delayed roads and 10 most delayed areas (totals and per-trip figures are complete). A vehicle crossing into another road during a second has that second counted on the first road. Studies running when the server stops are marked interrupted, not resumed. The web interface shows the study you just ran; past studies are listed and compared through the API (`/scenarios/studies`, `/scenarios/compare`).
-- **History has no screen yet.** Saved runs and optimiser results are available through the API but not shown in the web interface. The optimiser panel plans around the default run's closed roads rather than passing its own run's ID.
+- **Live runs live in memory.** Runs have IDs and are kept apart, but they exist in one process's memory: the backend must run as a single worker, and a run cannot carry on after a restart from where it was (its vehicles' positions are not saved). With a database its history survives (it comes back `interrupted`) and it can be **restarted from its setup**: same route, stations, closures, accidents and fleet trips, but vehicles start again from the beginning, and surges and past emergencies are not repeated. Without a database, nothing survives. After a crash, a saved run's simulated time and vehicle counts can be up to a minute (simulated) behind; its events, incidents and emergencies are saved as they happen.
+- **Scenario results have limits worth knowing.** Each scenario keeps its 25 most delayed roads and 10 most delayed areas (totals and per-trip figures are complete). A vehicle crossing into another road during a second has that second counted on the first road. A scenario that was running when the server stopped starts again from the beginning when its study is resumed (finished scenarios are kept). Comparing scenarios from different studies is only available through the API (`/scenarios/compare`).
+- **The History section is short.** It lists the 20 most recent runs and studies (the API pages through all of them). Saved optimiser results are only available through the API (`/optimiser/runs`). The optimiser panel plans around the default run's closed roads rather than passing its own run's ID.
 - **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with `/simulation/fleet` or `/traffic/surge`.
 - **Ambulances return to base instantly** after a call rather than driving back.
 - **The optimiser ignores traffic** (it uses free-flowing road distance) and spreads emergencies evenly over road junctions, whereas real emergencies cluster where more people live. Response time is road distance divided by ambulance speed, plus any closures you supply.
@@ -528,8 +546,9 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 | `SchemaOutOfDate: The database is at migration none, the code needs 0001. Run: alembic upgrade head` | Run `alembic upgrade head` from the project root with the same `DATABASE_URL`. |
 | `DATABASE_URL must be a PostgreSQL URL` | Only PostgreSQL is supported; use a `postgresql://` (or `postgres://`) URL. |
 | `503 ... History needs a database` | The backend was started without `DATABASE_URL`; history and saved optimiser results need one. |
-| `409 Simulation has ended (interrupted)` | The run was live when the backend restarted (or it was stopped or replaced). Its history is still at `/simulations/{id}/history`; start a new run to keep simulating. |
+| `409 Simulation has ended (interrupted)` | The run was live when the backend restarted (or it was stopped or replaced). Its history is still at `/simulations/{id}/history`. Start a new run, or **Restart** it from the History section (`POST /simulations/{id}/restart`). |
 | `docker compose up` says a port is already allocated | Something else uses 8080 or 8000. Set `FRONTEND_PORT` / `BACKEND_PORT` in a `.env` file. |
 | A scenario study answers `503 ... need a database` | Scenario studies are stored in PostgreSQL; start the backend with `DATABASE_URL`. |
 | A study stays at "0 of N scenarios" | The first scenarios are still running (500 vehicles take about 16 s each), or `SCENARIO_WORKERS` processes could not start: check the backend log. |
+| The backend on Render fails with database connection errors about a month after it was set up | Render's free database has expired. See [The database](#the-database). |
 | Database tests are all skipped | Set `TEST_DATABASE_URL` to a PostgreSQL database whose name contains `test` (it is wiped). |

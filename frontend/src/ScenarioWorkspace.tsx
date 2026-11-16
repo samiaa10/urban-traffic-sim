@@ -70,10 +70,14 @@ type PickTarget = { key: number; kind: "closure" | "accident" }
 export function ScenarioWorkspace({
   onPickRoad,
   onShowOnMap,
+  openStudy = null,
 }: {
   // Ask the map for one click (label says what for); null cancels
   onPickRoad: (label: string | null, handler: ((latitude: number, longitude: number) => void) | null) => void
   onShowOnMap: (overlay: ScenarioOverlay | null) => void
+  // A saved study to show (from the History section); the nonce lets the
+  // same study be opened again
+  openStudy?: { id: string; nonce: number } | null
 }) {
   const [drafts, setDrafts] = useState<Draft[]>(() => [
     newDraft("Baseline"),
@@ -98,6 +102,30 @@ export function ScenarioWorkspace({
 
   // Stop checking the study if the page goes away
   useEffect(() => () => stopPolling(), [])
+
+  // Show a saved study chosen in the History section: clear what is
+  // shown now (while rendering, as React advises for state that follows a
+  // prop), then start checking the study
+  const [shownRequest, setShownRequest] = useState(openStudy)
+  if (openStudy !== shownRequest) {
+    setShownRequest(openStudy)
+    if (openStudy) {
+      setError(null)
+      setStudy(null)
+      setDetails({})
+      setSelected(null)
+    }
+  }
+
+  useEffect(() => {
+    if (!openStudy) return
+    onShowOnMap(null)
+    follow(openStudy.id)
+    document.getElementById("scenarios")?.scrollIntoView?.({ behavior: "smooth" })
+    // follow and onShowOnMap are recreated each render; only a new
+    // request to open a study should run this
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [openStudy])
 
   // ---------------- building ----------------
 

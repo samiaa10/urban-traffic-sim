@@ -69,7 +69,23 @@ def test_downgrade_removes_everything_and_upgrade_works_again(engine):
 
 def test_the_database_is_at_the_latest_revision(engine):
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0002"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
+
+
+def test_the_restart_link_migration_can_be_undone_on_its_own(engine):
+    """0003 down to 0002 removes only simulation_runs.restarted_from."""
+
+    def columns():
+        return {c["name"] for c in inspect(engine).get_columns("simulation_runs")}
+
+    assert "restarted_from" in columns()
+    downgrade(engine, "0002")
+    try:
+        assert "restarted_from" not in columns()
+        assert tables(engine) == TABLES
+    finally:
+        migrate(engine, "head")
+    assert "restarted_from" in columns()
 
 
 def test_the_scenario_migration_can_be_undone_on_its_own(engine):

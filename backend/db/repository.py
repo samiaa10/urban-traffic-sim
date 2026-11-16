@@ -93,7 +93,7 @@ class RunRepository:
 
     def create_run(
         self, run_id, start_node, destination_node, graph_sha256,
-        rerouting_enabled=True, vehicles_total=0,
+        rerouting_enabled=True, vehicles_total=0, restarted_from=None,
     ):
         run = SimulationRun(
             id=run_id,
@@ -105,6 +105,7 @@ class RunRepository:
             sim_time=0,
             vehicles_total=vehicles_total,
             vehicles_finished=0,
+            restarted_from=restarted_from,
         )
         self.session.add(run)
         self.session.flush()

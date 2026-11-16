@@ -97,6 +97,7 @@ class JobManager:
         self._cancelled = set()
         self._lock = threading.Lock()
         self._executor = None
+        self._stopping = False
         self._running = 0
         self._idle = threading.Condition(self._lock)
 
@@ -143,6 +144,10 @@ class JobManager:
             return self._idle.wait_for(lambda: self._running == 0, timeout)
 
     def shutdown(self):
+        """Stop at once: nothing more is handed out (scenarios still queued
+        stay queued in the database, so the next start can resume them)."""
+
+        self._stopping = True
         self._queue.put(_STOP)
         if self._executor is not None:
             self._executor.shutdown(wait=False, cancel_futures=True)
@@ -168,10 +173,16 @@ class JobManager:
                 return
 
             study_id, scenario_id, spec = item
+
+            # Shutting down: drop what is still queued, without starting it
+            if self._stopping:
+                self._done_one()
+                continue
+
             self._slots.acquire()
 
             with self._lock:
-                skip = study_id in self._cancelled
+                skip = study_id in self._cancelled or self._stopping
 
             if skip or not self._start(study_id, scenario_id):
                 self._slots.release()

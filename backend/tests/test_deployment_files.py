@@ -96,3 +96,30 @@ def test_frontend_is_built_to_static_files(blueprint):
     assert site["rootDir"] == "frontend"
     assert site["staticPublishPath"] == "dist"
     assert (ROOT / "frontend" / "package-lock.json").is_file()  # npm ci needs it
+
+
+def test_backend_uses_the_blueprints_database_and_migrates_it(blueprint):
+    api = service(blueprint, "norwich-sim-api")
+    database = next(d for d in blueprint["databases"] if d["name"] == "norwich-sim-db")
+
+    # The connection string comes from the database Render creates, so no
+    # password is committed
+    item = next(i for i in api["envVars"] if i["key"] == "DATABASE_URL")
+    assert item["fromDatabase"] == {"name": database["name"], "property": "connectionString"}
+    assert "value" not in item
+    assert "DATABASE_URL" in (ROOT / "backend/api/main.py").read_text()
+
+    # Migrations run before the server starts, from files in the repository
+    command = api["startCommand"]
+    assert command.startswith("alembic upgrade head && ")
+    assert command.index("alembic") < command.index("uvicorn")
+    assert (ROOT / "alembic.ini").is_file()
+    assert (ROOT / "backend/db/migrations/env.py").is_file()
+
+
+def test_backend_runs_studies_in_process_on_the_small_free_service(blueprint):
+    api = service(blueprint, "norwich-sim-api")
+    item = next(i for i in api["envVars"] if i["key"] == "SCENARIO_WORKERS")
+
+    assert item["value"] == "0"
+    assert "SCENARIO_WORKERS" in (ROOT / "backend/api/main.py").read_text()
