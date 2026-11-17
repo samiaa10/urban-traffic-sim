@@ -489,3 +489,45 @@ def test_roads_are_only_named_on_a_map_with_openstreetmap_attributes(client, app
     graph.road_info[(2, 3)] = RoadInfo("residential", 8.9, True, 1, False, False, None)
     assert road_name_field(graph, 2, 1) == {"name": "Riverside Road"}
     assert road_name_field(graph, 2, 3) == {"name": None}
+
+
+# ------------------------------------------------------------
+# Testing the optimiser's answers in traffic
+# ------------------------------------------------------------
+
+def test_the_optimisers_best_sites_are_tested_in_traffic(client, app):
+    response = client.post("/optimiser/evaluations", json={
+        "top": 2, "demand": [30], "seeds": [1, 2], "emergencies": 3,
+        "first_emergency_at": 20, "emergency_interval_seconds": 15,
+        "optimiser_scenarios": 40, "max_seconds": 900, "vehicles_per_station": 1,
+    })
+    assert response.status_code == 202, response.text
+    created = response.json()
+    assert created["candidates"] == ["Site #1", "Site #2"]
+    assert created["scenario_count"] == 1 * 2 * (2 + 1)
+
+    assert app.state.context.jobs.wait_until_idle(timeout=180)
+    body = client.get(f"/optimiser/evaluations/{created['evaluation_id']}").json()
+    report = body["report"]
+
+    assert body["status"] == "completed"
+    assert report["complete"] and report["scenarios_done"] == 6
+    assert report["rank_agreement_kendall_tau"] in (-1, 1)
+    for candidate in report["candidates"]:
+        demand = candidate["by_demand"][0]
+        assert demand["runs"] == 2
+        assert candidate["estimate"]["mean_response_seconds"] > 0
+        assert candidate["simulated_mean_response_seconds"] > 0
+        assert demand["mean_response_seconds"]["ci95"] is not None
+        assert demand["added_delay_vehicle_hours"]["mean"] is not None
+    assert report["explanation"]
+
+    listed = client.get("/optimiser/evaluations").json()["evaluations"]
+    assert listed[0]["evaluation_id"] == created["evaluation_id"]
+    assert client.get("/optimiser/evaluations/not-an-id").status_code == 404
+
+
+def test_evaluations_check_their_settings(client):
+    assert client.post("/optimiser/evaluations", json={"demand": [0]}).status_code in (400, 422)
+    assert client.post("/optimiser/evaluations", json={"service": "taxi"}).status_code == 422
+    assert client.post("/optimiser/evaluations", json={"surprise": 1}).status_code == 422

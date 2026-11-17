@@ -1159,3 +1159,23 @@ class ScenarioTimeseries(Base):
             name="speed_factor_fraction",
         ),
     )
+
+
+class StationEvaluation(Base):
+    """A traffic-aware evaluation of the station optimiser's best answers
+    (optimiser/evaluation.py): the scenario study that simulates them, the
+    settings, the candidates with the optimiser's estimates, and which
+    scenario position is which candidate, demand level and seed."""
+
+    __tablename__ = "station_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scenario_studies.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    settings: Mapped[dict] = mapped_column(JSONB)
+    candidates: Mapped[list] = mapped_column(JSONB)
+    plan: Mapped[list] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = utc_now_column()

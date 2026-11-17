@@ -486,3 +486,182 @@ def delete_optimiser_run(
         raise HTTPException(status_code=404, detail="Optimiser run not found")
 
     return {"status": "optimiser run deleted", "optimiser_run_id": optimiser_run_id}
+
+
+# ------------------------------------------------------------
+# Testing the optimiser's best answers in traffic
+# ------------------------------------------------------------
+
+from typing import List, Literal  # noqa: E402
+
+from pydantic import BaseModel, ConfigDict, Field  # noqa: E402
+
+
+class EvaluationRequest(BaseModel):
+    """What to test (see optimiser/evaluation.py). The scenario count is
+    len(demand) x len(seeds) x (candidates + 1)."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    name: Optional[str] = Field(None, max_length=100)
+    kind: Literal["ranking", "station_set"] = "ranking"
+    stations: int = Field(3, ge=1, le=10)
+    top: int = Field(5, ge=1, le=10)
+    candidates: Optional[str] = None
+    service: Literal["ambulance", "fire", "police"] = "ambulance"
+    distribution: Literal["uniform", "population"] = "uniform"
+    target_seconds: Optional[float] = Field(None, gt=0, le=3600)
+    speed: Optional[float] = Field(None, gt=0, le=60)
+    optimiser_scenarios: int = Field(300, ge=1, le=5000)
+    optimiser_seed: int = 1
+    demand: List[int] = Field([300, 1000], min_length=1, max_length=4)
+    seeds: List[int] = Field([1, 2, 3], min_length=1, max_length=10)
+    emergencies: int = Field(12, ge=1, le=200)
+    first_emergency_at: float = Field(120, ge=0, le=3600)
+    emergency_interval_seconds: float = Field(45, gt=0, le=3600)
+    vehicles_per_station: int = Field(2, ge=1, le=10)
+    spread_seconds: float = Field(300, ge=0, le=3600)
+    max_seconds: float = Field(2400, ge=60, le=7200)
+
+
+def _evaluation_report(context, evaluation):
+    from backend.db.scenario_repository import ScenarioRepository, result_from_rows
+    from backend.optimiser.evaluation import summarise
+
+    with context.database.transaction() as session:
+        repo = ScenarioRepository(session)
+        study = repo.get_study(evaluation.study_id)
+        rows = repo.scenarios(evaluation.study_id, with_results=True)
+        results = [None] * len(evaluation.plan)
+        for row in rows:
+            if row.result is not None:
+                results[row.position] = result_from_rows(row, trips=False)
+        status = study.status.value
+
+    return {
+        "evaluation_id": str(evaluation.id),
+        "study_id": str(evaluation.study_id),
+        "status": status,
+        "settings": evaluation.settings,
+        "report": summarise(evaluation.settings, evaluation.candidates, evaluation.plan, results),
+    }
+
+
+@router.post("/optimiser/evaluations", status_code=202)
+def create_evaluation(request: EvaluationRequest, context: AppContext = Depends(get_context)):
+    """Test the optimiser's top candidates in full traffic simulations.
+
+    The optimiser ranks the candidates (or picks a set) as usual; its top
+    `top` answers are then simulated with the osm traffic model at each
+    demand level and seed, all facing the same trips and emergencies, plus
+    a run with no emergencies per demand level and seed for the network
+    impact. Runs in the background as a scenario study; follow it with GET
+    /optimiser/evaluations/{evaluation_id}. Needs a database.
+    """
+
+    from backend.api.routes.scenarios import create_study, require_jobs
+    from backend.db.models import StationEvaluation
+    from backend.optimiser.evaluation import build_specs, candidates_to_test
+    from backend.scenarios.spec import MAX_VEHICLES, validate_against_graph
+
+    require_jobs(context)
+
+    if any(not 0 < v <= MAX_VEHICLES for v in request.demand):
+        raise HTTPException(status_code=400, detail=f"demand levels must be 1 to {MAX_VEHICLES} vehicles")
+
+    target_seconds, speed = service_settings(
+        request.service, request.target_seconds, request.speed, request.distribution
+    )
+    settings = {
+        **request.model_dump(exclude={"name", "candidates"}),
+        "target_seconds": target_seconds,
+        "speed": speed,
+        "candidate_source": "default" if request.candidates is None else "custom",
+    }
+
+    points = optimiser_points(context, request.candidates)
+    try:
+        candidates = candidates_to_test(context.graph, settings, points)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+    specs, plan = build_specs(settings, candidates)
+    for spec in specs:
+        problems = validate_against_graph(spec, context.graph)
+        if problems:
+            raise HTTPException(status_code=400, detail="; ".join(problems))
+
+    what = "sites" if request.kind == "ranking" else f"{request.stations}-station sets"
+    name = request.name or f"Top {len(candidates)} {request.service} {what} in traffic"
+    created = create_study(context, name, specs, "emergency_mean_response_seconds")
+
+    evaluation_id = uuid.uuid4()
+    with context.database.transaction() as session:
+        session.add(StationEvaluation(
+            id=evaluation_id, study_id=uuid.UUID(created["study_id"]),
+            settings=settings, candidates=candidates, plan=plan,
+        ))
+
+    return {
+        "evaluation_id": str(evaluation_id),
+        "study_id": created["study_id"],
+        "candidates": [c["label"] for c in candidates],
+        "scenario_count": len(specs),
+    }
+
+
+@router.get("/optimiser/evaluations")
+def list_evaluations(
+    limit: int = Query(20, ge=1, le=100),
+    context: AppContext = Depends(get_context),
+):
+    """Evaluations, newest first."""
+
+    from sqlalchemy import select
+
+    from backend.db.models import ScenarioStudy, StationEvaluation
+
+    require_database(context)
+    with context.database.transaction() as session:
+        rows = session.execute(
+            select(StationEvaluation, ScenarioStudy)
+            .join(ScenarioStudy, ScenarioStudy.id == StationEvaluation.study_id)
+            .order_by(StationEvaluation.created_at.desc()).limit(limit)
+        ).all()
+        return {"evaluations": [
+            {
+                "evaluation_id": str(evaluation.id),
+                "study_id": str(evaluation.study_id),
+                "name": study.name,
+                "status": study.status.value,
+                "kind": evaluation.settings["kind"],
+                "service": evaluation.settings["service"],
+                "candidates": [c["label"] for c in evaluation.candidates],
+                "created_at": evaluation.created_at.isoformat(),
+            }
+            for evaluation, study in rows
+        ]}
+
+
+@router.get("/optimiser/evaluations/{evaluation_id}")
+def get_evaluation(evaluation_id: str, context: AppContext = Depends(get_context)):
+    """Progress and, once every scenario is done, the report: each
+    candidate's simulated response times with 95% intervals, network delay
+    and what the response added to it, the optimiser's estimate next to
+    the simulated value, the final ranking and Kendall's tau."""
+
+    from backend.db.models import StationEvaluation
+
+    require_database(context)
+    try:
+        key = uuid.UUID(evaluation_id)
+    except ValueError:
+        raise HTTPException(status_code=404, detail="Evaluation not found") from None
+
+    with context.database.transaction() as session:
+        evaluation = session.get(StationEvaluation, key)
+        if evaluation is None:
+            raise HTTPException(status_code=404, detail="Evaluation not found")
+        session.expunge(evaluation)
+
+    return _evaluation_report(context, evaluation)

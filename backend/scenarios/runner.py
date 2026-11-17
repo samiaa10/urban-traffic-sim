@@ -410,6 +410,13 @@ def summarise_emergencies(spec, emergencies):
         "mean_wait_seconds": float(sum(waits) / len(waits)) if waits else None,
         "max_wait_seconds": float(max(waits)) if waits else None,
         "by_service": by_service,
+        # Each emergency's response time in seconds, in the order they
+        # happened (None: not reached), for percentiles across runs
+        "responses": [
+            float(e["emergency"].response_time)
+            if _sent(e) and e["emergency"].resolved else None
+            for e in emergencies
+        ],
     }
     return summary
 
