@@ -26,6 +26,10 @@ class Emergency:
         # The emergency vehicle that was sent to this emergency
         self.assigned_vehicle = None
 
+        # Simulated time a vehicle was sent (later than created_at if the
+        # emergency waited in the queue, see services.py)
+        self.dispatched_at = None
+
     def resolve(self, resolved_time):
         self.resolved_at = resolved_time
         self.response_time = resolved_time - self.created_at

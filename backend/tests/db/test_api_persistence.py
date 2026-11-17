@@ -606,3 +606,33 @@ def test_runs_use_the_servers_default_traffic_model(make_app):
     assert osm_client.post(
         "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "fast"}
     ).status_code == 422
+
+
+def test_queued_emergencies_are_saved_when_sent_or_when_the_run_ends(make_app):
+    client = TestClient(make_app(traffic_model="osm"))
+    run_id = start(client)
+    app = client.app
+    near, far = point(app, 0), point(app, 15)
+    client.post("/station/create", params=near)
+    client.post("/station/add-vehicle", params={"station_id": 0})
+
+    assert client.post("/emergency/create", params=far).status_code == 200
+    assert client.post("/emergency/create", params=far).status_code == 202   # queued
+
+    for _ in range(600):
+        client.post("/simulation/step")
+        states = [s["state"] for s in client.get("/emergency/status").json()["emergencies"]]
+        if states == ["arrived", "arrived"]:
+            break
+
+    # A third one is still waiting when the run ends
+    assert client.post("/emergency/create", params=far).status_code in (200, 202)
+    client.post("/emergency/create", params=far)
+    client.delete(f"/simulations/{run_id}")
+
+    saved = history(client, run_id, "/emergencies")["emergencies"]
+    assert [e["status"] for e in saved[:2]] == ["arrived", "arrived"]
+    assert saved[0]["waited_seconds"] == 0
+    assert saved[1]["waited_seconds"] > 0
+    assert saved[1]["response_time_seconds"] > saved[0]["response_time_seconds"]
+    assert any(e.get("cancel_reason") == "still_queued" for e in saved[2:])

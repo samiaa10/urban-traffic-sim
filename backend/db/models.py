@@ -336,13 +336,18 @@ class Emergency(Base):
     status: Mapped[EmergencyStatus] = mapped_column(
         pg_enum(EmergencyStatus, "emergency_status")
     )
-    # Why nothing could be sent: "no_vehicle" or "no_route"
+    # Why nothing could be sent: "no_vehicle", "no_route", or
+    # "still_queued" (it waited for a vehicle until the run ended)
     cancel_reason: Mapped[Optional[str]] = mapped_column(String(32))
 
     # The vehicle sent (None if none was available)
     vehicle_id: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
 
     created_sim_time: Mapped[float] = mapped_column(Float)
+    # When a vehicle was sent: later than created_sim_time if the emergency
+    # waited in the queue (realistic emergency rules); None for emergencies
+    # saved before this was recorded
+    dispatched_sim_time: Mapped[Optional[float]] = mapped_column(Float)
     arrived_sim_time: Mapped[Optional[float]] = mapped_column(Float)
     response_seconds: Mapped[Optional[float]] = mapped_column(Float)
 
@@ -380,7 +385,7 @@ class Emergency(Base):
             name="reason_when_cancelled",
         ),
         CheckConstraint(
-            "cancel_reason IS NULL OR cancel_reason IN ('no_vehicle', 'no_route')",
+            "cancel_reason IS NULL OR cancel_reason IN ('no_vehicle', 'no_route', 'still_queued')",
             name="known_cancel_reason",
         ),
         CheckConstraint(
@@ -1010,6 +1015,9 @@ class ScenarioResult(Base):
     emergency_mean_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
     emergency_worst_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
     emergency_within_target_percent: Mapped[Optional[float]] = mapped_column(Float)
+    # Queue and per-service figures of the emergencies (scenarios/runner.py
+    # summarise_emergencies "detail"); None for results saved before them
+    emergency_detail: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # Execution
     wall_seconds: Mapped[float] = mapped_column(Float)

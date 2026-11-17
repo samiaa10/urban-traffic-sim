@@ -95,13 +95,50 @@ def check_station_count(stations):
         )
 
 
+def service_settings(service, target_seconds, speed, distribution):
+    """Fill in the speed and target from the service (simulation/
+    services.py) when not given; without a service the original defaults
+    (20 m/s, 480 s) stay."""
+
+    from backend.simulation.services import service as find_service
+
+    if distribution not in ("uniform", "population"):
+        raise HTTPException(status_code=400, detail="distribution must be uniform or population")
+
+    if service is None:
+        return (480.0 if target_seconds is None else target_seconds,
+                20.0 if speed is None else speed)
+
+    try:
+        chosen = find_service(service)
+    except ValueError as error:
+        raise HTTPException(status_code=400, detail=str(error)) from None
+
+    return (chosen.target_seconds if target_seconds is None else target_seconds,
+            chosen.speed if speed is None else speed)
+
+
+def extra_settings(service, distribution):
+    """The service and distribution, in answers that used them (answers
+    without them look exactly as they always did)."""
+
+    extra = {}
+    if service is not None:
+        extra["service"] = service
+    if distribution != "uniform":
+        extra["distribution"] = distribution
+    return extra
+
+
 def optimise(
     context, kind, candidates, scenarios, seed, target_seconds, speed,
-    simulation_id, reuse, stations=None,
+    simulation_id, reuse, stations=None, service=None, distribution="uniform",
 ):
     """Answer an optimiser request: reuse a saved answer, or compute one
     and save it. Adds optimiser_run_id (None without a database, or if
     saving failed) and reused to the answer."""
+
+    target_seconds, speed = service_settings(service, target_seconds, speed, distribution)
 
     if kind == "station_set":
         check_station_count(stations)
@@ -121,12 +158,15 @@ def optimise(
         request_key = optimiser_request_key(
             kind, context.graph_sha256, points, blocked_segments,
             scenarios, seed, target_seconds, speed, stations,
+            distribution=distribution,
         )
 
         if reuse:
             saved = saved_answer(database, request_key)
             if saved is not None:
-                return saved
+                # Saved rows do not keep these; the key covers what they
+                # change (speed, target, distribution)
+                return {**saved, **extra_settings(service, distribution)}
 
     began = time.perf_counter()
 
@@ -138,13 +178,15 @@ def optimise(
             seed=seed,
             target_seconds=target_seconds,
             speed=speed,
-            blocked_segments=blocked_segments
+            blocked_segments=blocked_segments,
+            distribution=distribution,
         )
         answer = {
             "scenarios": scenarios,
             "seed": seed,
             "target_seconds": target_seconds,
             "speed": speed,
+            **extra_settings(service, distribution),
             "closed_roads": len(blocked_segments),
             "explanation": explain_best(results, scenarios, target_seconds),
             "results": results
@@ -160,7 +202,8 @@ def optimise(
                 seed=seed,
                 target_seconds=target_seconds,
                 speed=speed,
-                blocked_segments=blocked_segments
+                blocked_segments=blocked_segments,
+                distribution=distribution,
             )
 
         except ValueError as error:
@@ -175,6 +218,7 @@ def optimise(
             "seed": seed,
             "target_seconds": target_seconds,
             "speed": speed,
+            **extra_settings(service, distribution),
             "closed_roads": len(blocked_segments),
             "explanation": explain_station_set(
                 outcome, scenarios, target_seconds
@@ -253,10 +297,12 @@ def optimise_stations(
     candidates: Optional[str] = None,
     scenarios: int = 200,
     seed: int = 1,
-    target_seconds: float = 480,
-    speed: float = 20,
+    target_seconds: Optional[float] = None,
+    speed: Optional[float] = None,
     simulation_id: Optional[str] = None,
     reuse: bool = False,
+    service: Optional[str] = None,
+    distribution: str = "uniform",
     context: AppContext = Depends(get_context)
 ):
     """Rank candidate station locations by emergency response time.
@@ -266,11 +312,15 @@ def optimise_stations(
     about 40 locations over the whole map. Roads closed in the run named
     by simulation_id (or the default run if it is left out) are avoided.
     reuse=true answers from a saved identical request when there is one.
+    service (ambulance, fire or police) sets the speed and target to that
+    service's (unless given); without it they default to 20 m/s and 480 s,
+    as always. distribution=population places emergencies where people
+    live (Census 2021) instead of evenly over the junctions.
     """
 
     return optimise(
         context, "ranking", candidates, scenarios, seed, target_seconds,
-        speed, simulation_id, reuse,
+        speed, simulation_id, reuse, service=service, distribution=distribution,
     )
 
 
@@ -280,10 +330,12 @@ def optimise_station_group(
     candidates: Optional[str] = None,
     scenarios: int = 200,
     seed: int = 1,
-    target_seconds: float = 480,
-    speed: float = 20,
+    target_seconds: Optional[float] = None,
+    speed: Optional[float] = None,
     simulation_id: Optional[str] = None,
     reuse: bool = False,
+    service: Optional[str] = None,
+    distribution: str = "uniform",
     context: AppContext = Depends(get_context)
 ):
     """Choose several stations that work well together.
@@ -297,6 +349,7 @@ def optimise_station_group(
     return optimise(
         context, "station_set", candidates, scenarios, seed, target_seconds,
         speed, simulation_id, reuse, stations=stations,
+        service=service, distribution=distribution,
     )
 
 
@@ -311,10 +364,12 @@ def create_optimiser_run(
     candidates: Optional[str] = None,
     scenarios: int = 200,
     seed: int = 1,
-    target_seconds: float = 480,
-    speed: float = 20,
+    target_seconds: Optional[float] = None,
+    speed: Optional[float] = None,
     simulation_id: Optional[str] = None,
     reuse: bool = False,
+    service: Optional[str] = None,
+    distribution: str = "uniform",
     context: AppContext = Depends(get_context)
 ):
     """Run the optimiser (kind: ranking or station_set) and save it.
@@ -334,6 +389,7 @@ def create_optimiser_run(
         context, kind, candidates, scenarios, seed, target_seconds, speed,
         simulation_id, reuse,
         stations=stations if kind == "station_set" else None,
+        service=service, distribution=distribution,
     )
 
 

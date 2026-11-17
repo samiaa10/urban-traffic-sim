@@ -69,7 +69,24 @@ def test_downgrade_removes_everything_and_upgrade_works_again(engine):
 
 def test_the_database_is_at_the_latest_revision(engine):
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0004"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0005"
+
+
+def test_the_emergency_queue_migration_can_be_undone_on_its_own(engine):
+    """0005 down to 0004 removes emergencies.dispatched_sim_time and the
+    still_queued reason; up again restores them."""
+
+    def columns():
+        return {c["name"] for c in inspect(engine).get_columns("emergencies")}
+
+    assert "dispatched_sim_time" in columns()
+    downgrade(engine, "0004")
+    try:
+        assert "dispatched_sim_time" not in columns()
+        assert tables(engine) == TABLES
+    finally:
+        migrate(engine, "head")
+    assert "dispatched_sim_time" in columns()
 
 
 def test_the_traffic_model_migration_can_be_undone_on_its_own(engine):

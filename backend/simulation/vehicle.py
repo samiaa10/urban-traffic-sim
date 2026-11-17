@@ -72,6 +72,12 @@ class Vehicle:
         # The station this vehicle belongs to (emergency vehicles only)
         self.home_station = None
 
+        # Driving back to its station after a call (realistic emergency
+        # rules, services.py); needs_route_home until it has been given
+        # the route
+        self.going_home = False
+        self.needs_route_home = False
+
         # Real road lengths ((lat, lon), (lat, lon)) -> metres, shared with
         # the Simulation (see Simulation.use_road_lengths). None means roads
         # are measured as straight lines between their two junctions.

@@ -5,6 +5,7 @@ from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
 from backend.simulation.road_model import SIMPLE_ROADS, undirected
+from backend.simulation.services import rules_for
 
 
 # How busy a road is, from the number of vehicles on it. The map colours
@@ -93,6 +94,11 @@ class Simulation:
         # How roads behave: speed limits, capacity and how traffic slows
         # vehicles (road_model.py). The simple model is the original rules.
         self.road_model = road_model or SIMPLE_ROADS
+
+        # How emergencies are dispatched, queued and finished
+        # (services.py): the original rules with the simple model, the
+        # realistic ones with the osm model
+        self.emergency_rules = rules_for(self.road_model)
 
         # Simulated time in seconds (goes up by 1 every step)
         self.time = 0
@@ -318,12 +324,31 @@ class Simulation:
 
             emergency.resolve(self.time)
 
+            if self.emergency_rules.drive_back and vehicle.home_station is not None:
+                # It drives back (dispatch.after_step gives it the route);
+                # it can be sent again from on the way
+                vehicle.on_emergency = False
+                vehicle.available = True
+                vehicle.going_home = True
+                vehicle.needs_route_home = True
             # Free the vehicle so it can answer the next emergency
-            if vehicle.home_station is not None:
+            elif vehicle.home_station is not None:
                 vehicle.home_station.return_vehicle(vehicle)
             else:
                 vehicle.on_emergency = False
                 vehicle.available = True
+
+    @staticmethod
+    def on_call(vehicle):
+        """An emergency vehicle driving to an emergency."""
+        return vehicle.on_emergency and vehicle.vehicle_type != "normal"
+
+    def queued_emergencies(self):
+        """Emergencies waiting for a vehicle, oldest first."""
+        return sorted(
+            (e for e in self.emergencies if e.active and e.assigned_vehicle is None),
+            key=lambda e: e.created_at,
+        )
 
     def cancel_emergency(self, emergency):
         """Remove an emergency that could not be answered and free its vehicle."""
@@ -483,10 +508,14 @@ class Simulation:
         # using this snapshot; the speed is re-read every second.)
         traffic = self.get_traffic_density()
         key = self.road_model.key
+        rules = self.emergency_rules
 
         def speed_factor(point_a, point_b):
             road = key(point_a, point_b)
             return self.road_speed_factor(road, traffic.get(road, 0))
+
+        def emergency_speed_factor(point_a, point_b):
+            return rules.emergency_factor(speed_factor(point_a, point_b))
 
         for vehicle in self.vehicles:
 
@@ -510,7 +539,11 @@ class Simulation:
             vehicle.move(
                 1,
                 is_blocked=self.is_road_closed,
-                speed_factor=speed_factor,
+                speed_factor=(
+                    emergency_speed_factor
+                    if rules.right_of_way and self.on_call(vehicle)
+                    else speed_factor
+                ),
                 limit_factor=self.limit_factor_for(vehicle)
             )
 

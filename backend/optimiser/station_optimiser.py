@@ -245,10 +245,13 @@ def prepare_stations(graph, candidates, blocked_segments=None):
     return stations
 
 
-def sample_emergencies(stations, scenarios, seed):
+def sample_emergencies(stations, scenarios, seed, distribution="uniform", graph=None):
     """Random emergencies, the same for every candidate (same seed = same list).
 
-    We only use junctions at least one candidate can reach.
+    We only use junctions at least one candidate can reach. With
+    distribution="population" they are drawn in proportion to where people
+    live (Census 2021 output areas, simulation/population.py; needs the
+    graph), instead of every junction being equally likely.
     """
 
     reachable = set()
@@ -258,6 +261,15 @@ def sample_emergencies(stations, scenarios, seed):
 
     pool = sorted(reachable)
     generator = random.Random(seed)
+
+    if distribution == "population":
+        from backend.simulation.population import graph_junction_weights, weighted_draws
+
+        weights = graph_junction_weights(graph, pool)
+        return weighted_draws(weights, generator, scenarios)
+
+    if distribution != "uniform":
+        raise ValueError("distribution must be uniform or population")
 
     return [generator.choice(pool) for _ in range(scenarios)]
 
@@ -269,7 +281,8 @@ def optimise_station_locations(
     seed=1,
     target_seconds=480,
     speed=20.0,
-    blocked_segments=None
+    blocked_segments=None,
+    distribution="uniform",
 ):
     """Rank candidate station locations.
 
@@ -279,6 +292,7 @@ def optimise_station_locations(
     target_seconds  "good" response time (default 8 minutes)
     speed           ambulance speed in metres per second (20 = 72 km/h)
     blocked_segments  closed roads to route around (optional)
+    distribution    where emergencies happen: "uniform" or "population"
 
     Returns a list of results, best candidate first.
     """
@@ -292,7 +306,7 @@ def optimise_station_locations(
     stations = prepare_stations(graph, candidates, blocked_segments)
 
     # Step 2: random emergencies, the same for every candidate.
-    emergencies = sample_emergencies(stations, scenarios, seed)
+    emergencies = sample_emergencies(stations, scenarios, seed, distribution, graph)
 
     # Step 3: measure response times for each candidate
     measured = []
@@ -683,7 +697,8 @@ def optimise_station_set(
     seed=1,
     target_seconds=480,
     speed=20.0,
-    blocked_segments=None
+    blocked_segments=None,
+    distribution="uniform",
 ):
     """Choose `count` stations from the candidates that work well TOGETHER.
 
@@ -718,7 +733,7 @@ def optimise_station_set(
             f"candidate junctions are available."
         )
 
-    emergencies = sample_emergencies(stations, scenarios, seed)
+    emergencies = sample_emergencies(stations, scenarios, seed, distribution, graph)
 
     times = response_table(stations, emergencies, speed)
     penalty = unreachable_penalty(times)

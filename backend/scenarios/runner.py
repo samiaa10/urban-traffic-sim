@@ -34,6 +34,7 @@ from backend.scenarios.spec import ScenarioSpec, load_stored_spec, validate_agai
 from backend.simulation import dispatch, rerouting
 from backend.simulation.demand import DemandModel, Zone
 from backend.simulation.simulation import Simulation
+from backend.simulation.population import Sampler
 from backend.simulation.road_model import make_road_model
 from backend.simulation.traffic_manager import ReroutePolicy, TrafficManager, car_speed
 
@@ -196,19 +197,28 @@ def run_scenario(world, spec, progress=None, measure=True):
 
     # ---- Emergency stations and the emergencies' schedule ----------
     for station_spec in spec.stations:
-        station = simulation.add_station(station_spec.latitude, station_spec.longitude)
+        station = simulation.add_station(
+            station_spec.latitude, station_spec.longitude, station_spec.service
+        )
         location = station.get_location()
         for _ in range(station_spec.ambulances):
             simulation.add_emergency_vehicle(
-                [location, location], station, speed=station_spec.speed
+                [location, location], station, speed=station_spec.speed,
+                vehicle_type=station_spec.service,
             )
 
-    emergency_stream = _stream(spec.seed, "emergencies")
-    emergency_plan = [
-        (spec.emergencies.first_at + n * spec.emergencies.interval_seconds,
-         emergency_stream.choice(world.demand.nodes))
-        for n in range(spec.emergencies.count)
-    ]
+    # Each group has its own stream (the first keeps the original name, so
+    # a one-group spec draws exactly the locations it always did) and its
+    # own place sampler (uniform, or weighted by population)
+    emergency_plan = []
+    for number, group in enumerate(spec.emergency_groups):
+        stream = _stream(spec.seed, "emergencies" if number == 0 else f"emergencies:{number}")
+        sampler = Sampler(world.network, world.demand.nodes, group.distribution)
+        emergency_plan += [
+            (group.first_at + n * group.interval_seconds, number, n, sampler.draw(stream))
+            for n in range(group.count)
+        ]
+    emergency_plan.sort(key=lambda item: item[:3])
     emergency_index = 0
     emergencies = []   # dicts, filled in as they happen
 
@@ -288,13 +298,17 @@ def run_scenario(world, spec, progress=None, measure=True):
 
         # 3. Emergencies due now
         while emergency_index < len(emergency_plan) and emergency_plan[emergency_index][0] <= now:
-            _, node = emergency_plan[emergency_index]
+            _, group, _, node = emergency_plan[emergency_index]
             emergency_index += 1
             latitude, longitude = network.position[node]
-            outcome = dispatch.dispatch_emergency(world.graph, simulation, latitude, longitude)
+            service = spec.emergency_groups[group].service
+            outcome = dispatch.dispatch_emergency(
+                world.graph, simulation, latitude, longitude, service
+            )
             emergencies.append({
                 "at": now,
                 "node": node,
+                "group": group,
                 "status": outcome["status"],
                 "emergency": outcome["emergency"],
                 "distance": outcome.get("distance"),
@@ -303,7 +317,8 @@ def run_scenario(world, spec, progress=None, measure=True):
         # 4. Stop when nothing is left to happen
         trips_done = tracker.all_finished
         emergencies_done = all(
-            e["status"] != "dispatched" or e["emergency"].resolved for e in emergencies
+            e["status"] not in ("dispatched", "queued") or e["emergency"].resolved
+            for e in emergencies
         )
         if (
             now >= spec.max_seconds
@@ -332,6 +347,71 @@ def run_scenario(world, spec, progress=None, measure=True):
         spec, world, simulation, traffic, tracker, trips, surges, emergencies,
         reroutes_before, wall_started, cpu_started,
     )
+
+
+def _sent(entry):
+    """Whether a vehicle was sent (at once, or later from the queue)."""
+
+    return entry["status"] == "dispatched" or (
+        entry["status"] == "queued" and entry["emergency"].assigned_vehicle is not None
+    )
+
+
+def _emergency_figures(entries, requested, target_of):
+    responses = [
+        e["emergency"].response_time for e in entries if _sent(e) and e["emergency"].resolved
+    ]
+    within = sum(
+        1 for e in entries
+        if _sent(e) and e["emergency"].resolved and e["emergency"].response_time <= target_of(e)
+    )
+    return {
+        "requested": requested,
+        "dispatched": sum(1 for e in entries if _sent(e)),
+        "refused": sum(1 for e in entries if e["status"] in ("no_vehicle", "no_route")),
+        "arrived": len(responses),
+        "mean_response_seconds": float(sum(responses) / len(responses)) if responses else None,
+        "worst_response_seconds": float(max(responses)) if responses else None,
+        "within_target_percent": 100 * within / requested if requested else None,
+    }
+
+
+def summarise_emergencies(spec, emergencies):
+    """The emergency figures of a scenario: the headline numbers (over all
+    groups, each emergency judged against its own group's target) and,
+    under "detail", the queue and each service separately."""
+
+    groups = spec.emergency_groups
+    requested = sum(group.count for group in groups)
+    summary = _emergency_figures(
+        emergencies, requested, lambda e: groups[e["group"]].target_seconds
+    )
+
+    waits = [
+        e["emergency"].dispatched_at - e["emergency"].created_at
+        for e in emergencies if _sent(e) and e["emergency"].dispatched_at is not None
+    ]
+    by_service = []
+    for service in sorted({group.service for group in groups if group.count}):
+        entries = [e for e in emergencies if groups[e["group"]].service == service]
+        figures = _emergency_figures(
+            entries,
+            sum(group.count for group in groups if group.service == service),
+            lambda e: groups[e["group"]].target_seconds,
+        )
+        by_service.append({"service": service, **figures})
+
+    summary["detail"] = {
+        "queued": sum(1 for e in emergencies if e["status"] == "queued"),
+        "still_queued": sum(
+            1 for e in emergencies
+            if e["status"] == "queued" and e["emergency"].assigned_vehicle is None
+        ),
+        "mean_wait_seconds": float(sum(waits) / len(waits)) if waits else None,
+        "max_wait_seconds": float(max(waits)) if waits else None,
+        "by_service": by_service,
+    }
+    return summary
 
 
 def _result(spec, world, simulation, traffic, tracker, trips, surges,
@@ -378,24 +458,7 @@ def _result(spec, world, simulation, traffic, tracker, trips, surges,
     finished = status.count(FINISHED)
     vehicle_seconds = sum(row["vehicle_seconds"] for row in tracker.timeseries)
 
-    # Emergencies
-    responses = [
-        e["emergency"].response_time for e in emergencies
-        if e["status"] == "dispatched" and e["emergency"].resolved
-    ]
-    target = spec.emergencies.target_seconds
-    emergency_summary = {
-        "requested": spec.emergencies.count,
-        "dispatched": sum(1 for e in emergencies if e["status"] == "dispatched"),
-        "refused": sum(1 for e in emergencies if e["status"] != "dispatched"),
-        "arrived": len(responses),
-        "mean_response_seconds": float(sum(responses) / len(responses)) if responses else None,
-        "worst_response_seconds": float(max(responses)) if responses else None,
-        "within_target_percent": (
-            100 * sum(1 for r in responses if r <= target) / spec.emergencies.count
-            if spec.emergencies.count else None
-        ),
-    }
+    emergency_summary = summarise_emergencies(spec, emergencies)
 
     wall = time.perf_counter() - wall_started
 

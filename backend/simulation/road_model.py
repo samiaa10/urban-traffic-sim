@@ -115,6 +115,8 @@ class OsmRoads:
 
     def __init__(self, network, min_road_length=MIN_ROAD_LENGTH):
         self.min_road_length = min_road_length
+        # The road network (emergency dispatch plans with it)
+        self.network = network
 
         # Directed key -> speed limit (m/s) and capacity (vehicles)
         self.limits = {}

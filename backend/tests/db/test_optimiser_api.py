@@ -204,3 +204,22 @@ def test_a_result_is_still_answered_if_it_cannot_be_saved(client, app, monkeypat
 
     assert answer["optimiser_run_id"] is None
     assert answer["results"]
+
+
+def test_service_and_population_settings_change_the_answer_and_are_reused(client):
+    params = {"scenarios": 60, "candidates": "52.621,1.281;52.625,1.287;52.627,1.29"}
+
+    plain = client.get("/optimiser/stations", params=params).json()
+    fire = client.get("/optimiser/stations", params={**params, "service": "fire"}).json()
+    people = client.get("/optimiser/stations", params={**params, "distribution": "population"}).json()
+
+    assert (plain["speed"], plain["target_seconds"]) == (20, 480)
+    assert "service" not in plain and "distribution" not in plain
+    assert (fire["speed"], fire["target_seconds"], fire["service"]) == (17, 480, "fire")
+    assert people["distribution"] == "population"
+    assert client.get("/optimiser/stations", params={**params, "service": "taxi"}).status_code == 400
+    assert client.get("/optimiser/stations", params={**params, "distribution": "x"}).status_code == 400
+
+    again = client.get("/optimiser/stations", params={**params, "service": "fire", "reuse": True}).json()
+    assert again["reused"] is True
+    assert again["service"] == "fire" and again["results"] == fire["results"]

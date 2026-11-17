@@ -170,6 +170,13 @@ def emergency_json(emergency):
         "vehicle_id": vehicle.vehicle_index if vehicle is not None else None,
         "station_id": vehicle.station.station_index if vehicle is not None else None,
         "created_at": emergency.created_sim_time,
+        # When a vehicle was sent, and how long it waited in the queue for
+        # one (None for emergencies saved before this was recorded)
+        "dispatched_at": emergency.dispatched_sim_time,
+        "waited_seconds": (
+            emergency.dispatched_sim_time - emergency.created_sim_time
+            if emergency.dispatched_sim_time is not None else None
+        ),
         "arrived_at": emergency.arrived_sim_time,
         "response_time_seconds": emergency.response_seconds,
         "route_distance_metres": emergency.route_distance_m,

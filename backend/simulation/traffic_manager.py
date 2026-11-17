@@ -56,7 +56,7 @@ import math
 import random
 import time
 
-from backend.simulation import rerouting
+from backend.simulation import dispatch, rerouting
 from backend.simulation.demand import DemandModel, Zone
 
 
@@ -185,6 +185,9 @@ class TrafficManager:
 
         self._slow_cache = {}
         self._slow_cache_key = None
+
+        # Emergencies the queue sent a vehicle to in the last step
+        self.dispatched_from_queue = []
 
         # Recent average number of vehicles on each road (see the module
         # docstring); starts from the traffic right now
@@ -762,6 +765,9 @@ class TrafficManager:
 
         self._run_surges()
         self.simulation.step()
+        # Emergency vehicles home, queued emergencies answered (realistic
+        # emergency rules only; services.py)
+        self.dispatched_from_queue = dispatch.after_step(self.simulation)
         self.update_recent_traffic()
         self.process_events()
         return switched + self.reroute_pass()

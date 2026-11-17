@@ -39,6 +39,15 @@ from backend.db.repository import Road, RunRepository
 
 logger = logging.getLogger(__name__)
 
+
+def dispatch_route_metres(vehicle):
+    """Length of the route a vehicle was just given (its full route)."""
+
+    route = vehicle.route
+    return sum(
+        vehicle.segment_distance(route[i], route[i + 1]) for i in range(len(route) - 1)
+    )
+
 # Seconds of simulated time between metrics snapshots
 METRICS_INTERVAL = 60
 
@@ -69,6 +78,7 @@ class RunRecorder:
         self.station_ids = {}       # station index -> stations.id
         self.vehicle_ids = {}       # vehicle index -> emergency_vehicles.id
         self.emergency_ids = {}     # Emergency -> emergencies.id (not yet arrived)
+        self.queued = []            # Emergencies waiting for a vehicle (not saved yet)
         self.surge_ids = {}         # Surge -> (surges.id, (spawned, failed))
 
         # How far through simulation.events we have recorded
@@ -139,6 +149,14 @@ class RunRecorder:
 
         def end(repo):
             self._record_changes(repo)
+            # Still waiting for a vehicle when the run ended
+            for emergency in self.queued:
+                repo.cancel_emergency(
+                    self.run.id_uuid, emergency.emergency_type,
+                    emergency.latitude, emergency.longitude, emergency.created_at,
+                    "still_queued",
+                )
+            self.queued = []
             self._progress(repo)
             repo.end_run(self.run.id_uuid, RunStatus(status), self.run.simulation.time)
 
@@ -249,6 +267,19 @@ class RunRecorder:
                     else IncidentEndReason.EXPIRED,
                 )
 
+        # Emergencies the queue has now sent a vehicle to
+        for emergency in [e for e in self.queued if e.assigned_vehicle is not None]:
+            vehicle = emergency.assigned_vehicle
+            row = repo.dispatch_emergency(
+                run_id, emergency.emergency_type,
+                emergency.latitude, emergency.longitude, emergency.created_at,
+                self.vehicle_ids.get(simulation.vehicles.index(vehicle)),
+                dispatch_route_metres(vehicle), None,
+                dispatched_sim_time=emergency.dispatched_at,
+            )
+            self.emergency_ids[emergency] = row.id
+            self.queued.remove(emergency)
+
         for emergency in [e for e in self.emergency_ids if e.resolved]:
             vehicle = emergency.assigned_vehicle
             repo.emergency_arrived(
@@ -331,6 +362,13 @@ class RunRecorder:
             self.emergency_ids[emergency] = row.id
 
         self._write(save, "a dispatched emergency")
+
+    def emergency_queued(self, emergency):
+        """No vehicle was free: it is saved once one is sent (sync), or as
+        still_queued if the run ends first."""
+
+        if self.status == "on":
+            self.queued.append(emergency)
 
     def emergency_refused(self, emergency, reason, vehicle_index=None):
         """Nothing could be sent (reason: no_vehicle or no_route)."""
