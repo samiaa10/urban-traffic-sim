@@ -543,7 +543,9 @@ def _evaluation_report(context, evaluation):
         "study_id": str(evaluation.study_id),
         "status": status,
         "settings": evaluation.settings,
-        "report": summarise(evaluation.settings, evaluation.candidates, evaluation.plan, results),
+        "report": summarise(
+            evaluation.settings, evaluation.candidates, evaluation.plan, results, context.graph
+        ),
     }
 
 

@@ -417,6 +417,8 @@ def summarise_emergencies(spec, emergencies):
             if _sent(e) and e["emergency"].resolved else None
             for e in emergencies
         ],
+        # The junction of each emergency, in the same order
+        "locations": [e["node"] for e in emergencies],
     }
     return summary
 

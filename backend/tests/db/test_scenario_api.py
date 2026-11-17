@@ -520,6 +520,11 @@ def test_the_optimisers_best_sites_are_tested_in_traffic(client, app):
         assert candidate["simulated_mean_response_seconds"] > 0
         assert demand["mean_response_seconds"]["ci95"] is not None
         assert demand["added_delay_vehicle_hours"]["mean"] is not None
+        # Compared with the optimiser's estimate for the same emergencies
+        assert candidate["paired_estimate_seconds"] > 0
+        assert candidate["estimate_gap_seconds"] == pytest.approx(
+            candidate["simulated_mean_response_seconds"] - candidate["paired_estimate_seconds"]
+        )
     assert report["explanation"]
 
     listed = client.get("/optimiser/evaluations").json()["evaluations"]

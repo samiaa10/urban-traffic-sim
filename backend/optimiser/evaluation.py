@@ -32,6 +32,7 @@ from backend.optimiser.station_optimiser import (
     dense_candidates,
     optimise_station_locations,
     optimise_station_set,
+    shortest_distances,
 )
 from backend.scenarios.spec import ScenarioSpec
 
@@ -195,9 +196,27 @@ def _figure(mean_and_interval):
     return {"mean": mean, "ci95": half}
 
 
-def summarise(settings, candidates, plan, results):
+def paired_estimates(graph, settings, candidate, results_for_candidate):
+    """The optimiser's estimate (free-flow road distance / speed, nearest
+    station, every vehicle free) for exactly the emergencies that were
+    simulated for this candidate: what the simulation is compared with."""
+
+    distances = [
+        shortest_distances(graph, station["node"]) for station in candidate["stations"]
+    ]
+    estimates = []
+    for result in results_for_candidate:
+        for node in (result["emergencies"].get("detail") or {}).get("locations", []):
+            reach = [d[node] for d in distances if node in d]
+            estimates.append(min(reach) / settings["speed"] if reach else None)
+    return estimates
+
+
+def summarise(settings, candidates, plan, results, graph=None):
     """The evaluation report. results[i] is the result dict of scenario
-    position i (None if it has not finished or failed)."""
+    position i (None if it has not finished or failed). With the graph,
+    each candidate is also compared with the optimiser's estimate for the
+    very emergencies that were simulated (paired)."""
 
     target = settings["target_seconds"]
     done = sum(1 for r in results if r is not None)
@@ -249,8 +268,20 @@ def summarise(settings, candidates, plan, results):
 
         simulated = [d["pooled_mean_response_seconds"] for d in by_demand]
         simulated_mean = statistics.mean(simulated) if simulated and None not in simulated else None
+
+        # Compare with the estimate for the same emergencies when the
+        # graph is given; otherwise with the optimiser's own sample
         estimate = candidate["estimate"]["mean_response_seconds"]
+        paired = None
+        if graph is not None:
+            mine = [results[i] for i, p in enumerate(plan) if p["candidate"] == index and results[i] is not None]
+            reached = [e for e in paired_estimates(graph, settings, candidate, mine) if e is not None]
+            if reached:
+                paired = statistics.mean(reached)
+                estimate = paired
+
         rows.append({
+            "paired_estimate_seconds": paired,
             "label": candidate["label"],
             "stations": candidate["stations"],
             "estimate": candidate["estimate"],
@@ -296,8 +327,12 @@ def explain(rows, order, tau, settings):
     gaps = [r["estimate_gap_percent"] for r in rows if r["estimate_gap_percent"] is not None]
     if gaps:
         lines.append(
-            f"Traffic, queues and dispatch made responses {min(gaps):+.0f}% to {max(gaps):+.0f}% "
-            "slower than the optimiser's free-flow estimate."
+            f"For the same emergencies, simulated responses differed from the optimiser's "
+            f"free-flow estimate by {min(gaps):+.0f}% to {max(gaps):+.0f}% (traffic, queues "
+            "while vehicles were busy, and dispatch)."
+            if rows[0]["paired_estimate_seconds"] is not None else
+            f"Simulated responses differed from the optimiser's estimate by {min(gaps):+.0f}% to "
+            f"{max(gaps):+.0f}% (different emergency locations as well as traffic, queues and dispatch)."
         )
     if tau is not None:
         agreement = "the same order" if tau == 1 else (
