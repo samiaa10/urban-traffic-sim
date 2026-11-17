@@ -140,6 +140,9 @@ export function OptimiserPanel({
 
   const [stationCount, setStationCount] = useState(3)
   const [targetMinutes, setTargetMinutes] = useState(8)
+  const [service, setService] = useState<"ambulance" | "fire" | "police">("ambulance")
+  const [distribution, setDistribution] = useState<"uniform" | "population">("uniform")
+  const options = { service, distribution }
 
   useEffect(() => {
     onLoadingChange?.(loading !== null)
@@ -150,7 +153,7 @@ export function OptimiserPanel({
     setError("")
 
     try {
-      onResults(await fetchRanking())
+      onResults(await fetchRanking(undefined, options))
     } catch (caught) {
       setError(describeFailure(caught))
     } finally {
@@ -163,7 +166,7 @@ export function OptimiserPanel({
     setError("")
 
     try {
-      onSetResults(await fetchStationSet(stationCount, targetMinutes))
+      onSetResults(await fetchStationSet(stationCount, targetMinutes, undefined, options))
     } catch (caught) {
       setError(describeFailure(caught))
     } finally {
@@ -175,8 +178,36 @@ export function OptimiserPanel({
     <Panel
       id="optimiser"
       title="Station optimiser"
-      caption="Where should ambulance stations go?"
+      caption="Where should emergency stations go?"
     >
+      <div className="fields">
+        <label className="field">
+          Service
+          <select
+            aria-label="Optimiser service"
+            value={service}
+            disabled={loading !== null}
+            onChange={(event) => setService(event.target.value as typeof service)}
+          >
+            <option value="ambulance">Ambulance</option>
+            <option value="fire">Fire engine</option>
+            <option value="police">Police car</option>
+          </select>
+        </label>
+        <label className="field">
+          Emergencies
+          <select
+            aria-label="Optimiser emergency locations"
+            value={distribution}
+            disabled={loading !== null}
+            onChange={(event) => setDistribution(event.target.value as typeof distribution)}
+          >
+            <option value="uniform">Anywhere</option>
+            <option value="population">Where people live</option>
+          </select>
+        </label>
+      </div>
+
       <button
         className="btn btn--primary btn--block"
         onClick={runRanking}
@@ -184,7 +215,7 @@ export function OptimiserPanel({
         aria-busy={loading === "ranking"}
       >
         {loading === "ranking" ? <Spinner /> : <Icon name="stations" size={16} />}
-        Find best ambulance station locations
+        Find best {service} station locations
       </button>
 
       {loading === "ranking" && (

@@ -37,6 +37,7 @@ Limitations (worth stating in your README):
 """
 
 import heapq
+import weakref
 import itertools
 import math
 import random
@@ -48,7 +49,16 @@ from backend.routing.a_star import get_segment
 # Bump this whenever a change here would give different results for the
 # same request. Saved results are only reused (?reuse=true) for requests
 # with the same version, so old answers never pass for new ones.
-OPTIMISER_VERSION = 1
+# 2: station sets are found by exhaustive search where feasible
+# (best_station_set), so some sets differ from version 1's greedy + swaps.
+OPTIMISER_VERSION = 2
+
+# Exhaustive set search up to this many possible sets (Norwich: all
+# 501,942 sets of 5 from 38 candidates take about 1.5 s)
+EXHAUSTIVE_SET_LIMIT = 2_000_000
+
+# Random restarts of the swap search when exhaustive search is too big
+RANDOM_RESTARTS = 12
 
 
 def shortest_distances(graph, source, blocked_segments=None):
@@ -85,6 +95,31 @@ def shortest_distances(graph, source, blocked_segments=None):
     return distances
 
 
+# graph -> {junction: how many junctions it can reach}, filled on demand
+_REACH = weakref.WeakKeyDictionary()
+
+
+def reach_count(graph, node):
+    """How many junctions `node` can drive to (itself included), with no
+    roads closed: len(shortest_distances(graph, node)), found by a
+    breadth-first search (distances are not needed) and remembered per map,
+    since it never changes."""
+
+    cache = _REACH.setdefault(graph, {})
+
+    if node not in cache:
+        seen = {node}
+        stack = [node]
+        while stack:
+            for neighbour, _ in graph.get_neighbours(stack.pop()):
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        cache[node] = len(seen)
+
+    return cache[node]
+
+
 def snap_with_check(graph, latitude, longitude, min_reach=0.9, tries=50):
     """Like snap_to_road, but also says whether the junction is well connected.
 
@@ -93,17 +128,14 @@ def snap_with_check(graph, latitude, longitude, min_reach=0.9, tries=50):
     in which case the closest junction is returned anyway.
     """
 
-    def gap(node):
-        data = graph.nodes[node]
-        return (
-            (data["latitude"] - latitude) ** 2
-            + (data["longitude"] - longitude) ** 2
-        )
+    from backend.routing.spatial import index_for
 
-    closest = sorted(graph.nodes, key=gap)[:tries]
+    # The `tries` nearest junctions, as sorted(graph.nodes, key=squared
+    # distance)[:tries] gave (grid index: same order, ties included)
+    closest = index_for(graph).nearest(latitude, longitude, tries, squared=True)
 
     for node in closest:
-        reach = len(shortest_distances(graph, node))
+        reach = reach_count(graph, node)
         if reach >= min_reach * len(graph.nodes):
             return node, True
 
@@ -196,13 +228,56 @@ def check_settings(scenarios, target_seconds, speed):
         raise ValueError("speed must be a positive number.")
 
 
-def prepare_stations(graph, candidates, blocked_segments=None):
+# Searching from each candidate is the optimiser's main cost, and the
+# searches are independent, so with at least this many candidates they are
+# spread over OPTIMISER_WORKERS processes. Measured on Norwich (4 processes):
+# 0.64x at 90 candidates, 1.07x at 181, 1.76x at 416, 1.90x at 800; below
+# about 200, starting processes costs more than it saves.
+PARALLEL_MIN_CANDIDATES = 200
+OPTIMISER_WORKERS = 4
+
+_worker_graph = None
+_worker_order = None
+
+
+def _init_search_worker(graph):
+    global _worker_graph, _worker_order
+    _worker_graph = graph
+    _worker_order = list(graph.nodes)
+
+
+def _search_from(task):
+    """One search in a worker, sent back as a compact array of distances
+    in graph order (infinity: unreachable): far cheaper to pass between
+    processes than a dict."""
+
+    from array import array
+
+    node, blocked_segments = task
+    found = shortest_distances(_worker_graph, node, blocked_segments)
+    infinity = math.inf
+    return array("d", (found.get(n, infinity) for n in _worker_order)).tobytes()
+
+
+def _from_bytes(order, packed):
+    from array import array
+
+    values = array("d")
+    values.frombytes(packed)
+    infinity = math.inf
+    return {node: value for node, value in zip(order, values) if value != infinity}
+
+
+def prepare_stations(graph, candidates, blocked_segments=None, workers=None):
     """Snap each candidate to a junction and search from it once.
 
-    Candidates that snap to the same junction are only kept once.
+    Candidates that snap to the same junction are only kept once. With
+    PARALLEL_MIN_CANDIDATES or more distinct junctions the searches run in
+    `workers` processes (default OPTIMISER_WORKERS; 1 = here); the answers
+    are the same either way.
     """
 
-    stations = []
+    nodes = []
     seen_nodes = set()
 
     for latitude, longitude in candidates:
@@ -213,19 +288,42 @@ def prepare_stations(graph, candidates, blocked_segments=None):
             continue
 
         seen_nodes.add(node)
+        nodes.append(node)
 
-        stations.append({
-            "node": node,
-            "distances": shortest_distances(graph, node, blocked_segments)
-        })
+    workers = OPTIMISER_WORKERS if workers is None else workers
 
-    return stations
+    if workers > 1 and len(nodes) >= PARALLEL_MIN_CANDIDATES:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_init_search_worker,
+            initargs=(graph,),
+        ) as pool:
+            order = list(graph.nodes)
+            distances = [
+                _from_bytes(order, packed)
+                for packed in pool.map(
+                    _search_from, [(node, blocked_segments) for node in nodes], chunksize=8
+                )
+            ]
+    else:
+        distances = [shortest_distances(graph, node, blocked_segments) for node in nodes]
+
+    return [
+        {"node": node, "distances": found} for node, found in zip(nodes, distances)
+    ]
 
 
-def sample_emergencies(stations, scenarios, seed):
+def sample_emergencies(stations, scenarios, seed, distribution="uniform", graph=None):
     """Random emergencies, the same for every candidate (same seed = same list).
 
-    We only use junctions at least one candidate can reach.
+    We only use junctions at least one candidate can reach. With
+    distribution="population" they are drawn in proportion to where people
+    live (Census 2021 output areas, simulation/population.py; needs the
+    graph), instead of every junction being equally likely.
     """
 
     reachable = set()
@@ -235,6 +333,15 @@ def sample_emergencies(stations, scenarios, seed):
 
     pool = sorted(reachable)
     generator = random.Random(seed)
+
+    if distribution == "population":
+        from backend.simulation.population import graph_junction_weights, weighted_draws
+
+        weights = graph_junction_weights(graph, pool)
+        return weighted_draws(weights, generator, scenarios)
+
+    if distribution != "uniform":
+        raise ValueError("distribution must be uniform or population")
 
     return [generator.choice(pool) for _ in range(scenarios)]
 
@@ -246,7 +353,8 @@ def optimise_station_locations(
     seed=1,
     target_seconds=480,
     speed=20.0,
-    blocked_segments=None
+    blocked_segments=None,
+    distribution="uniform",
 ):
     """Rank candidate station locations.
 
@@ -256,6 +364,7 @@ def optimise_station_locations(
     target_seconds  "good" response time (default 8 minutes)
     speed           ambulance speed in metres per second (20 = 72 km/h)
     blocked_segments  closed roads to route around (optional)
+    distribution    where emergencies happen: "uniform" or "population"
 
     Returns a list of results, best candidate first.
     """
@@ -269,7 +378,7 @@ def optimise_station_locations(
     stations = prepare_stations(graph, candidates, blocked_segments)
 
     # Step 2: random emergencies, the same for every candidate.
-    emergencies = sample_emergencies(stations, scenarios, seed)
+    emergencies = sample_emergencies(stations, scenarios, seed, distribution, graph)
 
     # Step 3: measure response times for each candidate
     measured = []
@@ -588,6 +697,65 @@ def refine_by_swapping(times, chosen, penalty, max_passes=20):
     return members
 
 
+def exhaustive_best_set(times, count, penalty):
+    """The set of `count` candidates with the lowest (ranking value,
+    unreached count): every possible set, scored in bulk with numpy (the
+    same score as set_score). Ties go to the first set in
+    itertools.combinations order."""
+
+    import numpy as np
+
+    table = np.array([
+        [math.inf if t is None else t for t in row] for row in times
+    ])
+    emergencies = table.shape[1]
+    best = None
+
+    combinations = itertools.combinations(range(len(times)), count)
+    while True:
+        chunk = list(itertools.islice(combinations, 50_000))
+        if not chunk:
+            break
+        members = np.array(chunk)
+        fastest = table[members].min(axis=1)
+        unreached = np.isinf(fastest).sum(axis=1)
+        score = np.where(np.isinf(fastest), penalty, fastest).sum(axis=1) / emergencies
+        # lexsort: last key first; stable, so the earliest set wins ties
+        index = np.lexsort((unreached, score))[0]
+        candidate = (float(score[index]), int(unreached[index]))
+        if best is None or candidate < best[0]:
+            best = (candidate, [int(m) for m in members[index]])
+
+    return best[1]
+
+
+def best_station_set(times, count, penalty, seed=1):
+    """The best set of `count` candidates the search can find.
+
+    Up to EXHAUSTIVE_SET_LIMIT possible sets: every set is tried, so it is
+    the best there is. On Norwich (38 candidates) greedy + swaps alone
+    missed the best 4- or 5-station set in 3 of 10 checks, by up to 2.2%
+    (docs/optimiser_evaluation.md). Beyond the limit: greedy + swaps, plus
+    swaps from RANDOM_RESTARTS random starting sets, keeping the best.
+    """
+
+    if math.comb(len(times), count) <= EXHAUSTIVE_SET_LIMIT:
+        return exhaustive_best_set(times, count, penalty)
+
+    best = refine_by_swapping(times, greedy_selection(times, count, penalty), penalty)
+    best_score = set_score(times, best, penalty)
+    generator = random.Random(seed)
+
+    for _ in range(RANDOM_RESTARTS):
+        start = generator.sample(range(len(times)), count)
+        found = refine_by_swapping(times, start, penalty)
+        found_score = set_score(times, found, penalty)
+        if found_score < best_score:
+            best, best_score = found, found_score
+
+    return best
+
+
 def order_by_contribution(times, members, penalty):
     """Put a set in the order a planner would build it.
 
@@ -660,7 +828,8 @@ def optimise_station_set(
     seed=1,
     target_seconds=480,
     speed=20.0,
-    blocked_segments=None
+    blocked_segments=None,
+    distribution="uniform",
 ):
     """Choose `count` stations from the candidates that work well TOGETHER.
 
@@ -695,16 +864,15 @@ def optimise_station_set(
             f"candidate junctions are available."
         )
 
-    emergencies = sample_emergencies(stations, scenarios, seed)
+    emergencies = sample_emergencies(stations, scenarios, seed, distribution, graph)
 
     times = response_table(stations, emergencies, speed)
     penalty = unreachable_penalty(times)
 
     # --- the chosen set ----------------------------------------
-    # Pick greedily, improve by swapping, then list the stations in the
-    # order they add value.
-    chosen = greedy_selection(times, count, penalty)
-    chosen = refine_by_swapping(times, chosen, penalty)
+    # The best set the search can find (every set where feasible, see
+    # best_station_set), listed in the order the stations add value.
+    chosen = best_station_set(times, count, penalty, seed)
     chosen = order_by_contribution(times, chosen, penalty)
 
     picks = []

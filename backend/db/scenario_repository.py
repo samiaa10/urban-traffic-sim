@@ -321,6 +321,7 @@ class ScenarioRepository:
             emergency_mean_response_seconds=emergencies["mean_response_seconds"],
             emergency_worst_response_seconds=emergencies["worst_response_seconds"],
             emergency_within_target_percent=emergencies["within_target_percent"],
+            emergency_detail=emergencies.get("detail"),
             wall_seconds=execution["wall_seconds"],
             cpu_seconds=execution["cpu_seconds"],
             peak_rss_mb=execution["peak_rss_mb"],
@@ -515,6 +516,8 @@ def _emergencies(r):
         "mean_response_seconds": r.emergency_mean_response_seconds,
         "worst_response_seconds": r.emergency_worst_response_seconds,
         "within_target_percent": r.emergency_within_target_percent,
+        # Queue and per-service figures (None for results saved before them)
+        "detail": r.emergency_detail,
     }
 
 

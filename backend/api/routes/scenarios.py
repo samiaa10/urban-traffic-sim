@@ -30,7 +30,7 @@ from backend.scenarios.compare import (
     road_changes,
 )
 from backend.scenarios.runner import ENGINE_VERSION
-from backend.scenarios.spec import ScenarioSpec, validate_against_graph
+from backend.scenarios.spec import ScenarioSpec, load_stored_spec, validate_against_graph
 from backend.simulation.demand import CITY_CENTRE, Zone
 
 
@@ -100,6 +100,16 @@ def parse_id(value, what):
         raise HTTPException(status_code=404, detail=f"{what} not found")
 
 
+def road_name_field(graph, a, b):
+    """{"name": ...} for the road between junctions a and b, on a map with
+    OpenStreetMap attributes (None if that road has no name); {} on a map
+    without them, whose answers stay as they were."""
+
+    if not graph.has_road_info:
+        return {}
+    return {"name": graph.road_name(a, b)}
+
+
 def check_metric(metric):
     if metric not in METRICS:
         raise HTTPException(
@@ -116,6 +126,10 @@ def parse_specs(context, raw_specs):
     for index, raw in enumerate(raw_specs):
         try:
             spec = ScenarioSpec.model_validate(raw)
+            if spec.traffic_model is None:
+                # Saved with the model it runs, so resuming or comparing it
+                # later does not depend on the server's setting then
+                spec = spec.model_copy(update={"traffic_model": context.traffic_model})
         except ValidationError as error:
             for item in error.errors():
                 where = ".".join(str(part) for part in item["loc"])
@@ -383,6 +397,7 @@ def nearest_road(
         "start_point": {"latitude": position[start][0], "longitude": position[start][1]},
         "end_point": {"latitude": position[destination][0], "longitude": position[destination][1]},
         "distance_metres": distance_to(start, destination),
+        **road_name_field(graph, start, destination),
     }
 
 
@@ -584,7 +599,7 @@ def compare_scenarios(
             items.append(full_item(repo, scenario))
 
     # Names from different studies can repeat
-    for item, spec in zip(items, unique_names([ScenarioSpec.model_validate({**i["spec"]}) for i in items])):
+    for item, spec in zip(items, unique_names([load_stored_spec(i["spec"]) for i in items])):
         item["name"] = spec.name
 
     baseline_name = None
@@ -638,6 +653,7 @@ def get_scenario(scenario_id: str, context: AppContext = Depends(get_context)):
                 "end_node": item["destination"],
                 "start": dict(zip(("latitude", "longitude"), position[item["start"]])),
                 "end": dict(zip(("latitude", "longitude"), position[item["destination"]])),
+                **road_name_field(context.graph, item["start"], item["destination"]),
             }
             for kind, items in (("closure", scenario.spec.get("closures", [])),
                                 ("accident", scenario.spec.get("accidents", [])))
@@ -670,4 +686,9 @@ def get_scenario(scenario_id: str, context: AppContext = Depends(get_context)):
         for status in ("finished", "unfinished", "unroutable")
     }
     result["metrics"] = _metrics(result)
+
+    # Road names from the map (results store junction ids)
+    for road in result.get("roads", []):
+        road.update(road_name_field(context.graph, road.get("start_node"), road.get("end_node")))
+
     return {**body, "result": result, "vs_baseline": versus}

@@ -101,6 +101,8 @@ export type RoadImpact = {
   vehicle_seconds: number
   peak_vehicles: number
   delay_share: number
+  // The road's name from OpenStreetMap, when the map knows it
+  name?: string | null
 }
 
 export type TimeseriesRow = {
@@ -148,7 +150,12 @@ export type ScenarioDetail = {
 export type NearestRoad = Road & {
   start_point: { latitude: number; longitude: number }
   end_point: { latitude: number; longitude: number }
+  name?: string | null
 }
+
+// How a picked road is shown: its name, or its two junctions
+export const pickedRoadLabel = (road: NearestRoad) =>
+  road.name ? road.name : `${road.start}-${road.destination}`
 
 // The metrics a study can be ranked by: the same keys as METRICS in
 // backend/scenarios/compare.py (a backend test checks they exist there).
@@ -361,7 +368,13 @@ export function histogram(values: number[], bins: number) {
   return counts
 }
 
-export const roadLabel = (road: { start_node: number | null; end_node: number | null }) =>
-  road.start_node !== null && road.end_node !== null
-    ? `${road.start_node}-${road.end_node}`
-    : "part of a road (after a reroute)"
+export const roadLabel = (road: {
+  start_node: number | null
+  end_node: number | null
+  name?: string | null
+}) =>
+  road.name
+    ? road.name
+    : road.start_node !== null && road.end_node !== null
+      ? `${road.start_node}-${road.end_node}`
+      : "part of a road (after a reroute)"

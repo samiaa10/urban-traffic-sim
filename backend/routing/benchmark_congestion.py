@@ -119,7 +119,7 @@ def build_rush_hour_traffic(graph, vehicles, warmup_seconds, generator):
     for _ in range(warmup_seconds):
         simulation.step()
 
-    return simulation.get_traffic_density()
+    return simulation.get_segment_traffic()
 
 
 def describe_traffic(traffic):

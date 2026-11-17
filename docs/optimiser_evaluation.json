@@ -1,0 +1,433 @@
+{
+ "settings": {
+  "kind": "ranking",
+  "stations": 3,
+  "top": 5,
+  "service": "ambulance",
+  "distribution": "uniform",
+  "target_seconds": 420.0,
+  "speed": 20.0,
+  "optimiser_scenarios": 300,
+  "optimiser_seed": 1,
+  "demand": [
+   500,
+   1500
+  ],
+  "seeds": [
+   1,
+   2,
+   3
+  ],
+  "emergencies": 12,
+  "first_emergency_at": 120,
+  "emergency_interval_seconds": 45,
+  "vehicles_per_station": 2,
+  "spread_seconds": 300,
+  "max_seconds": 2400
+ },
+ "report": {
+  "scenarios_done": 36,
+  "scenarios_total": 36,
+  "complete": true,
+  "candidates": [
+   {
+    "mean_wait_seconds": 135.58333333333334,
+    "mean_drive_seconds": 159.26388888888889,
+    "drive_gap_percent": 27.14256511995991,
+    "paired_estimate_seconds": 125.2640205415254,
+    "label": "Site #3",
+    "stations": [
+     {
+      "latitude": 52.6254057,
+      "longitude": 1.2925879,
+      "node": 388705600
+     }
+    ],
+    "estimate": {
+     "mean_response_seconds": 168.0529394979741,
+     "worst_response_seconds": 411.74860772524335,
+     "within_target_percent": 99.66666666666667
+    },
+    "by_demand": [
+     {
+      "vehicles": 500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 293.02777777777777,
+       "ci95": 211.0920453960144
+      },
+      "pooled_mean_response_seconds": 293.02777777777777,
+      "p90_response_seconds": 600.0,
+      "worst_response_seconds": 656.0,
+      "within_target_percent": {
+       "mean": 69.44444444444444,
+       "ci95": 43.09635316200429
+      },
+      "pooled_within_target_percent": 69.44444444444444,
+      "unreached": 0,
+      "mean_wait_seconds": 134.19444444444446,
+      "network_delay_vehicle_hours": {
+       "mean": 0.7649957911569883,
+       "ci95": 0.03027907734304944
+      },
+      "added_delay_vehicle_hours": {
+       "mean": 0.0034263276133077816,
+       "ci95": 0.0037950585740714115
+      }
+     },
+     {
+      "vehicles": 1500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 296.66666666666663,
+       "ci95": 213.80679719522936
+      },
+      "pooled_mean_response_seconds": 296.6666666666667,
+      "p90_response_seconds": 602.0,
+      "worst_response_seconds": 664.0,
+      "within_target_percent": {
+       "mean": 69.44444444444444,
+       "ci95": 43.09635316200429
+      },
+      "pooled_within_target_percent": 69.44444444444444,
+      "unreached": 0,
+      "mean_wait_seconds": 136.97222222222223,
+      "network_delay_vehicle_hours": {
+       "mean": 8.61681650028086,
+       "ci95": 1.1058544400905186
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.08527418958671203,
+       "ci95": 0.7464934278668544
+      }
+     }
+    ],
+    "simulated_mean_response_seconds": 294.84722222222223,
+    "estimate_gap_seconds": 169.58320168069685,
+    "estimate_gap_percent": 135.38061523778052,
+    "estimated_rank": 3,
+    "simulated_rank": 1
+   },
+   {
+    "mean_wait_seconds": 141.55555555555554,
+    "mean_drive_seconds": 163.0138888888889,
+    "drive_gap_percent": 20.27826396671491,
+    "paired_estimate_seconds": 135.53062998481622,
+    "label": "Site #4",
+    "stations": [
+     {
+      "latitude": 52.6253381,
+      "longitude": 1.2729948,
+      "node": 296472621
+     }
+    ],
+    "estimate": {
+     "mean_response_seconds": 171.6093821867641,
+     "worst_response_seconds": 367.78564157150083,
+     "within_target_percent": 99.66666666666667
+    },
+    "by_demand": [
+     {
+      "vehicles": 500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 301.72222222222223,
+       "ci95": 65.73603983814834
+      },
+      "pooled_mean_response_seconds": 301.72222222222223,
+      "p90_response_seconds": 513.0,
+      "worst_response_seconds": 621.0,
+      "within_target_percent": {
+       "mean": 75.0,
+       "ci95": 20.70281840269132
+      },
+      "pooled_within_target_percent": 75.0,
+      "unreached": 0,
+      "mean_wait_seconds": 139.33333333333334,
+      "network_delay_vehicle_hours": {
+       "mean": 0.7644970922444966,
+       "ci95": 0.02860682617706274
+      },
+      "added_delay_vehicle_hours": {
+       "mean": 0.002927628700816013,
+       "ci95": 0.00023362149568238502
+      }
+     },
+     {
+      "vehicles": 1500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 307.4166666666667,
+       "ci95": 63.46047051644807
+      },
+      "pooled_mean_response_seconds": 307.4166666666667,
+      "p90_response_seconds": 523.0,
+      "worst_response_seconds": 628.0,
+      "within_target_percent": {
+       "mean": 75.0,
+       "ci95": 20.70281840269132
+      },
+      "pooled_within_target_percent": 75.0,
+      "unreached": 0,
+      "mean_wait_seconds": 143.77777777777777,
+      "network_delay_vehicle_hours": {
+       "mean": 8.630347479495803,
+       "ci95": 0.9890846170611646
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.07174321037176885,
+       "ci95": 0.9173968772622475
+      }
+     }
+    ],
+    "simulated_mean_response_seconds": 304.56944444444446,
+    "estimate_gap_seconds": 169.03881445962824,
+    "estimate_gap_percent": 124.72369860493234,
+    "estimated_rank": 4,
+    "simulated_rank": 2
+   },
+   {
+    "mean_wait_seconds": 170.875,
+    "mean_drive_seconds": 166.81944444444446,
+    "drive_gap_percent": 27.55692872726848,
+    "paired_estimate_seconds": 130.78038653715456,
+    "label": "Site #1",
+    "stations": [
+     {
+      "latitude": 52.6355738,
+      "longitude": 1.2732353,
+      "node": 435175125
+     }
+    ],
+    "estimate": {
+     "mean_response_seconds": 160.63271828784653,
+     "worst_response_seconds": 311.95511627296895,
+     "within_target_percent": 99.66666666666667
+    },
+    "by_demand": [
+     {
+      "vehicles": 500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 349.72222222222223,
+       "ci95": 136.848970449164
+      },
+      "pooled_mean_response_seconds": 349.72222222222223,
+      "p90_response_seconds": 570.0,
+      "worst_response_seconds": 685.0,
+      "within_target_percent": {
+       "mean": 58.333333333333336,
+       "ci95": 20.702818402691335
+      },
+      "pooled_within_target_percent": 58.333333333333336,
+      "unreached": 0,
+      "mean_wait_seconds": 180.02777777777777,
+      "network_delay_vehicle_hours": {
+       "mean": 0.7653005099457648,
+       "ci95": 0.03165249951415492
+      },
+      "added_delay_vehicle_hours": {
+       "mean": 0.003731046402084215,
+       "ci95": 0.0031677046914252677
+      }
+     },
+     {
+      "vehicles": 1500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 325.6666666666667,
+       "ci95": 147.37905869248635
+      },
+      "pooled_mean_response_seconds": 325.6666666666667,
+      "p90_response_seconds": 535.0,
+      "worst_response_seconds": 692.0,
+      "within_target_percent": {
+       "mean": 66.66666666666667,
+       "ci95": 41.405636805382656
+      },
+      "pooled_within_target_percent": 66.66666666666667,
+      "unreached": 0,
+      "mean_wait_seconds": 161.72222222222223,
+      "network_delay_vehicle_hours": {
+       "mean": 8.622260393622401,
+       "ci95": 1.023611135261411
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.0798302962451718,
+       "ci95": 0.8091487924935556
+      }
+     }
+    ],
+    "simulated_mean_response_seconds": 337.69444444444446,
+    "estimate_gap_seconds": 206.9140579072899,
+    "estimate_gap_percent": 158.2149000978108,
+    "estimated_rank": 1,
+    "simulated_rank": 3
+   },
+   {
+    "mean_wait_seconds": 170.13888888888889,
+    "mean_drive_seconds": 169.62500000000003,
+    "drive_gap_percent": 31.257528771320892,
+    "paired_estimate_seconds": 129.23068229901205,
+    "label": "Site #2",
+    "stations": [
+     {
+      "latitude": 52.6359067,
+      "longitude": 1.292572,
+      "node": 477808238
+     }
+    ],
+    "estimate": {
+     "mean_response_seconds": 163.57804360905942,
+     "worst_response_seconds": 392.24680350323877,
+     "within_target_percent": 99.66666666666667
+    },
+    "by_demand": [
+     {
+      "vehicles": 500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 335.72222222222223,
+       "ci95": 204.3751292894728
+      },
+      "pooled_mean_response_seconds": 335.72222222222223,
+      "p90_response_seconds": 624.0,
+      "worst_response_seconds": 709.0,
+      "within_target_percent": {
+       "mean": 66.66666666666667,
+       "ci95": 35.85833333333333
+      },
+      "pooled_within_target_percent": 66.66666666666667,
+      "unreached": 0,
+      "mean_wait_seconds": 166.91666666666666,
+      "network_delay_vehicle_hours": {
+       "mean": 0.7607181574947746,
+       "ci95": 0.04464087510459062
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.000851306048906005,
+       "ci95": 0.01604415370105202
+      }
+     },
+     {
+      "vehicles": 1500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 343.80555555555554,
+       "ci95": 210.91105688737133
+      },
+      "pooled_mean_response_seconds": 343.80555555555554,
+      "p90_response_seconds": 628.0,
+      "worst_response_seconds": 719.0,
+      "within_target_percent": {
+       "mean": 63.888888888888886,
+       "ci95": 43.096353162004284
+      },
+      "pooled_within_target_percent": 63.888888888888886,
+      "unreached": 0,
+      "mean_wait_seconds": 173.36111111111111,
+      "network_delay_vehicle_hours": {
+       "mean": 8.62715249701167,
+       "ci95": 1.0244550688691632
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.07493819285590379,
+       "ci95": 0.8228391835466274
+      }
+     }
+    ],
+    "simulated_mean_response_seconds": 339.7638888888889,
+    "estimate_gap_seconds": 210.53320658987687,
+    "estimate_gap_percent": 162.91270992653915,
+    "estimated_rank": 2,
+    "simulated_rank": 4
+   },
+   {
+    "mean_wait_seconds": 212.30555555555554,
+    "mean_drive_seconds": 173.3888888888889,
+    "drive_gap_percent": -2.4554755879528036,
+    "paired_estimate_seconds": 177.75358476961787,
+    "label": "Site #5",
+    "stations": [
+     {
+      "latitude": 52.6364099,
+      "longitude": 1.2536118,
+      "node": 290259042
+     }
+    ],
+    "estimate": {
+     "mean_response_seconds": 191.94122432999694,
+     "worst_response_seconds": 374.8101536529301,
+     "within_target_percent": 99.66666666666667
+    },
+    "by_demand": [
+     {
+      "vehicles": 500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 381.55555555555554,
+       "ci95": 129.07162683034844
+      },
+      "pooled_mean_response_seconds": 381.55555555555554,
+      "p90_response_seconds": 597.0,
+      "worst_response_seconds": 712.0,
+      "within_target_percent": {
+       "mean": 61.111111111111114,
+       "ci95": 31.62407747641926
+      },
+      "pooled_within_target_percent": 61.111111111111114,
+      "unreached": 0,
+      "mean_wait_seconds": 208.88888888888889,
+      "network_delay_vehicle_hours": {
+       "mean": 0.7696011672449201,
+       "ci95": 0.0335426579421778
+      },
+      "added_delay_vehicle_hours": {
+       "mean": 0.008031703701239512,
+       "ci95": 0.015640677649912553
+      }
+     },
+     {
+      "vehicles": 1500,
+      "runs": 3,
+      "mean_response_seconds": {
+       "mean": 389.8333333333333,
+       "ci95": 138.92007666623897
+      },
+      "pooled_mean_response_seconds": 389.8333333333333,
+      "p90_response_seconds": 605.0,
+      "worst_response_seconds": 717.0,
+      "within_target_percent": {
+       "mean": 61.111111111111114,
+       "ci95": 31.62407747641926
+      },
+      "pooled_within_target_percent": 61.111111111111114,
+      "unreached": 0,
+      "mean_wait_seconds": 215.72222222222223,
+      "network_delay_vehicle_hours": {
+       "mean": 8.42510799089814,
+       "ci95": 1.1145376163484582
+      },
+      "added_delay_vehicle_hours": {
+       "mean": -0.27698269896943434,
+       "ci95": 0.9189401816732946
+      }
+     }
+    ],
+    "simulated_mean_response_seconds": 385.69444444444446,
+    "estimate_gap_seconds": 207.94085967482658,
+    "estimate_gap_percent": 116.98265322993834,
+    "estimated_rank": 5,
+    "simulated_rank": 5
+   }
+  ],
+  "rank_agreement_kendall_tau": 0.2,
+  "explanation": [
+   "Site #3 answers fastest in traffic: a mean response of 4.9 min over 2 demand level(s) and 3 seed(s), against 2.8 min estimated without traffic.",
+   "Of its 4.9 min, 2.3 min was waiting for a free vehicle and 2.7 min driving; the drive was +27% on the optimiser's free-flow estimate for the same emergencies, so most of the difference is vehicles being busy, which the optimiser does not model.",
+   "For the same emergencies, simulated responses differed from the optimiser's free-flow estimate by +117% to +163% (traffic, queues while vehicles were busy, and dispatch).",
+   "The simulation ranked the candidates in a different order as the optimiser (Kendall's tau 0.20).",
+   "At 1500 vehicles the 95% intervals of the top two overlap, so more seeds would be needed to be sure of the order."
+  ]
+ }
+}

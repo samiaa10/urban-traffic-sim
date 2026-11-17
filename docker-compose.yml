@@ -67,6 +67,8 @@ services:
       # Worker processes for scenario studies (each holds its own copy of
       # the map, 80-100 MB); 0 runs them one at a time in the backend
       SCENARIO_WORKERS: ${SCENARIO_WORKERS:-2}
+      # Traffic model for new runs and scenarios: osm or simple
+      TRAFFIC_MODEL: ${TRAFFIC_MODEL:-osm}
       # The frontend reaches the API through its own nginx (same address),
       # so browsers only need CORS for direct use of port 8000
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-8080}

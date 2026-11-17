@@ -285,6 +285,12 @@ def spec_differences(spec_a, spec_b):
     if b.get("rerouting", True) != a.get("rerouting", True):
         notes.append("dynamic rerouting " + ("on" if b.get("rerouting", True) else "off"))
 
+    # Specs saved before traffic_model existed ran the simple model
+    model_a = a.get("traffic_model") or "simple"
+    model_b = b.get("traffic_model") or "simple"
+    if model_b != model_a:
+        notes.append(f"the {model_b} traffic model instead of {model_a}")
+
     stations_a, stations_b = a.get("stations", []), b.get("stations", [])
     if stations_a != stations_b:
         count_a = sum(s.get("ambulances", 1) for s in stations_a)

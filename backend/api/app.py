@@ -70,6 +70,7 @@ def create_app(
     scenario_workers=0,
     max_study_scenarios=DEFAULT_MAX_STUDY_SCENARIOS,
     resume_studies=False,
+    traffic_model="simple",
 ):
     """A new app with its own road graph and (empty) set of live runs.
 
@@ -77,8 +78,10 @@ def create_app(
     database_url (a SQLAlchemy URL) turns on saving runs; None keeps them
     in memory only. scenario_workers is how many processes run scenario
     studies (0: one at a time on a thread); resume_studies queues studies a
-    restart interrupted again. backend/api/main.py reads these from the
-    environment.
+    restart interrupted again; traffic_model is the model new runs and
+    scenarios use when they do not ask for one ("simple" here, so tests
+    keep the original rules; the server's TRAFFIC_MODEL defaults to osm).
+    backend/api/main.py reads these from the environment.
     """
 
     if cors_origins is None:
@@ -119,6 +122,7 @@ def create_app(
         database=database,
         metrics_interval=metrics_interval,
         max_study_scenarios=max_study_scenarios,
+        traffic_model=traffic_model,
     )
 
     if database is not None:

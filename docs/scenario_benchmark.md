@@ -3,6 +3,8 @@
 Full simulations on the real Norwich map (5,058 junctions, 10,980 road segments).
 Produced by `python -m backend.scenarios.benchmark_scenarios --save`.
 
+> Measured on 2026-11-16, before Stage 5, with the original (simple) traffic rules and scenario engine version 1. It was not re-run for Stage 5: scenarios now default to the osm model (`--traffic-model osm`), whose per-second cost is about the same as the simple model's on Norwich (see `docs/traffic_benchmark.md`, section 2), but these exact figures have not been re-measured.
+
 - Date: 2026-11-16
 - Machine: macOS-26.3.1-arm64-arm-64bit, 8 CPUs, Python 3.9.6
 

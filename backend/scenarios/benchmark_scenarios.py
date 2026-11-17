@@ -46,6 +46,14 @@ REPORT = PROJECT_ROOT / "docs" / "scenario_benchmark.md"
 CENTRE = (52.6286, 1.2927)
 
 
+# Traffic model of every scenario (--traffic-model)
+TRAFFIC_MODEL = "simple"
+
+
+def with_model(spec):
+    return {**spec, "traffic_model": TRAFFIC_MODEL}
+
+
 def _one_in_fresh_process(spec):
     """Run one scenario in a new process; its result (with peak memory)."""
 
@@ -59,7 +67,7 @@ def _one_in_fresh_process(spec):
 def part1_scaling(fleets):
     rows = []
     for fleet in fleets:
-        kind, result = _one_in_fresh_process({"name": f"{fleet}", "seed": 1, "demand": {"vehicles": fleet}})
+        kind, result = _one_in_fresh_process(with_model({"name": f"{fleet}", "seed": 1, "demand": {"vehicles": fleet}}))
         assert kind == "ok", result
         execution, summary = result["execution"], result["summary"]
         rows.append({
@@ -78,7 +86,7 @@ def part1_scaling(fleets):
 
 
 def part2_overhead(world, repeats):
-    spec = {"name": "overhead", "seed": 11, "demand": {"vehicles": 500}}
+    spec = with_model({"name": "overhead", "seed": 11, "demand": {"vehicles": 500}})
     run_scenario(world, spec)    # warm the free-flow cache
     times = {True: [], False: []}
     for _ in range(repeats):
@@ -93,7 +101,7 @@ def part2_overhead(world, repeats):
 
 
 def part3_parallel(worker_counts, scenarios, vehicles):
-    specs = [{"name": f"S{seed}", "seed": seed, "demand": {"vehicles": vehicles}}
+    specs = [with_model({"name": f"S{seed}", "seed": seed, "demand": {"vehicles": vehicles}})
              for seed in range(1, scenarios + 1)]
     rows = []
     for workers in worker_counts:
@@ -127,7 +135,7 @@ def part4_saving(world, url, repeats):
     from backend.db.scenario_repository import ScenarioRepository
 
     database = Database(url)
-    spec = ScenarioSpec.model_validate({"name": "save", "seed": 2, "demand": {"vehicles": 500}})
+    spec = ScenarioSpec.model_validate(with_model({"name": "save", "seed": 2, "demand": {"vehicles": 500}}))
     result = run_scenario(world, spec)
     times = []
     study_ids = []
@@ -170,10 +178,10 @@ def part5_large_study(url, count, vehicles, closures, workers):
     world = World(graph)
     sha = graph_fingerprint(graph, GRAPH_FILE)
 
-    base = ScenarioSpec.model_validate({
+    base = ScenarioSpec.model_validate(with_model({
         "name": "Norwich", "seed": 1,
         "demand": {"vehicles": vehicles, "spread_seconds": 300},
-    })
+    }))
     roads = sweep.candidate_roads(world.network, Zone(CENTRE[0], CENTRE[1], 1500))
     specs = sweep.random_closures(base, roads, count, closures, sweep_seed=1)
 
@@ -353,7 +361,11 @@ def main():
     parser.add_argument("--study-vehicles", type=int, default=300)
     parser.add_argument("--study-workers", type=int, default=4)
     parser.add_argument("--save", action="store_true")
+    parser.add_argument("--traffic-model", choices=["simple", "osm"], default="simple")
     arguments = parser.parse_args()
+
+    global TRAFFIC_MODEL
+    TRAFFIC_MODEL = arguments.traffic_model
 
     from backend.api.settings import database_url
 

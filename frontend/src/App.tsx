@@ -31,6 +31,16 @@ import { COLOURS, LINE, MARKER } from "./mapStyles.ts"
 import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx"
 import { HistoryPanel } from "./HistoryPanel.tsx"
 import type { RestartedRun } from "./history.ts"
+import { EvaluationSection } from "./EvaluationSection.tsx"
+import {
+  SERVICES,
+  TRAFFIC_MODELS,
+  emergencyRequests,
+  queuedMessage,
+  serviceOf,
+  type ServiceName,
+  type TrafficModel,
+} from "./services.ts"
 import {
   allFinished,
   congestionColour,
@@ -166,6 +176,14 @@ function App() {
   // reads it, and nothing on screen shows it.
   const simulationId =
     useRef<string | null>(null)
+
+  // How roads behave in the next run (backend traffic models), and which
+  // emergency service the emergency button raises
+  const [trafficModel, setTrafficModel] = useState<TrafficModel>("osm")
+  const [emergencyService, setEmergencyService] = useState<ServiceName>("ambulance")
+
+  // Stations created in the current run (the next one's index)
+  const stationsCreated = useRef(0)
 
   // Full URL of an endpoint that acts on the running simulation
   const runUrl = (original: string, perRun: string) =>
@@ -426,9 +444,11 @@ function App() {
 
       // 4. Start backend simulation
       simulationId.current = null
+      stationsCreated.current = 0
 
       const simulationResponse = await fetch(
-        `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}`,
+        `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}` +
+          `&traffic_model=${trafficModel}`,
         {
           method: "POST",
         }
@@ -585,8 +605,9 @@ function App() {
   // ------------------------------------------------
 
   const triggerEmergency = async () => {
+    const service = serviceOf(emergencyService)
     try {
-      setResult("Setting up ambulance response...")
+      setResult(`Setting up ${service.label.toLowerCase()} response...`)
 
       // Emergency location
       if (!destination) {
@@ -603,48 +624,36 @@ function App() {
       const stationLatitude = 52.63143
       const stationLongitude = 1.2970518
 
-      // 1. Create ambulance station
-      const stationResponse = await fetch(
-        runUrl(
-          `/station/create?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`,
-          `/stations?latitude=${stationLatitude}&longitude=${stationLongitude}&station_type=ambulance`
-        ),
-        {
-          method: "POST",
-        }
+      const requests = emergencyRequests(
+        service.name,
+        stationsCreated.current,
+        [stationLatitude, stationLongitude],
+        [emergencyLatitude, emergencyLongitude],
       )
+
+      // 1. Create a station of the service
+      const stationResponse = await fetch(runUrl(...requests.station), {
+        method: "POST",
+      })
 
       if (!stationResponse.ok) {
-        throw new Error(
-          "Could not create ambulance station"
-        )
+        throw new Error(`Could not create ${service.label.toLowerCase()} station`)
       }
+      stationsCreated.current += 1
 
-      // 2. Add ambulance to station
-      const vehicleResponse = await fetch(
-        runUrl(
-          "/station/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance",
-          "/stations/add-vehicle?station_id=0&speed=20&vehicle_type=ambulance"
-        ),
-        {
-          method: "POST",
-        }
-      )
+      // 2. Add one of its vehicles
+      const vehicleResponse = await fetch(runUrl(...requests.vehicle), {
+        method: "POST",
+      })
 
       if (!vehicleResponse.ok) {
-        throw new Error("Could not add ambulance")
+        throw new Error(`Could not add ${service.label.toLowerCase()}`)
       }
 
-      // 3. Create emergency and dispatch ambulance
-      const emergencyResponse = await fetch(
-        runUrl(
-          `/emergency/create?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`,
-          `/emergencies?latitude=${emergencyLatitude}&longitude=${emergencyLongitude}&emergency_type=ambulance`
-        ),
-        {
-          method: "POST",
-        }
-      )
+      // 3. Create the emergency and dispatch a vehicle
+      const emergencyResponse = await fetch(runUrl(...requests.emergency), {
+        method: "POST",
+      })
 
       const emergencyData =
         await emergencyResponse.json()
@@ -652,8 +661,17 @@ function App() {
       if (!emergencyResponse.ok) {
         throw new Error(
           emergencyData.detail ||
-          "Could not dispatch ambulance"
+          `Could not dispatch ${service.label.toLowerCase()}`
         )
+      }
+
+      // Every vehicle of the service is busy: it waits in the queue
+      if (emergencyResponse.status === 202) {
+        setEmergencyLocation([emergencyLatitude, emergencyLongitude])
+        setEmergencyActive(true)
+        startSimulationPolling()
+        setResult(queuedMessage(service.name, emergencyData.queue_position))
+        return
       }
 
       // 4. Show emergency on map
@@ -672,7 +690,7 @@ function App() {
       startSimulationPolling()
 
       setResult(
-        `Ambulance ${emergencyData.vehicle_id} dispatched | ${Math.round(
+        `${service.label} ${emergencyData.vehicle_id} dispatched | ${Math.round(
           emergencyData.route_distance_metres
         )} m response route cost | ${
           emergencyData.nodes_explored
@@ -923,6 +941,10 @@ function App() {
             <Icon name="chart" size={16} />
             <span>Scenarios</span>
           </a>
+          <a href="#evaluation">
+            <Icon name="stations" size={16} />
+            <span>In traffic</span>
+          </a>
           <a href="#history">
             <Icon name="clock" size={16} />
             <span>History</span>
@@ -992,6 +1014,22 @@ function App() {
               </li>
             </ol>
 
+            {/* TRAFFIC MODEL */}
+            <label className="field">
+              Traffic model
+              <select
+                aria-label="Traffic model"
+                value={trafficModel}
+                onChange={(event) => setTrafficModel(event.target.value as TrafficModel)}
+              >
+                {TRAFFIC_MODELS.map((model) => (
+                  <option key={model.value} value={model.value}>
+                    {model.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {/* ROUTE BUTTON */}
             {start && destination && (
               <button
@@ -1042,8 +1080,24 @@ function App() {
           <Panel
             id="emergency"
             title="Emergency response"
-            caption="Dispatch an ambulance to the destination"
+            caption="Dispatch an ambulance, fire engine or police car to the destination"
           >
+            {/* WHICH SERVICE */}
+            <label className="field">
+              Service
+              <select
+                aria-label="Emergency service"
+                value={emergencyService}
+                onChange={(event) => setEmergencyService(event.target.value as ServiceName)}
+              >
+                {SERVICES.map((service) => (
+                  <option key={service.name} value={service.name}>
+                    {service.label}
+                  </option>
+                ))}
+              </select>
+            </label>
+
             {/* EMERGENCY BUTTON */}
             {start && destination ? (
               <button
@@ -1058,12 +1112,12 @@ function App() {
                 ) : (
                   <Icon name="siren" size={16} />
                 )}
-                Trigger Ambulance Emergency
+                Trigger {serviceOf(emergencyService).short} Emergency
               </button>
             ) : (
               <div className="empty">
                 <strong>No active emergency</strong>
-                Plan a route, then dispatch an ambulance to the destination.
+                Plan a route, then dispatch a vehicle of the chosen service to the destination.
               </div>
             )}
 
@@ -1071,7 +1125,7 @@ function App() {
             {emergencyStatus && (
               <>
                 <div className="emergency-head">
-                  <span className="eyebrow">Ambulance status</span>
+                  <span className="eyebrow">{serviceOf(emergencyService).label} status</span>
                   <span
                     className={`badge ${emergencyBadge[emergencyStatus.state].tone}`}
                   >
@@ -1263,7 +1317,7 @@ function App() {
               zoom={13}
             >
               <TileLayer
-                attribution="&copy; OpenStreetMap contributors"
+                attribution='&copy; <a href="https://www.openstreetmap.org/copyright">OpenStreetMap</a> contributors'
                 url="https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png"
               />
 
@@ -1457,6 +1511,9 @@ function App() {
           onShowOnMap={setScenarioOverlay}
           openStudy={studyToOpen}
         />
+
+        {/* ---------------- THE OPTIMISER TESTED IN TRAFFIC ---------------- */}
+        <EvaluationSection />
 
         {/* ---------------- SAVED RUNS AND STUDIES ---------------- */}
         <HistoryPanel

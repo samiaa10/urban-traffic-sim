@@ -177,6 +177,19 @@ describe("building scenarios", () => {
     expect(lines(COLOURS.closure)).toHaveLength(1)
   })
 
+  it("names a picked road when the map knows it", async () => {
+    mockBackend(scenarioBackend({
+      "GET /scenarios/nearest-road": { body: { ...ROAD, name: "Prince of Wales Road" } },
+    }))
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.click(within(draftCard("Road closure")).getByRole("button", { name: "Close a road" }))
+    clickMap(START)
+
+    expect(await within(draftCard("Road closure")).findByText("Closed Prince of Wales Road")).toBeTruthy()
+  })
+
   it("adds and removes scenarios", async () => {
     mockBackend(scenarioBackend())
     const user = userEvent.setup()

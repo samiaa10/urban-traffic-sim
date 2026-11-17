@@ -105,6 +105,12 @@ def incident_history(
             if kind is None or i.kind.value == kind
         ]
 
+    # Road names from the map (the history stores junction ids)
+    from backend.api.routes.scenarios import road_name_field
+
+    for incident in incidents:
+        incident.update(road_name_field(context.graph, incident["start_node"], incident["end_node"]))
+
     return {"simulation_id": simulation_id, "incidents": incidents}
 
 

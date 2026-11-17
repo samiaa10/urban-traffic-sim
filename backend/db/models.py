@@ -176,6 +176,12 @@ class SimulationRun(Base):
         Boolean, server_default=text("true")
     )
 
+    # How roads behaved (simulation/road_model.py). Runs saved before this
+    # column existed used the original rules, hence the default.
+    traffic_model: Mapped[str] = mapped_column(
+        String(16), server_default=text("'simple'")
+    )
+
     # Last recorded progress
     sim_time: Mapped[float] = mapped_column(Float, server_default=text("0"))
     vehicles_total: Mapped[int] = mapped_column(Integer, server_default=text("0"))
@@ -231,6 +237,9 @@ class SimulationRun(Base):
             "(status = 'active') = (ended_at IS NULL)", name="ended_when_not_active"
         ),
         CheckConstraint("sim_time >= 0", name="sim_time_not_negative"),
+        CheckConstraint(
+            "traffic_model IN ('simple', 'osm')", name="known_traffic_model"
+        ),
         CheckConstraint(
             "vehicles_finished >= 0 AND vehicles_finished <= vehicles_total",
             name="finished_within_total",
@@ -327,13 +336,18 @@ class Emergency(Base):
     status: Mapped[EmergencyStatus] = mapped_column(
         pg_enum(EmergencyStatus, "emergency_status")
     )
-    # Why nothing could be sent: "no_vehicle" or "no_route"
+    # Why nothing could be sent: "no_vehicle", "no_route", or
+    # "still_queued" (it waited for a vehicle until the run ended)
     cancel_reason: Mapped[Optional[str]] = mapped_column(String(32))
 
     # The vehicle sent (None if none was available)
     vehicle_id: Mapped[Optional[int]] = mapped_column(BigInteger, index=True)
 
     created_sim_time: Mapped[float] = mapped_column(Float)
+    # When a vehicle was sent: later than created_sim_time if the emergency
+    # waited in the queue (realistic emergency rules); None for emergencies
+    # saved before this was recorded
+    dispatched_sim_time: Mapped[Optional[float]] = mapped_column(Float)
     arrived_sim_time: Mapped[Optional[float]] = mapped_column(Float)
     response_seconds: Mapped[Optional[float]] = mapped_column(Float)
 
@@ -371,7 +385,7 @@ class Emergency(Base):
             name="reason_when_cancelled",
         ),
         CheckConstraint(
-            "cancel_reason IS NULL OR cancel_reason IN ('no_vehicle', 'no_route')",
+            "cancel_reason IS NULL OR cancel_reason IN ('no_vehicle', 'no_route', 'still_queued')",
             name="known_cancel_reason",
         ),
         CheckConstraint(
@@ -1001,6 +1015,9 @@ class ScenarioResult(Base):
     emergency_mean_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
     emergency_worst_response_seconds: Mapped[Optional[float]] = mapped_column(Float)
     emergency_within_target_percent: Mapped[Optional[float]] = mapped_column(Float)
+    # Queue and per-service figures of the emergencies (scenarios/runner.py
+    # summarise_emergencies "detail"); None for results saved before them
+    emergency_detail: Mapped[Optional[dict]] = mapped_column(JSONB)
 
     # Execution
     wall_seconds: Mapped[float] = mapped_column(Float)
@@ -1142,3 +1159,23 @@ class ScenarioTimeseries(Base):
             name="speed_factor_fraction",
         ),
     )
+
+
+class StationEvaluation(Base):
+    """A traffic-aware evaluation of the station optimiser's best answers
+    (optimiser/evaluation.py): the scenario study that simulates them, the
+    settings, the candidates with the optimiser's estimates, and which
+    scenario position is which candidate, demand level and seed."""
+
+    __tablename__ = "station_evaluations"
+
+    id: Mapped[uuid.UUID] = mapped_column(UUID(as_uuid=True), primary_key=True)
+    study_id: Mapped[uuid.UUID] = mapped_column(
+        UUID(as_uuid=True),
+        ForeignKey("scenario_studies.id", ondelete="CASCADE"),
+        unique=True,
+    )
+    settings: Mapped[dict] = mapped_column(JSONB)
+    candidates: Mapped[list] = mapped_column(JSONB)
+    plan: Mapped[list] = mapped_column(JSONB)
+    created_at: Mapped[datetime] = utc_now_column()

@@ -16,7 +16,7 @@ by validate_against_graph before a scenario runs.
 
 import hashlib
 import json
-from typing import List, Literal, Optional
+from typing import List, Literal, Optional, Union
 
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
@@ -77,11 +77,28 @@ class Demand(Strict):
     spread_seconds: float = Field(0, ge=0, le=MAX_SECONDS)
 
 
+Service = Literal["ambulance", "fire", "police"]
+
+
 class Station(Strict):
+    """A station of one emergency service (simulation/services.py).
+    `ambulances` is how many vehicles it has, whatever the service (the
+    name is kept so older specs still load); `speed` defaults to the
+    service's speed."""
+
     latitude: float = Field(ge=-90, le=90)
     longitude: float = Field(ge=-180, le=180)
+    service: Service = "ambulance"
     ambulances: int = Field(1, ge=1, le=10)
     speed: float = Field(20, gt=0, le=60)
+
+    @model_validator(mode="after")
+    def _service_speed(self):
+        if "speed" not in self.model_fields_set:
+            from backend.simulation.services import SERVICES
+
+            self.speed = SERVICES[self.service].speed
+        return self
 
 
 class Emergencies(Strict):
@@ -93,6 +110,11 @@ class Emergencies(Strict):
     first_at: float = Field(60, ge=0, le=MAX_SECONDS)
     interval_seconds: float = Field(60, gt=0, le=MAX_SECONDS)
     target_seconds: float = Field(480, gt=0, le=3600)
+    # Which service they need, and where they happen: "uniform" (every
+    # junction equally likely) or "population" (in proportion to where
+    # people live, Census 2021; simulation/population.py)
+    service: Service = "ambulance"
+    distribution: Literal["uniform", "population"] = "uniform"
 
 
 class ScenarioSpec(Strict):
@@ -103,21 +125,64 @@ class ScenarioSpec(Strict):
     closures: List[Closure] = Field(default_factory=list, max_length=50)
     accidents: List[Accident] = Field(default_factory=list, max_length=50)
     rerouting: bool = True
+    # How roads behave (simulation/road_model.py): "osm" uses OpenStreetMap
+    # speed limits, lanes and per-direction traffic; "simple" is the
+    # original rules. Not given: the API fills in the server's default
+    # (TRAFFIC_MODEL) before saving the study; a spec still without one
+    # (saved before this field existed, or built directly in code) runs
+    # the simple model it always ran.
+    traffic_model: Optional[Literal["osm", "simple"]] = None
     stations: List[Station] = Field(default_factory=list, max_length=20)
-    emergencies: Emergencies = Emergencies()
+    # One group of emergencies, or several (for example ambulance and
+    # fire calls at once, each with its own count, timing and target)
+    emergencies: Union[Emergencies, List[Emergencies]] = Emergencies()
     # Stop here even if trips are still on their way
     max_seconds: float = Field(3600, ge=60, le=MAX_SECONDS)
 
+    @property
+    def emergency_groups(self):
+        """The emergency groups as a list (one group if a single object)."""
+
+        groups = self.emergencies
+        return list(groups) if isinstance(groups, list) else [groups]
+
     @model_validator(mode="after")
     def _emergencies_need_stations(self):
-        if self.emergencies.count and not self.stations:
-            raise ValueError("emergencies need at least one station")
+        if len(self.emergency_groups) > 5:
+            raise ValueError("at most 5 groups of emergencies")
+        services = {station.service for station in self.stations}
+        for group in self.emergency_groups:
+            if group.count and not self.stations:
+                raise ValueError("emergencies need at least one station")
+            if group.count and group.service not in services:
+                raise ValueError(f"{group.service} emergencies need a {group.service} station")
         return self
 
-    def fingerprint(self):
-        """SHA-256 of everything that affects the result (not the name)."""
+    @property
+    def effective_traffic_model(self):
+        return self.traffic_model or "simple"
 
-        body = self.model_dump(mode="json", exclude={"name"})
+    def fingerprint(self):
+        """SHA-256 of everything that affects the result (not the name).
+        The simple traffic model is left out, so a spec keeps the
+        fingerprint it had before traffic_model existed."""
+
+        exclude = {"name"}
+        if self.effective_traffic_model == "simple":
+            exclude.add("traffic_model")
+
+        body = self.model_dump(mode="json", exclude=exclude)
+
+        # Fields added with the emergency services are left out at their
+        # defaults, so a spec keeps the fingerprint it had before them
+        for station in body["stations"]:
+            if station["service"] == "ambulance":
+                del station["service"]
+        groups = body["emergencies"] if isinstance(body["emergencies"], list) else [body["emergencies"]]
+        for group in groups:
+            for field, default in (("service", "ambulance"), ("distribution", "uniform")):
+                if group[field] == default:
+                    del group[field]
         text = json.dumps(body, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(text.encode()).hexdigest()
 
@@ -128,6 +193,13 @@ class ScenarioSpec(Strict):
         body = self.model_dump(mode="json", include={"seed", "demand", "surges"})
         text = json.dumps(body, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def load_stored_spec(spec_dict):
+    """A ScenarioSpec from a stored spec (one saved before traffic_model
+    existed has none, and so runs the simple model it ran with)."""
+
+    return ScenarioSpec.model_validate(spec_dict)
 
 
 def validate_against_graph(spec, graph):

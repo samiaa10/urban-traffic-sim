@@ -183,6 +183,8 @@ render.yaml, requirements-deploy.txt   Render deployment (PostgreSQL database, b
 
 `routing/graph.py` is a small custom class. Each node (junction) has a latitude and longitude, and each directed edge has a length in metres. Because OpenStreetMap roads can be one-way, a route from A to B may exist while B to A does not.
 
+`graph.road_info[(from, to)]` keeps each directed road's OpenStreetMap attributes as a `RoadInfo` (`routing/road_attributes.py`): road class, speed limit (m/s), lanes in its own direction, one-way, and name, each marked as tagged or defaulted. The edges themselves are unchanged, so every search and the optimiser work as before; maps without attributes (the hand-made test maps) simply have an empty `road_info`. How tags become numbers, the defaults, and how much of Norwich is tagged are in [the road network guide](road_network.md).
+
 ### Routing
 
 `a_star` takes the graph, a start and a destination, and optionally `traffic` and `blocked_segments`:
@@ -213,7 +215,27 @@ Congestion is not only drawn on the map, it changes how vehicles move:
 5. Each vehicle keeps `journey_seconds`, a clock that runs every step until it arrives, including time stuck behind a closed road. Congestion and closures both lengthen a journey, and `/simulation/step` reports `speed_factor`, `journey_seconds` and `reroutes` per vehicle.
 6. `dispatch.remaining_seconds` computes an ETA the same way, so the ETA shown in the status panel grows when the route is congested or has an accident.
 
-One traffic count drives everything: `get_traffic_density()` keys each road by `segment_between`, which sorts the two end points, so **both directions of a road are counted together**. The same count sets vehicle speed, colours the map, and feeds both routers. Every vehicle is slowed by it, ambulances on a call included (there is no ambulance priority). Simplification: a vehicle that crosses several short roads in one second keeps using that second's snapshot.
+One traffic count drives everything: `get_traffic_density()` keys each road by its traffic key (below). The same count sets vehicle speed, colours the map, and feeds both routers. Every vehicle is slowed by it, ambulances on a call included (there is no ambulance priority). Simplification: a vehicle that crosses several short roads in one second keeps using that second's snapshot.
+
+### Traffic models
+
+Each `Simulation` has a road model (`simulation/road_model.py`), chosen per run (`traffic_model` on `/simulation/start` and `/simulations`), per scenario (`ScenarioSpec.traffic_model`), or by the server's `TRAFFIC_MODEL` (default `osm`). Everything that needs a road's speed asks it: movement, routing, ETAs and delay measurement, so planned and driven times stay equal in both models (tested on random maps with random limits).
+
+| | `simple` (the original rules, above) | `osm` |
+|---|---|---|
+| Traffic key | sorted end points: both directions counted together | end points in driving direction: each direction on its own |
+| Free-flow speed | the vehicle's own speed everywhere | `min(vehicle speed, the road's limit)`; cars get a top speed of 70 mph, so the limit decides. Emergency vehicles are exempt (UK law allows it on a call, and the station optimiser assumes it) |
+| Congestion | 1 vehicle free, 2 at 60%, 3+ at 30% | Greenshields: `factor = max(0.05, 1 - others / capacity)`, capacity = lanes x max(length, 30 m) / 7.5 m. Only *other* vehicles count, so a lone vehicle is never slowed; the 5% floor keeps a queue creeping |
+| Accidents | raise the effective count, then their speed factor | divide the capacity by their capacity factor, then their speed factor |
+| Map colours | by count | by speed factor: light >= 0.8, moderate >= 0.4, heavy below. Each road is drawn once, in its busier direction's colour |
+
+Closures and accidents always cover both directions in both models. The shortest-route search (`a_star.py`, `/route`) keeps its flat 50 m penalty per vehicle; `Simulation.get_segment_traffic()` gives it both directions together whatever the model.
+
+In the osm model, `RoadNetwork.fastest_path(..., directed=True, limits=True)` costs each road at `length / (min(speed, limit) x factor)`; its estimate divides the straight-line (or landmark) distance by the fastest speed anywhere on the network, so it still never overestimates. `Vehicle.move` takes the limit as a `limit_factor` (the limit as a fraction of the vehicle's speed) and records `last_free_flow_seconds`, so `scenarios/impact.py` measures delay as time taken minus the time at the speed limits: a lone vehicle still loses exactly 0 s.
+
+Old data stays correct: runs saved before migration `0004` have `traffic_model = simple`, and Restart uses the run's model. Scenario specs saved before the field existed have none and run the simple model (`ScenarioSpec.effective_traffic_model`); a simple spec keeps its old fingerprint. The API writes the server's default into specs that do not give one, so a study resumed later runs the model it started with. The scenario engine version is 2.
+
+The 30 m minimum length matters because a quarter of Norwich's roads are shorter than 20 m (mostly at junctions); the sensitivity of the results to it is in [the traffic benchmark](traffic_benchmark.md).
 
 ### Real road lengths
 
@@ -223,8 +245,20 @@ OpenStreetMap roads curve, so a road's length is longer than the straight line b
 
 `RoadNetwork` wraps the graph once: junction positions, the length of every directed road (the shorter one where OSM has two parallel roads), each road's segment key, and lengths keyed by coordinates. `fastest_path(start, destination, speed, speed_factor, blocked_segments)` is A\* where each road costs `length / (speed x speed_factor(segment))`. Its estimate is the straight-line distance at top speed, computed on a flat projection (y = R x latitude, x = R x longitude x the smallest cos(latitude) on the map, then shrunk by 0.1%) so it is always a lower bound yet needs no trigonometry per junction. Speed factors are never above 1, so the estimate never overestimates and the result is exactly the fastest route (checked against a plain Dijkstra with random slowdowns in the tests). Unlike `a_star`, it creates its tables lazily rather than for all 5,058 junctions on every call, and each junction's roads are precomputed as (neighbour, length, segment key). On Norwich it averages 2.0 ms per congested trip (`docs/traffic_benchmark.md`).
 
+- **Travel-time landmarks.** With speed limits, the straight-line estimate must assume the fastest road anywhere (40 mph on Norwich) while most roads are 20 or 30 mph, so A\* explored about twice the junctions. `use_landmarks` therefore also stores, for the same landmarks, the seconds to and from each at the speed limits. A vehicle that keeps to the limits never covers a road faster than that and traffic only slows it, so these are lower bounds in seconds; speed-limited searches use the best 2 for their start (checking all 8 at every junction cost more than it saved). On 1,000 Norwich routes under real simulation traffic they explored 525 junctions against 1,126 and took 2.18 ms against 3.02 ms (measured with Low Power Mode on, so the ratio is what counts), with exactly the same costs as plain Dijkstra; `lower_bound_seconds` gives the traffic manager the same tighter bound for skipping searches that could not save enough.
 - **Main connected area.** `main_component()` finds the largest set of junctions that can all reach each other (Kosaraju's algorithm, written iteratively). On Norwich that is 4,143 of 5,058; the rest are one-way pockets and roads cut off at the map's edge. Trips are only generated inside it.
 - **Landmarks (ALT).** `use_landmarks(k)` picks k junctions far apart and runs 2k Dijkstra searches once. By the triangle inequality, `d(L, v) - d(L, u)` and `d(u, L) - d(v, L)` are lower bounds on the road distance from u to v. On Norwich this bound averages 89% of the true distance, against 74% for the straight line. Because congestion only slows roads, free-flow bounds stay valid in traffic. Used as the A\* estimate (`heuristic="landmarks"`) it explores fewer junctions but is slower in pure Python, because each estimate checks every landmark; so A\* keeps the straight line by default, and the traffic manager uses the landmark bound once per decision to skip hopeless searches (`docs/traffic_benchmark.md`).
+
+### Performance engineering (Stage 5)
+
+Each change was measured before and after, and each keeps the answers exactly as they were (checked by tests against the code it replaced):
+
+- **Spatial index** (`routing/spatial.py`). A uniform grid over the junctions, searched ring by ring outwards and stopped as soon as no unsearched cell could hold anything closer; far outside the map, or on a map that is one long line, it falls back to checking every junction. It returns exactly the junction the old scan did, ties included. Norwich: 31.7 µs per nearest-junction lookup against 967.7 µs (31x), and the optimiser's 50-nearest list 23x faster. Used by dispatch, the API's nearest-node and nearest-road, and the optimiser's snapping.
+- **Distance searches** (`dijkstra.py`, `a_star.py`). Their tables now fill in as junctions are reached instead of over all 5,058 junctions per call, and A\* builds a road's segment key only when there are closures or traffic to check. Same paths, distances and nodes explored; A\* went from 3.26 ms to 1.41 ms per Norwich route and is now faster than Dijkstra (2.00 ms) in wall-clock time, as its 64% fewer explored junctions say it should be.
+- **Travel-time landmarks** for speed-limited searches (see Travel-time routing).
+- **Reachability cache.** Snapping a candidate needs to know whether a junction can reach 90% of the map; that is a fixed property of the map, now found with a breadth-first search and remembered (`reach_count`) instead of a full Dijkstra every time. The optimiser's profile was 55% `shortest_distances`, mostly these.
+- **Batched rerouting** (`TrafficManager._batched_route`). When three or more vehicles due a check in the same second head to the same destination, one backward search from it (`RoadNetwork.fastest_tree_to`) gives every one of them its fastest route. It is exact in the osm model: a vehicle's own road is the only one that costs it differently, and a fastest route from the next junction never uses the road it is on (that would pass the junction twice); vehicles exactly at a junction, and the simple model (where both directions share one count), search on their own. On ordinary Norwich traffic destinations are too spread out for it to matter (98 of about 25,600 plans with 2,000 vehicles, no change in step time); with 2,000 trips into a 250 m zone it cut the time per step from 244.9 ms to 83.9 ms (2.9x) with identical journeys.
+- **Profiling.** `python -m backend.perf.profile --save` profiles dynamic traffic, route searches, the optimiser and a scenario with cProfile (`docs/profiling.md`).
 
 ### Accidents (`simulation/accidents.py`)
 
@@ -263,6 +297,27 @@ When a road closes, `rerouting.reroute_affected_vehicles` first checks which veh
 
 `dispatch.py` deliberately has no FastAPI code in it, so the scenario can be tested on a tiny map.
 
+That is the original behaviour, which runs with the `simple` traffic model. With the `osm` model the realistic rules apply (below).
+
+### Emergency services (`simulation/services.py`)
+
+Three services, each with its own stations, vehicles, speed and response target: ambulance (20 m/s, 7 min, the NHS England Category 1 mean target), fire engine (17 m/s, 8 min) and police car (22 m/s, 15 min); there is no single national target for fire or police, so those two are illustrative defaults that can be changed per station, vehicle and study. A station holds one service and only that service's vehicles (the API refuses anything else with 400); an emergency names its service and only that service is sent.
+
+`EmergencyRules` say how emergencies are handled; `rules_for(road_model)` gives the original rules with the `simple` model and the realistic ones with `osm`:
+
+| | Original (`simple`) | Realistic (`osm`) |
+|---|---|---|
+| Who is sent | nearest station in a straight line with a vehicle free | the free vehicle of the service that would arrive first: one fastest-route search per free vehicle under current traffic and closures (`dispatch._send`) |
+| Nothing free | refused (404) | queued (202), answered oldest first as soon as a vehicle of that service is free (`dispatch.after_step`, called by `TrafficManager.step`); the response time includes the wait, and the run records `dispatched_at` |
+| After the call | back at the station at once | drives back (`going_home`), free to be sent again from on the way, parked when it arrives |
+| Traffic | slows it like any car | gives way: it loses half the time other traffic would (`emergency_factor`), and speed limits do not apply |
+
+Planning, movement and the ETA all use the same right-of-way factor, so a dispatched vehicle's estimate matches its drive (tested). Saved runs keep the queue: an emergency is saved when its vehicle is sent, and one still waiting when the run ends is saved as cancelled with reason `still_queued` (migration `0005`, which also adds `dispatched_sim_time`).
+
+### Where emergencies happen (`simulation/population.py`)
+
+By default emergencies are spread evenly over the usable junctions. With `distribution="population"` (scenarios, the optimiser and its evaluation) they follow where people live: the 2021 Census population of each of Norwich's 471 output areas (143,901 people; ONS, Open Government Licence, `data/population/`) is given to the junction nearest the area's population-weighted centroid, and locations are drawn in proportion. Uniform draws are unchanged (the same random calls), so existing results stay the same.
+
 ### Station optimiser
 
 For each candidate location, `station_optimiser.py` runs one Dijkstra search to get the distance to every junction. It reuses the same random emergencies for every candidate, so the comparison is fair. Response time is distance divided by ambulance speed. This is what keeps it fast: one search per candidate rather than one per emergency.
@@ -270,18 +325,27 @@ For each candidate location, `station_optimiser.py` runs one Dijkstra search to 
 - **Candidates.** `dense_candidates` lays a 7x7 grid over the map and moves each point to the nearest well-connected junction (one that can reach at least 90% of the network). Duplicates and points with no well-connected junction nearby are dropped, which leaves about 38 candidates for Norwich.
 - **Ranking.** Candidates are ranked by average response time. An emergency a station cannot reach counts as the slowest response seen in that run. Without this rule a station cut off from most of the map averaged only the few emergencies it *could* reach and ranked first (there is a regression test for this).
 - **Explanation.** `explain_best` turns the numbers into a few plain sentences (why #1 won, and whether another candidate has a better worst case). The API returns them and the frontend displays them.
-- **Checking it.** `validate.py` checks the estimate against ambulances driven through the full simulation. (Its ambulance has the road to itself; a car on the same road would count as traffic and slow it down, which is exactly what the simulation is meant to do but not what that check measures.) `evaluate.py` compares the winner with baselines (city centre, middle of the map, random junctions) on the same set of junctions and re-runs the optimiser with several seeds to check the answer is stable. It only reads the optimiser, so it is safe to run at any time.
+- **Service and population.** `service` sets the speed and target to that service's (`/optimiser/stations?service=fire`); `distribution=population` places the emergencies by Census population. Without them the original 20 m/s, 8 minutes and even spread stay, and so do saved answers' reuse keys.
+- **Checking it.** `validate.py` checks the estimate against ambulances driven through the full simulation, on empty roads and, since Stage 5, through 1,000 cars with the realistic rules (+2.2% on average, worst +7.1%). (Its ambulance has the road to itself; a car on the same road would count as traffic and slow it down, which is exactly what the simulation is meant to do but not what that check measures.) `evaluate.py` compares the winner with baselines (city centre, middle of the map, random junctions) on the same set of junctions and re-runs the optimiser with several seeds to check the answer is stable. It only reads the optimiser, so it is safe to run at any time.
 
 ### Choosing several stations
 
 `optimise_station_set` reuses the same ingredients as the single-station ranking (`prepare_stations` snaps and searches from each candidate once, `sample_emergencies` draws the same random emergencies) and adds:
 
 - **A table of response times.** `response_table` gives `times[candidate][emergency]` in seconds (`math.inf` if unreachable). A set of stations answers each emergency with the fastest member, and `measure_set` turns that into the same measures as a single station: average and worst response over the emergencies reached, percentage within the target out of *all* emergencies, how many were unreached, and the ranking value with unreached emergencies counted at the slowest response seen (the same rule as before, so a set of one station gives exactly the single-station numbers).
-- **Selection.** `greedy_selection` adds, one at a time, the station that lowers the ranking value the most. Greedy can get stuck (the best first station is not always part of the best pair; Norwich: 8% to 11% worse than the best possible for 2 and 3 stations), so `refine_by_swapping` then tries replacing each chosen station with each unchosen one and keeps any improvement until none is left. `order_by_contribution` finally lists the stations in the order they add value. `exhaustive_selection` tries every set; it is only practical for small sizes, so it is used by the tests and `evaluate.py` to check the heuristic, not by the API.
+- **Selection** (`best_station_set`). Up to 2 million possible sets (`EXHAUSTIVE_SET_LIMIT`) every set is scored, in bulk with numpy (`exhaustive_best_set`, the same score as `set_score`), so the answer is the best there is: all 501,942 sets of 5 from Norwich's 38 candidates take about 1.5 s. This replaced greedy + swaps as the default because, checked against every set on 5 seeds, greedy + swaps missed the best 4- or 5-station set 3 times in 10, by up to 2.2%. Beyond the limit, `greedy_selection` (add the station that lowers the ranking value most) and `refine_by_swapping` (swap each chosen station for each unchosen one while it helps) are run, plus swaps from 12 random starting sets, and the best is kept. `order_by_contribution` finally lists the stations in the order they add value. `OPTIMISER_VERSION` is 2, so answers saved by the old search are not reused.
 - **Baselines.** The best single station; the `count` stations that rank best one by one (they tend to bunch together); and the average of 100 random sets. `explain_station_set` reports honestly if a baseline does as well or better.
 - **Validation.** `check_settings` rejects scenarios below 1 and a speed or target that is zero, negative, NaN or infinite. (Before, speed 0 crashed with a division by zero and NaN or a non-positive target gave nonsense.)
 
-Simplification: each emergency is treated on its own, so a station never runs out of ambulances.
+Simplification: each emergency is treated on its own, so a station never runs out of ambulances. The traffic-aware evaluation below is what checks that.
+
+- **Parallel searches.** The searches from each candidate are independent; with 200 or more distinct candidates they run in 4 processes, sending each result back as a compact array rather than a dict (measured on Norwich: 0.64x at 90 candidates, 1.76x at 416, 1.90x at 800; below about 200 starting the processes costs more than it saves, so the default 38 candidates stay in one process).
+
+### The optimiser tested in traffic (`optimiser/evaluation.py`)
+
+The optimiser's estimate assumes free-flowing roads and a vehicle always free. `POST /optimiser/evaluations` (and `python -m backend.optimiser.run_evaluation`) takes its top answers (the top 5 sites, or the optimised set with the top sites ranked one by one and the best single site) and simulates each as a scenario with the osm model, at every demand level and seed, plus a run with no emergencies for each demand level and seed. For a given demand level and seed every candidate gets exactly the same trips and the same emergencies (same seed, same streams; only the stations differ), so the comparison is fair. The scenarios run as an ordinary study; `station_evaluations` (migration `0006`) records the candidates and which scenario is which.
+
+The report, per candidate and demand level: the simulated mean (95% interval over the seeds, Student's t), 90th percentile and worst response pooled over all runs, the share within target, unreached emergencies, network delay, and the delay the emergency response added to other traffic (paired with the no-emergency run of the same seed). The simulated time is compared with the optimiser's estimate for exactly the emergencies that were simulated (each emergency's junction is recorded), so the gap is traffic, queueing and dispatch, not a different sample of emergencies. Candidates are ranked by simulated mean response, and Kendall's tau says how well the optimiser's own order held up. Measured results for Norwich: `docs/optimiser_evaluation.md`.
 
 ### Logging
 
@@ -388,7 +452,7 @@ The optimiser is deterministic, so an identical request gets an identical answer
 
 ### Migrations
 
-The schema is created and changed only by Alembic (`alembic.ini`, `backend/db/migrations/`). Revisions: `0001` (runs, history, optimiser results), `0002` (scenario studies), `0003` (`simulation_runs.restarted_from`). Revision `0001` was generated by autogenerate from the models and then reviewed by hand: the downgrade also drops the PostgreSQL enum types (autogenerate leaves them, so a second upgrade would fail), redundant indexes were removed, and the partial indexes on `run_events` were added. The database address always comes from `DATABASE_URL`.
+The schema is created and changed only by Alembic (`alembic.ini`, `backend/db/migrations/`). Revisions: `0001` (runs, history, optimiser results), `0002` (scenario studies), `0003` (`simulation_runs.restarted_from`), `0004` (`simulation_runs.traffic_model`), `0005` (the emergency queue: `emergencies.dispatched_sim_time`, the `still_queued` reason, `scenario_results.emergency_detail`), `0006` (`station_evaluations`). Revision `0001` was generated by autogenerate from the models and then reviewed by hand: the downgrade also drops the PostgreSQL enum types (autogenerate leaves them, so a second upgrade would fail), redundant indexes were removed, and the partial indexes on `run_events` were added. The database address always comes from `DATABASE_URL`.
 
 - The API checks at start-up that the database is at the latest revision and refuses to start otherwise, with the command to run (`alembic upgrade head`).
 - The tests run upgrade, downgrade to empty and upgrade again, and check that the models and migrations agree (what `alembic check` does; CI also runs `alembic check`).
@@ -559,6 +623,18 @@ Both optimiser endpoints avoid the closed roads of the run named by `simulation_
 | GET | `/optimiser/runs/{id}` | One saved result: settings plus `answer`, exactly as the optimiser endpoint gave it |
 | DELETE | `/optimiser/runs/{id}` | Delete a saved result |
 
+The optimiser endpoints also take `service` (ambulance, fire, police: that service's speed and target unless given) and `distribution` (`uniform` or `population`).
+
+**The optimiser tested in traffic** (a database and the scenario workers needed):
+
+| Method | Path | Purpose |
+|---|---|---|
+| POST | `/optimiser/evaluations` | JSON settings (kind, stations, top, service, distribution, demand levels, seeds, emergencies per run, ...): runs the optimiser, then simulates its top answers as a background study (202 with `evaluation_id`) |
+| GET | `/optimiser/evaluations` | Evaluations, newest first |
+| GET | `/optimiser/evaluations/{id}` | Progress, then the report (see The optimiser tested in traffic) |
+
+Runs: `/simulation/start` and `POST /simulations` take `traffic_model` (`simple` or `osm`; default the server's `TRAFFIC_MODEL`). Stations: `station_type` is ambulance, fire or police (400 otherwise); `add-vehicle` defaults to the station's service and its speed. Emergencies: `emergency_type` names the service; in an osm run an emergency with nothing free answers 202 `emergency queued` with its place in the queue, and `/emergency/status` gives each one's `service` and `waited_seconds`.
+
 **Scenario studies** (Stage 4; everything that stores or reads results needs a database, 503 without one):
 
 | Method | Path | Purpose |
@@ -579,6 +655,8 @@ Both optimiser endpoints avoid the closed roads of the run named by `simulation_
 ## Frontend
 
 The frontend is mostly one React component file, `frontend/src/App.tsx`, using `react-leaflet` for the map. The station optimiser panel and its map markers live in `frontend/src/OptimiserPanel.tsx`; the result tables are in `OptimiserResults.tsx` and the requests and types in `optimiser.ts`. Logic that does not need React (status messages, traffic summary, route conversion) lives in `simulationHelpers.ts`. It calls the backend at the address in `config.ts` (the `VITE_API_URL` build setting, defaulting to `http://127.0.0.1:8000` for local development), converts chosen map locations (latitude/longitude) into junction ids with `/nearest-node`, and runs the simulation by stepping the backend and re-drawing vehicles and congestion. It also polls `/emergency/status`. Once `/simulation/start` has returned a `simulation_id`, all of those requests go to `/simulations/{id}/...` (`runUrl` in `App.tsx`, `runPath` in `simulationHelpers.ts`); with a backend that gives no ID they use the original paths. The optimiser panel does not pass the run's ID, so it plans around the default run's closed roads, which is the user's own run when one person uses the app. By default the backend's CORS setting only allows the origin `http://localhost:5173`; `CORS_ORIGINS` changes that (see `backend/api/settings.py`). In Docker the frontend is built with `VITE_API_URL=/api` and nginx forwards those requests, so CORS is not involved.
+
+The route panel has a **traffic model** choice (realistic, the default, or simple) sent with `/simulation/start`; the emergency panel a **service** choice (each emergency creates a station of that service, at the next station index, and one of its vehicles; a 202 shows the queue message). The optimiser panel can plan for any service and for emergencies where people live. **Test the optimiser in traffic** (`EvaluationSection.tsx`, logic in `services.ts`) starts an evaluation, follows it every 3 s, and shows the ranking in traffic, the estimate for the same emergencies, the gap, the per-demand means with 95% intervals, the delay added to other traffic, Kendall's tau and the explanation; it asks nothing until its button is pressed.
 
 The **Scenarios** section (`ScenarioWorkspace.tsx`, logic in `scenarios.ts`) sits in the main column under the optimiser results. The builder edits scenarios (vehicles, seed, rerouting, a city-centre surge) and picks closures and accidents on the map: "Close a road" makes the next map click call `/scenarios/nearest-road` instead of setting a route point (`App.tsx` holds the pending pick, and the map toolbar says what the next click will do). Running posts a study and checks it every 2 s (`STUDY_POLL_MS`) until it finishes; "Large study" posts a random-closure sweep. Results show progress, the explanation, a bar chart of the ranked metric, an SVG chart of delay per simulated minute, a spread of network delay for large studies, and the ranking table; a scenario's name opens its details, and its most delayed roads (amber) and closures (dashed) are drawn on the map. The page makes no request until the section is used: the metric list is kept in `scenarios.ts`, and a backend test checks each key exists in `compare.METRICS` with the same direction.
 

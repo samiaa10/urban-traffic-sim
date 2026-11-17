@@ -13,9 +13,11 @@ import {
   histogram,
   isFinished,
   linePoints,
+  pickedRoadLabel,
   progressLabel,
   randomClosureRequest,
   request,
+  roadLabel,
   studyRequest,
   type Draft,
   type Study,
@@ -172,5 +174,22 @@ describe("requests", () => {
     await request("/scenarios/presets", undefined, fake)
 
     assert.deepEqual(urls, ["http://example.test/api/scenarios/presets"])
+  })
+})
+
+describe("road labels", () => {
+  const point = { latitude: 52.63, longitude: 1.29 }
+
+  it("names a picked road when the map knows its name", () => {
+    const road = { start: 11, destination: 12, start_point: point, end_point: point }
+    assert.equal(pickedRoadLabel({ ...road, name: "Prince of Wales Road" }), "Prince of Wales Road")
+    assert.equal(pickedRoadLabel({ ...road, name: null }), "11-12")
+    assert.equal(pickedRoadLabel(road), "11-12")
+  })
+
+  it("names a delayed road, or falls back to its junctions", () => {
+    assert.equal(roadLabel({ start_node: 1, end_node: 2, name: "Riverside Road" }), "Riverside Road")
+    assert.equal(roadLabel({ start_node: 1, end_node: 2, name: null }), "1-2")
+    assert.equal(roadLabel({ start_node: null, end_node: null }), "part of a road (after a reroute)")
   })
 })

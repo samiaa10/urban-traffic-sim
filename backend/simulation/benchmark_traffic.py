@@ -37,6 +37,7 @@ from pathlib import Path
 from backend.routing.a_star import a_star
 from backend.routing.travel_time import RoadNetwork
 from backend.simulation.simulation import Simulation
+from backend.simulation.road_model import make_road_model
 from backend.simulation.traffic_manager import ReroutePolicy, TrafficManager
 
 PROJECT_ROOT = Path(__file__).resolve().parents[2]
@@ -46,10 +47,23 @@ REPORT_FILE = PROJECT_ROOT / "docs" / "traffic_benchmark.md"
 SEED = 42
 
 
+# Traffic model of every simulation (--traffic-model), and for the osm
+# model the shortest road length used for capacity (--min-road-length)
+TRAFFIC_MODEL = "simple"
+MIN_ROAD_LENGTH = None
+
+
 def new_manager(network, policy):
     # The Simulation needs a first vehicle: a parked one, out of the way
     parked = network.point(min(network.main_component()))
-    simulation = Simulation([parked, parked])
+    if TRAFFIC_MODEL == "osm" and MIN_ROAD_LENGTH is not None:
+        from backend.simulation.road_model import OsmRoads
+
+        road_model = OsmRoads(network, min_road_length=MIN_ROAD_LENGTH)
+    else:
+        road_model = make_road_model(TRAFFIC_MODEL, network)
+
+    simulation = Simulation([parked, parked], road_model=road_model)
     return simulation, TrafficManager(network, simulation, policy)
 
 
@@ -284,7 +298,13 @@ def main():
     parser.add_argument("--policy-steps", type=int, default=1200)
     parser.add_argument("--policy-seeds", type=int, nargs="+", default=[1, 2])
     parser.add_argument("--save", action="store_true", help="write docs/traffic_benchmark.md")
+    parser.add_argument("--traffic-model", choices=["simple", "osm"], default="simple")
+    parser.add_argument("--min-road-length", type=float, default=None)
     arguments = parser.parse_args()
+
+    global TRAFFIC_MODEL, MIN_ROAD_LENGTH
+    TRAFFIC_MODEL = arguments.traffic_model
+    MIN_ROAD_LENGTH = arguments.min_road_length
 
     with open(GRAPH_FILE, "rb") as file:
         graph = pickle.load(file)
@@ -318,7 +338,8 @@ def main():
         f"({platform.platform()}). Seed {SEED}. Reproduce with "
         f"`python -m backend.simulation.benchmark_traffic --sizes {' '.join(map(str, arguments.sizes))} "
         f"--steps {arguments.steps} --accident-vehicles {arguments.accident_vehicles} "
-        f"--accident-steps {arguments.accident_steps} --save`. Timings depend on the machine.",
+        f"--accident-steps {arguments.accident_steps} --traffic-model {arguments.traffic_model} --save`. "
+        "Timings depend on the machine.",
         "",
         f"Norwich map: {len(graph.nodes):,} junctions, {len(network.length):,} directed roads, "
         f"{len(network.main_component()):,} junctions in the main connected area (trips are made there). "

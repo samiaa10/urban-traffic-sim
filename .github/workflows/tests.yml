@@ -47,7 +47,7 @@ jobs:
       # file tests, sqlalchemy/alembic/psycopg for the database (osmnx and
       # the Norwich road-map data file are not needed: tests use tiny maps)
       - name: Install test dependencies
-        run: pip install pytest fastapi httpx pyyaml "sqlalchemy>=2.0,<2.1" "alembic>=1.13,<2" "psycopg[binary]>=3.2,<4"
+        run: pip install pytest fastapi httpx pyyaml "numpy>=2" "sqlalchemy>=2.0,<2.1" "alembic>=1.13,<2" "psycopg[binary]>=3.2,<4"
 
       # The migrations apply to an empty database, and the models match
       # them (nothing left for autogenerate to find)
@@ -98,7 +98,7 @@ jobs:
           python-version: "3.12"
 
       - name: Install test dependencies
-        run: pip install pytest fastapi httpx pyyaml "sqlalchemy>=2.0,<2.1" "alembic>=1.13,<2" "psycopg[binary]>=3.2,<4"
+        run: pip install pytest fastapi httpx pyyaml "numpy>=2" "sqlalchemy>=2.0,<2.1" "alembic>=1.13,<2" "psycopg[binary]>=3.2,<4"
 
       - name: Check the database migrations
         env:

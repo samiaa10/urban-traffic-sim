@@ -3,6 +3,7 @@
 import logging
 
 from fastapi import APIRouter, Depends, HTTPException
+from fastapi.responses import JSONResponse
 
 from backend.api.context import AppContext
 from backend.api.routes.common import (
@@ -27,11 +28,30 @@ def create_emergency(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
+    """Raise an emergency for one service (ambulance, fire or police) and
+    send a vehicle (services.py). In a run with the osm traffic model, the
+    free vehicle that would arrive first is sent, and if none is free the
+    emergency waits in a queue (202, "emergency queued")."""
+
+    from backend.api.routes.stations import known_service
+
+    known_service(emergency_type, "emergency_type")
+
     with run.lock:
         outcome = dispatch.dispatch_emergency(
             context.graph, run.simulation, latitude, longitude, emergency_type
         )
         emergency = outcome["emergency"]
+
+        if outcome["status"] == "queued":
+            run.recorder.emergency_queued(emergency)
+            waiting = len(run.simulation.queued_emergencies())
+            return JSONResponse(status_code=202, content={
+                "status": "emergency queued",
+                "emergency_type": emergency_type,
+                "emergency_location": {"latitude": latitude, "longitude": longitude},
+                "queue_position": waiting,
+            })
 
         if outcome["status"] == "no_vehicle":
             run.recorder.emergency_refused(emergency, "no_vehicle")

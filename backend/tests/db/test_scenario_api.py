@@ -447,3 +447,92 @@ def test_only_interrupted_or_cancelled_studies_can_be_resumed(client, app):
 
     assert client.post(f"/scenarios/studies/{study['study_id']}/resume").status_code == 409
     assert client.post("/scenarios/studies/00000000-0000-0000-0000-000000000000/resume").status_code == 404
+
+
+# ------------------------------------------------------------
+# Traffic models
+# ------------------------------------------------------------
+
+def test_a_scenario_is_saved_with_the_traffic_model_it_runs(make_scenario_app):
+    app = make_scenario_app(traffic_model="osm")
+    client = TestClient(app)
+
+    study = run_study(client, app, [
+        scenario("Default"),
+        scenario("Original rules", traffic_model="simple"),
+    ])
+    details = {
+        s["name"]: client.get(f"/scenarios/{s['scenario_id']}").json()
+        for s in study["scenarios"]
+    }
+
+    # Not given: the server's default, written into the saved spec
+    assert details["Default"]["spec"]["traffic_model"] == "osm"
+    assert details["Original rules"]["spec"]["traffic_model"] == "simple"
+    assert all(d["status"] == "completed" for d in details.values())
+    # Same trips, different rules: the explanation says what differs
+    assert details["Default"]["trip_signature"] == details["Original rules"]["trip_signature"]
+    assert any("traffic model" in line for line in study["explanation"])
+
+
+def test_roads_are_only_named_on_a_map_with_openstreetmap_attributes(client, app):
+    from backend.api.routes.scenarios import road_name_field
+    from backend.routing.graph import Graph
+    from backend.routing.road_attributes import RoadInfo
+
+    # The grid test map has no attributes: answers keep their old shape
+    road = client.get("/scenarios/nearest-road", params={"latitude": 52.62, "longitude": 1.28}).json()
+    assert "name" not in road
+
+    graph = Graph()
+    graph.road_info[(1, 2)] = RoadInfo("primary", 13.4, True, 1, False, False, "Riverside Road")
+    graph.road_info[(2, 3)] = RoadInfo("residential", 8.9, True, 1, False, False, None)
+    assert road_name_field(graph, 2, 1) == {"name": "Riverside Road"}
+    assert road_name_field(graph, 2, 3) == {"name": None}
+
+
+# ------------------------------------------------------------
+# Testing the optimiser's answers in traffic
+# ------------------------------------------------------------
+
+def test_the_optimisers_best_sites_are_tested_in_traffic(client, app):
+    response = client.post("/optimiser/evaluations", json={
+        "top": 2, "demand": [30], "seeds": [1, 2], "emergencies": 3,
+        "first_emergency_at": 20, "emergency_interval_seconds": 15,
+        "optimiser_scenarios": 40, "max_seconds": 900, "vehicles_per_station": 1,
+    })
+    assert response.status_code == 202, response.text
+    created = response.json()
+    assert created["candidates"] == ["Site #1", "Site #2"]
+    assert created["scenario_count"] == 1 * 2 * (2 + 1)
+
+    assert app.state.context.jobs.wait_until_idle(timeout=180)
+    body = client.get(f"/optimiser/evaluations/{created['evaluation_id']}").json()
+    report = body["report"]
+
+    assert body["status"] == "completed"
+    assert report["complete"] and report["scenarios_done"] == 6
+    assert report["rank_agreement_kendall_tau"] in (-1, 1)
+    for candidate in report["candidates"]:
+        demand = candidate["by_demand"][0]
+        assert demand["runs"] == 2
+        assert candidate["estimate"]["mean_response_seconds"] > 0
+        assert candidate["simulated_mean_response_seconds"] > 0
+        assert demand["mean_response_seconds"]["ci95"] is not None
+        assert demand["added_delay_vehicle_hours"]["mean"] is not None
+        # Compared with the optimiser's estimate for the same emergencies
+        assert candidate["paired_estimate_seconds"] > 0
+        assert candidate["estimate_gap_seconds"] == pytest.approx(
+            candidate["simulated_mean_response_seconds"] - candidate["paired_estimate_seconds"]
+        )
+    assert report["explanation"]
+
+    listed = client.get("/optimiser/evaluations").json()["evaluations"]
+    assert listed[0]["evaluation_id"] == created["evaluation_id"]
+    assert client.get("/optimiser/evaluations/not-an-id").status_code == 404
+
+
+def test_evaluations_check_their_settings(client):
+    assert client.post("/optimiser/evaluations", json={"demand": [0]}).status_code in (400, 422)
+    assert client.post("/optimiser/evaluations", json={"service": "taxi"}).status_code == 422
+    assert client.post("/optimiser/evaluations", json={"surprise": 1}).status_code == 422

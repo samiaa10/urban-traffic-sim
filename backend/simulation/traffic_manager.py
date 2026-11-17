@@ -56,11 +56,20 @@ import math
 import random
 import time
 
-from backend.simulation import rerouting
+from backend.simulation import dispatch, rerouting
 from backend.simulation.demand import DemandModel, Zone
 
 
 DEFAULT_SPEED = 13.9   # m/s, the same default car speed as Vehicle
+
+
+def car_speed(simulation, speed=DEFAULT_SPEED):
+    """Top speed for a new car: in the osm traffic model the road's speed
+    limit decides (road_model.CAR_TOP_SPEED), otherwise `speed`."""
+
+    from backend.simulation.road_model import CAR_TOP_SPEED
+
+    return CAR_TOP_SPEED if simulation.road_model.has_limits else speed
 
 
 class ReroutePolicy:
@@ -177,6 +186,14 @@ class TrafficManager:
         self._slow_cache = {}
         self._slow_cache_key = None
 
+        # Emergencies the queue sent a vehicle to in the last step
+        self.dispatched_from_queue = []
+
+        # Batched rerouting (see _batched_route): per reroute pass, how many
+        # vehicles head to each destination, and the shared searches
+        self._batch_groups = {}
+        self._batch_trees = {}
+
         # Recent average number of vehicles on each road (see the module
         # docstring); starts from the traffic right now
         self.recent_traffic = {
@@ -191,6 +208,9 @@ class TrafficManager:
             "skipped_no_possible_saving": 0,
             "reroutes": 0,
             "search_seconds": 0.0,
+            # Batched rerouting: shared searches, and vehicles they served
+            "batched_searches": 0,
+            "batched_vehicles": 0,
         }
 
     # ------------------------------------------------------------
@@ -220,6 +240,17 @@ class TrafficManager:
 
         return self.simulation.road_speed_factor(segment, round(count) + 1)
 
+    @property
+    def road_model(self):
+        return self.simulation.road_model
+
+    def _accident_keys(self):
+        """Traffic keys of every road with an accident (both directions in
+        the osm model)."""
+
+        keys_of = self.road_model.keys_of_segment
+        return {key for segment in self.simulation.accidents for key in keys_of(segment)}
+
     def _slow_roads(self, traffic):
         """{road: joining speed factor} for every road that is not free flowing.
 
@@ -233,7 +264,7 @@ class TrafficManager:
         def build():
             slow = {}
 
-            for segment in set(traffic) | set(self.simulation.accidents):
+            for segment in set(traffic) | self._accident_keys():
                 factor = self._joining_factor(segment, traffic.get(segment, 0))
 
                 if factor != 1.0:
@@ -304,15 +335,24 @@ class TrafficManager:
             return None
 
         route = vehicle.route
-        return rerouting.segment_key(
+        return self.simulation.traffic_key(
             route[vehicle.position], route[vehicle.position + 1]
         )
+
+    def _obeys_limits(self, vehicle):
+        """Whether searches for this vehicle obey speed limits (osm model,
+        and not an emergency vehicle; None = a new car)."""
+
+        if not self.road_model.has_limits:
+            return False
+        return vehicle is None or vehicle.obeys_speed_limits
 
     def plan(self, start, destination, speed, traffic=None, vehicle=None):
         """Fastest route under current traffic, accidents and closures.
 
         Pass the vehicle when re-planning one already on the road, so its
-        own presence is not counted as traffic in its way.
+        own presence is not counted as traffic in its way (and so an
+        emergency vehicle is planned without speed limits).
         """
 
         if traffic is None:
@@ -328,6 +368,8 @@ class TrafficManager:
                 traffic, self._own_segment(vehicle)
             ),
             blocked_segments=self.simulation.get_blocked_segments(),
+            directed=self.road_model.directed,
+            limits=self._obeys_limits(vehicle),
         )
 
         self.stats["searches"] += 1
@@ -364,9 +406,12 @@ class TrafficManager:
         generator=None,
         origin_zone=None,
         destination_zone=None,
-        speed=DEFAULT_SPEED,
+        speed=None,
     ):
         """Add `count` vehicles with demand-model trips and fastest routes.
+
+        speed defaults to car_speed() (the speed limits decide in the osm
+        traffic model, DEFAULT_SPEED otherwise).
 
         Every new vehicle is routed with the same traffic snapshot (taken
         once, before any of them are added), which keeps spawning a large
@@ -374,6 +419,7 @@ class TrafficManager:
         """
 
         generator = generator or self.random
+        speed = speed if speed is not None else car_speed(self.simulation)
         traffic = self.planning_traffic()
         started = time.perf_counter()
 
@@ -469,7 +515,13 @@ class TrafficManager:
         ):
             return math.inf
 
-        return self.network.path_seconds(nodes, vehicle.speed, factor)
+        return self.network.path_seconds(
+            nodes,
+            vehicle.speed,
+            factor,
+            directed=self.road_model.directed,
+            limits=self._obeys_limits(vehicle),
+        )
 
     def _record_avoided(self, vehicle, new_nodes):
         """Remember the closed or accident roads the vehicle just routed round.
@@ -610,8 +662,8 @@ class TrafficManager:
         # No route can beat the free-flow lower bound (landmarks + straight
         # line, at top speed), so if even that would not save enough, do not
         # search at all
-        best_possible = (
-            self.network.lower_bound_metres(start, destination) / vehicle.speed
+        best_possible = self.network.lower_bound_seconds(
+            start, destination, vehicle.speed, self._obeys_limits(vehicle)
         )
 
         if (
@@ -621,9 +673,14 @@ class TrafficManager:
             self.stats["skipped_no_possible_saving"] += 1
             return False
 
-        path, seconds, _ = self.plan(
-            start, destination, vehicle.speed, traffic, vehicle
-        )
+        batched = self._batched_route(vehicle, prefix, start, destination, traffic)
+
+        if batched is not None:
+            path, seconds = batched
+        else:
+            path, seconds, _ = self.plan(
+                start, destination, vehicle.speed, traffic, vehicle
+            )
 
         if not path:
             return False      # nothing better: keep the route (and wait)
@@ -663,6 +720,8 @@ class TrafficManager:
         interval = self.policy.check_interval
         switched = 0
 
+        due = []
+
         for index, vehicle in enumerate(self.simulation.vehicles):
 
             if not self._active(vehicle):
@@ -683,9 +742,16 @@ class TrafficManager:
                 if last is not None and now - last < self.policy.cooldown_seconds:
                     continue
 
-                self.stats["routine_checks"] += 1
-            else:
+            due.append((index, vehicle, urgent))
+
+        self._plan_batches(due)
+
+        for index, vehicle, urgent in due:
+
+            if urgent:
                 self.stats["urgent_checks"] += 1
+            else:
+                self.stats["routine_checks"] += 1
 
             must_use = self._urgent.get(index) if urgent else None
 
@@ -694,7 +760,92 @@ class TrafficManager:
                 switched += 1
 
         self._urgent.clear()
+        self._batch_groups = {}
+        self._batch_trees = {}
         return switched
+
+    # ------------------------------------------------------------
+    # Batched rerouting
+    # ------------------------------------------------------------
+
+    # A shared backward search costs about as much as 2 to 3 ordinary ones,
+    # so only destinations with at least this many vehicles due share one
+    BATCH_MIN = 3
+
+    def _batch_key(self, vehicle, destination):
+        return (destination, vehicle.speed, self._obeys_limits(vehicle))
+
+    def _plan_batches(self, due):
+        """Count, for this pass, the vehicles due a check per destination
+        (and speed and limits) that can share a search (see _batched_route)."""
+
+        self._batch_groups = {}
+        self._batch_trees = {}
+
+        # Exact only with per-direction traffic (the osm model): see below
+        if not self.road_model.directed:
+            return
+
+        groups = {}
+        for _, vehicle, _ in due:
+            prefix, nodes = self._remaining_nodes(vehicle)
+            if nodes is None or not prefix:
+                continue
+            groups.setdefault(self._batch_key(vehicle, nodes[-1]), set()).add(nodes[0])
+
+        self._batch_groups = {
+            key: starts for key, starts in groups.items() if len(starts) >= self.BATCH_MIN
+        }
+
+    def _batched_route(self, vehicle, prefix, start, destination, traffic):
+        """(path, seconds) from one backward search shared by every vehicle
+        due a check this pass with the same destination, or None to search
+        on its own.
+
+        Why it is exact: a vehicle's own road is the only one whose cost is
+        different for it (it is not traffic in its own way). In the osm
+        model traffic is counted per direction, so its own road is the one
+        it is driving now, towards `start`; a fastest route FROM `start`
+        never uses it (that would pass `start` twice). Vehicles exactly at
+        a junction (no prefix) could leave along their own road, so they
+        search on their own; so does everything in the simple model, where
+        both directions share one count.
+        """
+
+        if not prefix:
+            return None
+
+        key = self._batch_key(vehicle, destination)
+        starts = self._batch_groups.get(key)
+        if starts is None:
+            return None
+
+        tree = self._batch_trees.get(key)
+        if tree is None:
+            began = time.perf_counter()
+            tree = self.network.fastest_tree_to(
+                destination,
+                vehicle.speed,
+                speed_factor=self.joining_speed_factor(traffic),
+                blocked_segments=self.simulation.get_blocked_segments(),
+                directed=self.road_model.directed,
+                limits=self._obeys_limits(vehicle),
+                targets=starts,
+            )
+            self._batch_trees[key] = tree
+            self.stats["batched_searches"] += 1
+            self.stats["search_seconds"] += time.perf_counter() - began
+
+        seconds, next_junction = tree
+        if start not in seconds:
+            return [], math.inf
+
+        path = [start]
+        while path[-1] != destination:
+            path.append(next_junction[path[-1]])
+
+        self.stats["batched_vehicles"] += 1
+        return path, seconds[start]
 
     # ------------------------------------------------------------
     # One second of simulated time
@@ -721,6 +872,9 @@ class TrafficManager:
 
         self._run_surges()
         self.simulation.step()
+        # Emergency vehicles home, queued emergencies answered (realistic
+        # emergency rules only; services.py)
+        self.dispatched_from_queue = dispatch.after_step(self.simulation)
         self.update_recent_traffic()
         self.process_events()
         return switched + self.reroute_pass()

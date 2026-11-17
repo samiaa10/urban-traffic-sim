@@ -16,6 +16,8 @@ TABLES = {
     # 0002: scenario studies
     "scenario_studies", "scenarios", "scenario_results", "scenario_road_impacts",
     "scenario_area_impacts", "scenario_timeseries",
+    # 0006: the optimiser's answers tested in traffic
+    "station_evaluations",
 }
 
 ENUM_TYPES = {
@@ -69,7 +71,81 @@ def test_downgrade_removes_everything_and_upgrade_works_again(engine):
 
 def test_the_database_is_at_the_latest_revision(engine):
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0003"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+
+
+def test_the_station_evaluation_migration_can_be_undone_on_its_own(engine):
+    """0006 down to 0005 removes only station_evaluations."""
+
+    downgrade(engine, "0005")
+    try:
+        assert tables(engine) == TABLES - {"station_evaluations"}
+    finally:
+        migrate(engine, "head")
+    assert tables(engine) == TABLES
+
+
+def test_the_emergency_queue_migration_can_be_undone_on_its_own(engine):
+    """0005 down to 0004 removes emergencies.dispatched_sim_time and the
+    still_queued reason; up again restores them."""
+
+    def columns():
+        return {c["name"] for c in inspect(engine).get_columns("emergencies")}
+
+    assert "dispatched_sim_time" in columns()
+    downgrade(engine, "0004")
+    try:
+        assert "dispatched_sim_time" not in columns()
+        assert tables(engine) == TABLES - {"station_evaluations"}
+    finally:
+        migrate(engine, "head")
+    assert "dispatched_sim_time" in columns()
+
+
+def test_the_traffic_model_migration_can_be_undone_on_its_own(engine):
+    """0004 down to 0003 removes only simulation_runs.traffic_model; going
+    up again gives runs saved before it the simple model they used."""
+
+    import uuid
+
+    def columns():
+        return {c["name"] for c in inspect(engine).get_columns("simulation_runs")}
+
+    run_id = uuid.uuid4()
+    downgrade(engine, "0003")
+    try:
+        assert "traffic_model" not in columns()
+        assert tables(engine) == TABLES - {"station_evaluations"}
+        with engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO simulation_runs (id, start_node, destination_node, graph_sha256) "
+                "VALUES (:id, 1, 2, 'x')"
+            ), {"id": run_id})
+    finally:
+        migrate(engine, "head")
+
+    with engine.begin() as connection:
+        model = connection.scalar(
+            text("SELECT traffic_model FROM simulation_runs WHERE id = :id"), {"id": run_id}
+        )
+        connection.execute(text("DELETE FROM simulation_runs WHERE id = :id"), {"id": run_id})
+
+    assert "traffic_model" in columns()
+    assert model == "simple"
+
+
+def test_only_known_traffic_models_can_be_saved(engine):
+    import uuid
+
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    with pytest.raises(IntegrityError, match="known_traffic_model"):
+        with engine.begin() as connection:
+            connection.execute(text(
+                "INSERT INTO simulation_runs (id, start_node, destination_node, graph_sha256, traffic_model) "
+                "VALUES (:id, 1, 2, 'x', 'fast')"
+            ), {"id": uuid.uuid4()})
 
 
 def test_the_restart_link_migration_can_be_undone_on_its_own(engine):
@@ -82,7 +158,7 @@ def test_the_restart_link_migration_can_be_undone_on_its_own(engine):
     downgrade(engine, "0002")
     try:
         assert "restarted_from" not in columns()
-        assert tables(engine) == TABLES
+        assert tables(engine) == TABLES - {"station_evaluations"}
     finally:
         migrate(engine, "head")
     assert "restarted_from" in columns()
@@ -97,6 +173,7 @@ def test_the_scenario_migration_can_be_undone_on_its_own(engine):
         assert tables(engine) == TABLES - {
             "scenario_studies", "scenarios", "scenario_results",
             "scenario_road_impacts", "scenario_area_impacts", "scenario_timeseries",
+            "station_evaluations",
         }
         assert enum_types(engine) == ENUM_TYPES - {"study_status", "scenario_status"}
     finally:

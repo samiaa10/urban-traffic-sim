@@ -121,6 +121,7 @@ class ImpactTracker:
             return
 
         step_delay = 0.0
+        limits = self.simulation.road_model.has_limits
 
         for vehicle, road, journey, distance in self._snapshot:
             if vehicle.journey_seconds - journey <= 0:
@@ -132,7 +133,16 @@ class ImpactTracker:
             seconds = vehicle.last_move_seconds if vehicle.finished else 1.0
 
             driven = vehicle.distance_travelled - distance
-            lost = float(seconds - driven / vehicle.speed)
+
+            if limits and vehicle.obeys_speed_limits:
+                # Free flow is the speed limit on each road it drove
+                # (Vehicle.move adds it up); a vehicle that did not move
+                # this second had no free-flow time at all
+                free = vehicle.last_free_flow_seconds if driven > 0 else 0.0
+            else:
+                free = driven / vehicle.speed
+
+            lost = float(seconds - free)
 
             # Floating-point rounding can leave -1e-12 on a free-flowing road
             if lost < 1e-9:

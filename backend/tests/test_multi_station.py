@@ -660,3 +660,74 @@ def test_explanation_when_nothing_can_be_reached():
     }
 
     assert "could not reach any" in explain_station_set(outcome, 5, 480)[0]
+
+
+# ------------------------------------------------------------
+# Exhaustive set search (optimiser version 2)
+# ------------------------------------------------------------
+
+def test_exhaustive_search_finds_the_best_set_on_random_tables():
+    import itertools
+    import math
+    import random
+
+    from backend.optimiser.station_optimiser import (
+        best_station_set,
+        exhaustive_best_set,
+        greedy_selection,
+        refine_by_swapping,
+        set_score,
+    )
+
+    generator = random.Random(11)
+    for _ in range(25):
+        candidates = generator.randint(5, 9)
+        emergencies = generator.randint(4, 12)
+        times = [
+            [math.inf if generator.random() < 0.1 else generator.uniform(10, 500) for _ in range(emergencies)]
+            for _ in range(candidates)
+        ]
+        penalty = 600
+        for count in (2, 3):
+            brute = min(
+                (set_score(times, list(c), penalty), list(c))
+                for c in itertools.combinations(range(candidates), count)
+            )
+            found = exhaustive_best_set(times, count, penalty)
+            assert set_score(times, found, penalty) == pytest.approx(brute[0])
+            assert set_score(times, best_station_set(times, count, penalty), penalty) <= set_score(
+                times, refine_by_swapping(times, greedy_selection(times, count, penalty), penalty), penalty
+            )
+
+
+def test_the_restart_search_is_never_worse_than_greedy_and_swaps(monkeypatch):
+    import random
+
+    from backend.optimiser import station_optimiser as so
+
+    monkeypatch.setattr(so, "EXHAUSTIVE_SET_LIMIT", 0)
+    generator = random.Random(5)
+    for _ in range(10):
+        times = [[generator.uniform(10, 500) for _ in range(15)] for _ in range(12)]
+        greedy = so.refine_by_swapping(times, so.greedy_selection(times, 4, 600), 600)
+        assert so.set_score(times, so.best_station_set(times, 4, 600), 600) <= so.set_score(times, greedy, 600)
+
+
+def test_on_norwich_the_exhaustive_search_beats_greedy_where_greedy_missed():
+    """Seed 4, 5 stations: greedy + swaps was 2.2% worse than the best set."""
+
+    import pickle
+    from pathlib import Path
+
+    from backend.optimiser import station_optimiser as so
+
+    with open(Path(__file__).resolve().parents[2] / "data" / "osm" / "norwich_graph.pkl", "rb") as file:
+        graph = pickle.load(file)
+    stations = so.prepare_stations(graph, so.dense_candidates(graph))
+    times = so.response_table(stations, so.sample_emergencies(stations, 500, 4), 20.0)
+    penalty = so.unreachable_penalty(times)
+
+    greedy = so.set_score(times, so.refine_by_swapping(times, so.greedy_selection(times, 5, penalty), penalty), penalty)
+    best = so.set_score(times, so.best_station_set(times, 5, penalty), penalty)
+
+    assert best[0] < greedy[0] * 0.985

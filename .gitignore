@@ -9,8 +9,11 @@ __pycache__/
 # backend on Render builds from Git and has no other way to get it)
 data/*
 !data/osm/
+!data/population/
 data/osm/*
 !data/osm/norwich_graph.pkl
+!data/osm/README.md
+!data/osm/source/
 cache/
 
 # Virtual environments

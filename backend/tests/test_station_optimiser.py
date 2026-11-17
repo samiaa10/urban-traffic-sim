@@ -217,3 +217,20 @@ def test_explanation_mentions_emergencies_the_winner_could_not_reach():
     text = " ".join(explain_best(results, scenarios=100, target_seconds=480))
 
     assert "could not reach" in text
+
+
+def test_searching_from_candidates_in_parallel_gives_the_same_answer(monkeypatch):
+    from backend.optimiser import station_optimiser as so
+    from backend.tests.helpers import make_grid_graph
+
+    graph = make_grid_graph(size=8, seed=3)
+    candidates = [
+        (data["latitude"], data["longitude"]) for _, data in list(graph.nodes.items())[::5]
+    ]
+    monkeypatch.setattr(so, "PARALLEL_MIN_CANDIDATES", 2)
+
+    alone = so.prepare_stations(graph, candidates, workers=1)
+    together = so.prepare_stations(graph, candidates, workers=2)
+
+    assert [s["node"] for s in together] == [s["node"] for s in alone]
+    assert [s["distances"] for s in together] == [s["distances"] for s in alone]

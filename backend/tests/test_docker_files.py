@@ -297,6 +297,15 @@ def test_ci_checks_the_migrations(workflow, name):
         assert package in commands, package
 
 
+@pytest.mark.parametrize("name", PYTHON_JOBS)
+def test_ci_installs_numpy_for_the_map_and_the_set_search(workflow, name):
+    """The Norwich map file stores numpy numbers (loading it needs numpy),
+    and the station-set search scores sets with numpy; both are tested."""
+
+    assert '"numpy>=2"' in steps_text(workflow["jobs"][name])
+    assert "numpy" in text("requirements-deploy.txt")
+
+
 def test_ci_builds_and_runs_the_docker_stack(workflow):
     commands = steps_text(workflow["jobs"]["docker"])
 
@@ -323,3 +332,13 @@ def test_scenario_workers_are_set_in_compose(compose):
 
     assert environment["SCENARIO_WORKERS"].startswith("${SCENARIO_WORKERS:-")
     assert "SCENARIO_WORKERS" in text("backend/api/main.py")
+
+
+def test_the_traffic_model_is_set_in_compose(compose):
+    """The backend container uses the osm traffic model unless TRAFFIC_MODEL
+    in .env says otherwise (the same variable the API reads)."""
+
+    environment = services(compose)["backend"]["environment"]
+
+    assert environment["TRAFFIC_MODEL"] == "${TRAFFIC_MODEL:-osm}"
+    assert "TRAFFIC_MODEL" in text("backend/api/main.py")

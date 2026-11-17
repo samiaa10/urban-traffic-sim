@@ -19,6 +19,7 @@ from backend.api.settings import (
     max_study_scenarios,
     resume_studies,
     scenario_workers,
+    traffic_model,
 )
 
 
@@ -59,6 +60,8 @@ app = create_app(
     max_study_scenarios=max_study_scenarios(os.environ.get("MAX_STUDY_SCENARIOS")),
     # Queue studies a restart interrupted again (default yes)
     resume_studies=resume_studies(os.environ.get("RESUME_STUDIES")),
+    # How roads behave in new runs and scenarios (default osm)
+    traffic_model=traffic_model(os.environ.get("TRAFFIC_MODEL")),
 )
 
 context = app.state.context

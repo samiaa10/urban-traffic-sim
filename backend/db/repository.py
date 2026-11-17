@@ -94,6 +94,7 @@ class RunRepository:
     def create_run(
         self, run_id, start_node, destination_node, graph_sha256,
         rerouting_enabled=True, vehicles_total=0, restarted_from=None,
+        traffic_model="simple",
     ):
         run = SimulationRun(
             id=run_id,
@@ -106,6 +107,7 @@ class RunRepository:
             vehicles_total=vehicles_total,
             vehicles_finished=0,
             restarted_from=restarted_from,
+            traffic_model=traffic_model,
         )
         self.session.add(run)
         self.session.flush()
@@ -329,7 +331,7 @@ class RunRepository:
 
     def dispatch_emergency(
         self, run_id, emergency_type, latitude, longitude, sim_time,
-        vehicle_id, route_distance_m, nodes_explored,
+        vehicle_id, route_distance_m, nodes_explored, dispatched_sim_time=None,
     ):
         emergency = Emergency(
             run_id=run_id,
@@ -339,6 +341,9 @@ class RunRepository:
             status=EmergencyStatus.DISPATCHED,
             vehicle_id=vehicle_id,
             created_sim_time=sim_time,
+            dispatched_sim_time=(
+                sim_time if dispatched_sim_time is None else dispatched_sim_time
+            ),
             route_distance_m=route_distance_m,
             nodes_explored=nodes_explored,
             reroutes=0,
@@ -347,7 +352,8 @@ class RunRepository:
         self.session.flush()
 
         self.add_event(
-            run_id, EventType.EMERGENCY_DISPATCHED, sim_time,
+            run_id, EventType.EMERGENCY_DISPATCHED,
+            sim_time if dispatched_sim_time is None else dispatched_sim_time,
             emergency_id=emergency.id,
         )
         return emergency
@@ -576,6 +582,7 @@ class RunRepository:
 def optimiser_request_key(
     kind, graph_sha256, candidates, closed_segments, scenarios, seed,
     target_seconds, speed, station_count=None, version=OPTIMISER_VERSION,
+    distribution="uniform",
 ):
     """A fingerprint of everything an optimisation's answer depends on.
 
@@ -599,6 +606,10 @@ def optimiser_request_key(
         "speed": float(speed),
         "stations": None if station_count is None else int(station_count),
     }
+
+    # Left out when uniform, so earlier keys (and saved answers) still match
+    if distribution != "uniform":
+        key["distribution"] = distribution
 
     text = json.dumps(key, sort_keys=True, separators=(",", ":"))
     return hashlib.sha256(text.encode()).hexdigest()

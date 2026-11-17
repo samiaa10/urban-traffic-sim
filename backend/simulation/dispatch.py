@@ -23,14 +23,26 @@ import math
 
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
-from backend.simulation.simulation import segment_between
 
 
 logger = logging.getLogger(__name__)
 
 
 def nearest_junction(graph, latitude, longitude):
-    """The junction closest to a point (straight line, in degrees)."""
+    """The junction closest to a point (straight line, in degrees).
+
+    Uses the grid index (routing/spatial.py), which gives exactly the
+    answer of the scan below (nearest_junction_scan), ties included."""
+
+    from backend.routing.spatial import index_for
+
+    found = index_for(graph).nearest(latitude, longitude)
+    return found[0] if found else None
+
+
+def nearest_junction_scan(graph, latitude, longitude):
+    """The original scan over every junction (the reference the index is
+    tested against)."""
 
     nearest = None
     nearest_distance = float("inf")
@@ -48,8 +60,167 @@ def nearest_junction(graph, latitude, longitude):
     return nearest
 
 
+def _emergency_factor(simulation, traffic):
+    """Speed factor function for planning an emergency vehicle's route:
+    the factor a vehicle joining each road would get, with right of way
+    (services.EmergencyRules)."""
+
+    rules = simulation.emergency_rules
+
+    def factor(key):
+        return rules.emergency_factor(
+            simulation.road_speed_factor(key, traffic.get(key, 0) + 1)
+        )
+
+    return factor
+
+
+def _plan(simulation, network, vehicle, target, traffic):
+    """Fastest route for an emergency vehicle from where it is to `target`
+    (a junction), under current traffic and closures: (path, seconds,
+    junctions explored)."""
+
+    here = vehicle.get_current_location()
+    start = nearest_junction(network.graph, here["latitude"], here["longitude"])
+    return network.fastest_path(
+        start, target, vehicle.speed,
+        speed_factor=_emergency_factor(simulation, traffic),
+        blocked_segments=simulation.get_blocked_segments(),
+        directed=simulation.road_model.directed,
+    )
+
+
+def _free_vehicles(simulation, service):
+    """Vehicles of a service that can be sent: at their station, or on
+    their way back to it."""
+
+    return [
+        vehicle for vehicle in simulation.vehicles
+        if vehicle.vehicle_type == service and vehicle.available
+        and vehicle.home_station is not None
+    ]
+
+
+def _send(simulation, network, emergency, traffic):
+    """Send the free vehicle of the emergency's service that would arrive
+    first. Returns (vehicle, path, seconds, junctions explored in all the
+    searches), with vehicle None if nothing free can reach it."""
+
+    target = nearest_junction(network.graph, emergency.latitude, emergency.longitude)
+    best = None
+    explored = 0
+
+    for vehicle in _free_vehicles(simulation, emergency.emergency_type):
+        path, seconds, searched = _plan(simulation, network, vehicle, target, traffic)
+        explored += searched
+        if path and (best is None or seconds < best[2]):
+            best = (vehicle, path, seconds)
+
+    if best is None:
+        return None, None, None, explored
+
+    vehicle, path, seconds = best
+    station = vehicle.home_station
+    if vehicle in station.available_vehicles:
+        station.available_vehicles.remove(vehicle)
+    vehicle.available = False
+    vehicle.on_emergency = True
+    vehicle.going_home = False
+    vehicle.needs_route_home = False
+    vehicle.set_route(network.points(path), reset_distance=True)
+    vehicle.finished = len(path) < 2
+    emergency.assigned_vehicle = vehicle
+    emergency.dispatched_at = simulation.time
+
+    return vehicle, path, seconds, explored
+
+
+def _dispatch_by_drive_time(graph, simulation, emergency):
+    network = simulation.road_model.network
+    vehicle, path, _, explored = _send(simulation, network, emergency, simulation.get_traffic_density())
+    outcome = {"emergency": emergency, "vehicle": vehicle, "vehicle_index": None}
+
+    if vehicle is None:
+        if simulation.emergency_rules.queue and _has_service(simulation, emergency.emergency_type):
+            return {**outcome, "status": "queued"}
+        simulation.cancel_emergency(emergency)
+        return {**outcome, "status": "no_vehicle"}
+
+    return {
+        **outcome,
+        "status": "dispatched",
+        "vehicle_index": simulation.vehicles.index(vehicle),
+        "path": path,
+        "route": vehicle.route,
+        "distance": network.path_length(path),
+        "nodes_explored": explored,
+    }
+
+
+def _has_service(simulation, service):
+    """Whether the run has any vehicle of this service at all (otherwise
+    queueing would wait forever)."""
+
+    return any(
+        vehicle.vehicle_type == service and vehicle.home_station is not None
+        for vehicle in simulation.vehicles
+    )
+
+
+def after_step(simulation):
+    """The realistic emergency rules' work after each simulated second
+    (services.py): send vehicles that finished a call home, park the ones
+    that got there, and answer queued emergencies, oldest first. Returns
+    the emergencies dispatched from the queue."""
+
+    rules = simulation.emergency_rules
+    if not (rules.queue or rules.drive_back):
+        return []
+
+    network = simulation.road_model.network
+    traffic = None
+
+    for vehicle in simulation.vehicles:
+        if not vehicle.going_home:
+            continue
+
+        station = vehicle.home_station
+
+        if vehicle.needs_route_home:
+            vehicle.needs_route_home = False
+            if traffic is None:
+                traffic = simulation.get_traffic_density()
+            home = nearest_junction(network.graph, station.latitude, station.longitude)
+            path, _, _ = _plan(simulation, network, vehicle, home, traffic)
+            if len(path) >= 2:
+                vehicle.set_route(network.points(path), reset_distance=True)
+                vehicle.finished = False
+                continue
+
+        if vehicle.finished:
+            vehicle.going_home = False
+            station.return_vehicle(vehicle)
+
+    dispatched = []
+
+    if rules.queue:
+        for emergency in simulation.queued_emergencies():
+            if traffic is None:
+                traffic = simulation.get_traffic_density()
+            vehicle = _send(simulation, network, emergency, traffic)[0]
+            if vehicle is not None:
+                dispatched.append(emergency)
+
+    return dispatched
+
+
 def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="ambulance"):
-    """Raise an emergency and send the nearest available vehicle to it.
+    """Raise an emergency and send a vehicle to it.
+
+    With the realistic rules (osm traffic model, services.py) the free
+    vehicle of the service that would arrive first is sent along the
+    fastest route, and with none free the emergency is queued ("queued").
+    Otherwise, as originally:
 
     The nearest station (straight line) with a vehicle free sends it along
     an A* route that accounts for current traffic and closed roads. Used by
@@ -64,7 +235,13 @@ def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="a
     """
 
     emergency = simulation.create_emergency(latitude, longitude, emergency_type)
+
+    if simulation.emergency_rules.dispatch_by_drive_time:
+        return _dispatch_by_drive_time(graph, simulation, emergency)
+
     vehicle = simulation.dispatch_from_nearest_station(emergency)
+    if vehicle is not None:
+        emergency.dispatched_at = simulation.time
 
     outcome = {"emergency": emergency, "vehicle": vehicle, "vehicle_index": None}
 
@@ -89,7 +266,7 @@ def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="a
         start,
         target,
         return_stats=True,
-        traffic=simulation.get_traffic_density(),
+        traffic=simulation.get_segment_traffic(),
         blocked_segments=simulation.get_blocked_segments(),
     )
 
@@ -164,11 +341,19 @@ def remaining_seconds(simulation, vehicle):
         return 0.0
 
     traffic = simulation.get_traffic_density()
+    limit_factor = simulation.limit_factor_for(vehicle)
+    rules = simulation.emergency_rules
+    right_of_way = bool(rules.right_of_way) and simulation.on_call(vehicle)
 
     def seconds_for(metres, point_a, point_b):
-        segment = segment_between(point_a, point_b)
-        factor = simulation.road_speed_factor(segment, traffic.get(segment, 0))
-        return metres / (vehicle.speed * factor)
+        road = simulation.traffic_key(point_a, point_b)
+        factor = simulation.road_speed_factor(road, traffic.get(road, 0))
+        if right_of_way:
+            factor = rules.emergency_factor(factor)
+        free_speed = vehicle.speed
+        if limit_factor is not None:
+            free_speed *= limit_factor(point_a, point_b)
+        return metres / (free_speed * factor)
 
     # The rest of the road it is on...
     total = seconds_for(
@@ -245,6 +430,12 @@ def emergency_status(simulation, emergency):
         "eta_seconds": eta,
         "reroutes": vehicle.reroutes if vehicle else 0,
         "closed_roads": len(simulation.get_blocked_segments()),
+        "service": emergency.emergency_type,
+        # Seconds it waited for a free vehicle (queue), None while waiting
+        "waited_seconds": (
+            emergency.dispatched_at - emergency.created_at
+            if emergency.dispatched_at is not None else None
+        ),
     }
 
 

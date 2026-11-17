@@ -568,3 +568,71 @@ def test_deleting_the_old_run_keeps_the_restarted_one(client):
 
     run = client.get(f"/simulations/{new_id}").json()
     assert run["status"] == "active" and run["restarted_from"] is None
+
+
+# ------------------------------------------------------------
+# Traffic models
+# ------------------------------------------------------------
+
+def test_a_run_saves_its_traffic_model_and_a_restart_keeps_it(make_app):
+    client = TestClient(make_app())
+
+    response = client.post(
+        "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "osm"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["traffic_model"] == "osm"
+    old_id = body["simulation_id"]
+    assert client.get(f"/simulations/{old_id}").json()["traffic_model"] == "osm"
+
+    # The app's default (simple here) is not what a restart uses
+    client.delete(f"/simulations/{old_id}")
+    restarted = client.post(f"/simulations/{old_id}/restart").json()
+
+    assert restarted["traffic_model"] == "osm"
+    assert client.get(f"/simulations/{restarted['simulation_id']}").json()["traffic_model"] == "osm"
+
+
+def test_runs_use_the_servers_default_traffic_model(make_app):
+    osm_client = TestClient(make_app(traffic_model="osm"))
+    simple_client = TestClient(make_app())
+
+    osm_id = start(osm_client)
+    simple_id = start(simple_client)
+
+    assert osm_client.get(f"/simulations/{osm_id}").json()["traffic_model"] == "osm"
+    assert simple_client.get(f"/simulations/{simple_id}").json()["traffic_model"] == "simple"
+    assert osm_client.post(
+        "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "fast"}
+    ).status_code == 422
+
+
+def test_queued_emergencies_are_saved_when_sent_or_when_the_run_ends(make_app):
+    client = TestClient(make_app(traffic_model="osm"))
+    run_id = start(client)
+    app = client.app
+    near, far = point(app, 0), point(app, 15)
+    client.post("/station/create", params=near)
+    client.post("/station/add-vehicle", params={"station_id": 0})
+
+    assert client.post("/emergency/create", params=far).status_code == 200
+    assert client.post("/emergency/create", params=far).status_code == 202   # queued
+
+    for _ in range(600):
+        client.post("/simulation/step")
+        states = [s["state"] for s in client.get("/emergency/status").json()["emergencies"]]
+        if states == ["arrived", "arrived"]:
+            break
+
+    # A third one is still waiting when the run ends
+    assert client.post("/emergency/create", params=far).status_code in (200, 202)
+    client.post("/emergency/create", params=far)
+    client.delete(f"/simulations/{run_id}")
+
+    saved = history(client, run_id, "/emergencies")["emergencies"]
+    assert [e["status"] for e in saved[:2]] == ["arrived", "arrived"]
+    assert saved[0]["waited_seconds"] == 0
+    assert saved[1]["waited_seconds"] > 0
+    assert saved[1]["response_time_seconds"] > saved[0]["response_time_seconds"]
+    assert any(e.get("cancel_reason") == "still_queued" for e in saved[2:])
