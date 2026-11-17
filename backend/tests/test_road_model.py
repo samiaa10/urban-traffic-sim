@@ -414,3 +414,68 @@ def test_the_travel_time_bound_never_exceeds_the_fastest_time():
 
     # The travel-time landmarks do make it tighter
     assert tighter > 30
+
+
+# ------------------------------------------------------------
+# Batched rerouting
+# ------------------------------------------------------------
+
+def test_one_backward_search_gives_every_start_its_fastest_time():
+    generator = random.Random(12)
+    graph = make_grid_graph(size=7, seed=12)
+    for a, roads in graph.edges.items():
+        for b, _ in roads:
+            graph.road_info[(a, b)] = road(limit_mph=generator.choice([10, 20, 30, 40]))
+    network = RoadNetwork(graph)
+    traffic = {
+        (network.position[a], network.position[b]): generator.uniform(0.2, 1.0)
+        for a, b in network.length
+    }
+    blocked = {network.segment[(3, 4)]}
+    nodes = sorted(graph.nodes)
+
+    for destination in generator.sample(nodes, 5):
+        starts = set(generator.sample(nodes, 8)) - {destination}
+        seconds, following = network.fastest_tree_to(
+            destination, CAR_TOP_SPEED, traffic.get, blocked, directed=True, limits=True,
+            targets=starts,
+        )
+        for start in starts:
+            expected = network.fastest_path(
+                start, destination, CAR_TOP_SPEED, traffic.get, blocked,
+                directed=True, limits=True,
+            )[1]
+            assert seconds[start] == pytest.approx(expected)
+            path = [start]
+            while path[-1] != destination:
+                path.append(following[path[-1]])
+            assert network.path_seconds(path, CAR_TOP_SPEED, traffic.get, directed=True, limits=True) == pytest.approx(expected)
+
+
+def test_batched_rerouting_reaches_the_same_results_with_fewer_searches(monkeypatch):
+    """The same busy run with and without batching: shared searches are
+    used, and the outcome is the same (costs are equal; only the order of
+    floating-point additions differs)."""
+
+    def run(batch_min):
+        monkeypatch.setattr(TrafficManager, "BATCH_MIN", batch_min)
+        graph = make_grid_graph(size=8, seed=21)
+        network = RoadNetwork(graph)
+        parked = network.point(0)
+        simulation = Simulation([parked, parked], road_model=make_road_model("osm", network))
+        simulation.vehicles[0].finished = True
+        manager = TrafficManager(network, simulation, landmarks=0)
+        manager.spawn_vehicles(150, random.Random(4), destination_zone=None)
+        simulation.add_accident(network.segment[(27, 28)], "severe")
+        for _ in range(240):
+            manager.step()
+        journeys = sorted(v.journey_seconds for v in simulation.vehicles[1:])
+        return manager.stats, journeys
+
+    alone, journeys_alone = run(10**9)
+    batched, journeys_batched = run(2)
+
+    assert alone["batched_vehicles"] == 0
+    assert batched["batched_vehicles"] > 0
+    assert batched["reroutes"] == alone["reroutes"]
+    assert journeys_batched == journeys_alone

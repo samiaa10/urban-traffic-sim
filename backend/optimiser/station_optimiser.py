@@ -228,13 +228,56 @@ def check_settings(scenarios, target_seconds, speed):
         raise ValueError("speed must be a positive number.")
 
 
-def prepare_stations(graph, candidates, blocked_segments=None):
+# Searching from each candidate is the optimiser's main cost, and the
+# searches are independent, so with at least this many candidates they are
+# spread over OPTIMISER_WORKERS processes. Measured on Norwich (4 processes):
+# 0.64x at 90 candidates, 1.07x at 181, 1.76x at 416, 1.90x at 800; below
+# about 200, starting processes costs more than it saves.
+PARALLEL_MIN_CANDIDATES = 200
+OPTIMISER_WORKERS = 4
+
+_worker_graph = None
+_worker_order = None
+
+
+def _init_search_worker(graph):
+    global _worker_graph, _worker_order
+    _worker_graph = graph
+    _worker_order = list(graph.nodes)
+
+
+def _search_from(task):
+    """One search in a worker, sent back as a compact array of distances
+    in graph order (infinity: unreachable): far cheaper to pass between
+    processes than a dict."""
+
+    from array import array
+
+    node, blocked_segments = task
+    found = shortest_distances(_worker_graph, node, blocked_segments)
+    infinity = math.inf
+    return array("d", (found.get(n, infinity) for n in _worker_order)).tobytes()
+
+
+def _from_bytes(order, packed):
+    from array import array
+
+    values = array("d")
+    values.frombytes(packed)
+    infinity = math.inf
+    return {node: value for node, value in zip(order, values) if value != infinity}
+
+
+def prepare_stations(graph, candidates, blocked_segments=None, workers=None):
     """Snap each candidate to a junction and search from it once.
 
-    Candidates that snap to the same junction are only kept once.
+    Candidates that snap to the same junction are only kept once. With
+    PARALLEL_MIN_CANDIDATES or more distinct junctions the searches run in
+    `workers` processes (default OPTIMISER_WORKERS; 1 = here); the answers
+    are the same either way.
     """
 
-    stations = []
+    nodes = []
     seen_nodes = set()
 
     for latitude, longitude in candidates:
@@ -245,13 +288,33 @@ def prepare_stations(graph, candidates, blocked_segments=None):
             continue
 
         seen_nodes.add(node)
+        nodes.append(node)
 
-        stations.append({
-            "node": node,
-            "distances": shortest_distances(graph, node, blocked_segments)
-        })
+    workers = OPTIMISER_WORKERS if workers is None else workers
 
-    return stations
+    if workers > 1 and len(nodes) >= PARALLEL_MIN_CANDIDATES:
+        import multiprocessing
+        from concurrent.futures import ProcessPoolExecutor
+
+        with ProcessPoolExecutor(
+            max_workers=workers,
+            mp_context=multiprocessing.get_context("spawn"),
+            initializer=_init_search_worker,
+            initargs=(graph,),
+        ) as pool:
+            order = list(graph.nodes)
+            distances = [
+                _from_bytes(order, packed)
+                for packed in pool.map(
+                    _search_from, [(node, blocked_segments) for node in nodes], chunksize=8
+                )
+            ]
+    else:
+        distances = [shortest_distances(graph, node, blocked_segments) for node in nodes]
+
+    return [
+        {"node": node, "distances": found} for node, found in zip(nodes, distances)
+    ]
 
 
 def sample_emergencies(stations, scenarios, seed, distribution="uniform", graph=None):

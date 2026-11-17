@@ -640,6 +640,75 @@ class RoadNetwork:
 
         return total
 
+    def _incoming_adjacent(self):
+        """For each junction: the roads INTO it, as adjacent's tuples with
+        the road's start junction first (built once)."""
+
+        if getattr(self, "_incoming_adjacency", None) is None:
+            incoming = {node: [] for node in self.graph.nodes}
+            for node, roads in self.adjacent.items():
+                for neighbour, length, segment, key, limit in roads:
+                    incoming[neighbour].append((node, length, segment, key, limit))
+            self._incoming_adjacency = incoming
+        return self._incoming_adjacency
+
+    def fastest_tree_to(
+        self, destination, speed, speed_factor=None, blocked_segments=None,
+        directed=False, limits=False, targets=None,
+    ):
+        """Fastest routes from many junctions to ONE destination, with one
+        search: Dijkstra backwards from the destination over the same road
+        costs as fastest_path. Returns (seconds, next_junction), where
+        seconds[n] is the fastest time from n to the destination and
+        next_junction[n] the junction to drive to next. With targets, it
+        stops once every target junction is settled.
+
+        The traffic manager uses it to re-plan many vehicles heading to the
+        same place at once (batched rerouting)."""
+
+        blocked = blocked_segments or ()
+        incoming = self._incoming_adjacent()
+        push, pop = heapq.heappush, heapq.heappop
+        infinity = math.inf
+
+        best = {destination: 0.0}
+        next_junction = {}
+        settled = set()
+        remaining = set(targets) if targets is not None else None
+        queue = [(0.0, destination)]
+
+        while queue:
+            seconds, node = pop(queue)
+            if node in settled:
+                continue
+            settled.add(node)
+
+            if remaining is not None:
+                remaining.discard(node)
+                if not remaining:
+                    break
+
+            for previous, length, segment, key, limit in incoming[node]:
+                if segment in blocked:
+                    continue
+
+                road_speed = limit if limits and limit < speed else speed
+
+                if speed_factor is None:
+                    cost = seconds + length / road_speed
+                else:
+                    factor = speed_factor(key if directed else segment)
+                    if factor <= 0:
+                        continue
+                    cost = seconds + length / (road_speed * factor)
+
+                if cost < best.get(previous, infinity):
+                    best[previous] = cost
+                    next_junction[previous] = node
+                    push(queue, (cost, previous))
+
+        return {n: best[n] for n in settled}, next_junction
+
     def top_speed(self, speed, limits=False):
         """The fastest a vehicle of this speed can drive anywhere."""
 
