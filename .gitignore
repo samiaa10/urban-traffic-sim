@@ -11,6 +11,8 @@ data/*
 !data/osm/
 data/osm/*
 !data/osm/norwich_graph.pkl
+!data/osm/README.md
+!data/osm/source/
 cache/
 
 # Virtual environments
