@@ -236,12 +236,16 @@ def summarise(settings, candidates, plan, results, graph=None):
             ]
             pooled, per_seed_mean, per_seed_within, delays, impacts = [], [], [], [], []
             unreached = 0
+            waited = sent = 0.0
             for seed, result in runs:
                 emergencies = result["emergencies"]
                 detail = emergencies.get("detail") or {}
                 responses = [r for r in detail.get("responses", []) if r is not None]
                 pooled += responses
                 unreached += emergencies["requested"] - len(responses)
+                if detail.get("mean_wait_seconds") is not None:
+                    waited += detail["mean_wait_seconds"] * emergencies["dispatched"]
+                    sent += emergencies["dispatched"]
                 per_seed_mean.append(emergencies["mean_response_seconds"])
                 per_seed_within.append(emergencies["within_target_percent"])
                 delay = result["summary"]["total_delay_vehicle_hours"]
@@ -262,6 +266,9 @@ def summarise(settings, candidates, plan, results, graph=None):
                     100 * sum(1 for r in pooled if r <= target) / requested if requested else None
                 ),
                 "unreached": unreached,
+                # Mean time waiting for a free vehicle (queue), over the
+                # emergencies a vehicle was sent to
+                "mean_wait_seconds": waited / sent if sent else None,
                 "network_delay_vehicle_hours": _figure(mean_interval(delays)),
                 "added_delay_vehicle_hours": _figure(mean_interval(impacts)),
             })
@@ -280,7 +287,20 @@ def summarise(settings, candidates, plan, results, graph=None):
                 paired = statistics.mean(reached)
                 estimate = paired
 
+        # Split the simulated time into waiting for a vehicle and driving
+        waits = [d["mean_wait_seconds"] for d in by_demand]
+        mean_wait = statistics.mean(waits) if waits and None not in waits else None
+        drive = (
+            simulated_mean - mean_wait
+            if simulated_mean is not None and mean_wait is not None else None
+        )
+
         rows.append({
+            "mean_wait_seconds": mean_wait,
+            "mean_drive_seconds": drive,
+            "drive_gap_percent": (
+                100 * (drive - paired) / paired if drive is not None and paired else None
+            ),
             "paired_estimate_seconds": paired,
             "label": candidate["label"],
             "stations": candidate["stations"],
@@ -324,6 +344,30 @@ def explain(rows, order, tau, settings):
         f"{len(settings['demand'])} demand level(s) and {len(settings['seeds'])} seed(s), "
         f"against {best['estimate']['mean_response_seconds'] / 60:.1f} min estimated without traffic."
     ]
+    if best.get("mean_wait_seconds") is not None and best.get("drive_gap_percent") is not None:
+        lines.append(
+            f"Of its {best['simulated_mean_response_seconds'] / 60:.1f} min, "
+            f"{best['mean_wait_seconds'] / 60:.1f} min was waiting for a free vehicle "
+            f"and {best['mean_drive_seconds'] / 60:.1f} min driving; the drive was "
+            f"{best['drive_gap_percent']:+.0f}% on the optimiser's free-flow estimate for the "
+            "same emergencies, so most of the difference is vehicles being busy, which the "
+            "optimiser does not model."
+            if best["mean_wait_seconds"] > best["mean_drive_seconds"] - best["paired_estimate_seconds"]
+            else
+            f"Of its {best['simulated_mean_response_seconds'] / 60:.1f} min, "
+            f"{best['mean_wait_seconds'] / 60:.1f} min was waiting for a free vehicle and "
+            f"{best['mean_drive_seconds'] / 60:.1f} min driving ({best['drive_gap_percent']:+.0f}% "
+            "on the optimiser's free-flow estimate for the same emergencies)."
+        )
+    impacts = [d["added_delay_vehicle_hours"] for r in rows for d in r["by_demand"]]
+    if impacts and all(
+        i["mean"] is not None and i["ci95"] is not None and abs(i["mean"]) <= i["ci95"]
+        for i in impacts
+    ):
+        lines.append(
+            "The emergency response had no measurable effect on other traffic: every "
+            "candidate's added delay has a 95% interval that includes zero."
+        )
     gaps = [r["estimate_gap_percent"] for r in rows if r["estimate_gap_percent"] is not None]
     if gaps:
         lines.append(
@@ -335,10 +379,10 @@ def explain(rows, order, tau, settings):
             f"{max(gaps):+.0f}% (different emergency locations as well as traffic, queues and dispatch)."
         )
     if tau is not None:
-        agreement = "the same order" if tau == 1 else (
-            "much the same order" if tau >= 0.6 else "a different order")
+        agreement = "in the same order as" if tau == 1 else (
+            "in much the same order as" if tau >= 0.6 else "in a different order from")
         lines.append(
-            f"The simulation ranked the candidates in {agreement} as the optimiser "
+            f"The simulation ranked the candidates {agreement} the optimiser "
             f"(Kendall's tau {tau:.2f})."
         )
     if len(order) > 1:

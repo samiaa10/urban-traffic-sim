@@ -92,15 +92,16 @@ def test_a_station_set_is_compared_with_the_top_sites_and_the_best_single_site()
 # The report
 # ------------------------------------------------------------
 
-def fake_result(responses, delay, requested=4, target=300):
+def fake_result(responses, delay, requested=4, target=300, wait=None):
     reached = [r for r in responses if r is not None]
     return {
         "summary": {"total_delay_vehicle_hours": delay},
         "emergencies": {
             "requested": requested,
+            "dispatched": len(reached),
             "mean_response_seconds": sum(reached) / len(reached) if reached else None,
             "within_target_percent": 100 * sum(r <= target for r in reached) / requested,
-            "detail": {"responses": responses},
+            "detail": {"responses": responses, "mean_wait_seconds": wait},
         },
     }
 
@@ -135,7 +136,7 @@ def test_the_report_ranks_by_simulation_and_shows_where_the_estimate_was_wrong()
     assert demand["p90_response_seconds"] == 340
     assert demand["added_delay_vehicle_hours"]["mean"] == pytest.approx(0.6)
     assert demand["pooled_within_target_percent"] == pytest.approx(100 * 2 / 8)
-    assert any("different order" in line for line in report["explanation"])
+    assert any("in a different order from" in line for line in report["explanation"])
 
 
 def test_an_unfinished_evaluation_reports_progress_only():
@@ -146,3 +147,23 @@ def test_an_unfinished_evaluation_reports_progress_only():
     report = summarise(s, candidates, plan, [None] * len(plan))
 
     assert (report["complete"], report["scenarios_done"], report["explanation"]) == (False, 0, [])
+
+
+def test_the_report_splits_waiting_from_driving():
+    s = settings(demand=[100], seeds=[1, 2])
+    candidates = [{"label": "A", "stations": [{"latitude": 52.62, "longitude": 1.28}],
+                   "estimate": {"mean_response_seconds": 100, "worst_response_seconds": 1, "within_target_percent": 1}}]
+    _, plan = build_specs(s, candidates)
+    results = [
+        fake_result([], 1.0) if p["candidate"] is None
+        else fake_result([200, 300, 400, 500], 1.0 + (0.01 if p["seed"] == 1 else -0.01), wait=150)
+        for p in plan
+    ]
+
+    report = summarise(s, candidates, plan, results)
+    row = report["candidates"][0]
+
+    assert row["by_demand"][0]["mean_wait_seconds"] == 150
+    assert row["mean_wait_seconds"] == 150
+    assert row["mean_drive_seconds"] == 200
+    assert any("no measurable effect on other traffic" in line for line in report["explanation"])

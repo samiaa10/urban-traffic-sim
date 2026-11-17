@@ -24,6 +24,9 @@ The control names below describe what each action does. If the wording on a butt
 
 8. **Look back, restart and resume (needs a database).** In the **History** section (header link *History*), click *Load saved runs and studies*. Each saved run shows when it started, its status and how far it got; *Details* lists its closures, accidents, emergencies, stations and fleets. Stop the backend while a run is going and start it again, then click *Refresh*: the run is now `interrupted`. Click *Restart*: a new run starts from the same setup (`/simulations/<ID>/restart`), its route is drawn and its vehicles start moving, and a note says what was put back (stations, closures, accidents, fleet vehicles). Under *Scenario studies*, *Open* shows a past study in the Scenarios results, and *Resume* runs an interrupted or cancelled study's unfinished scenarios again (`/scenarios/studies/<ID>/resume`).
 
+9. **Realistic traffic and the three services.** Before *Calculate Route*, *Traffic model* chooses *Realistic (OpenStreetMap)* (the default: speed limits, lanes, each direction counted on its own) or *Simple (original rules)*. In the emergency panel, *Service* chooses ambulance, fire engine or police car; *Trigger … Emergency* creates a station of that service and one vehicle. In a realistic run, trigger two emergencies of the same service quickly: the second answers "Every … is busy: the emergency is queued", and is answered by the same vehicle once it is free (its response time includes the wait).
+10. **Test the optimiser in traffic (needs a database).** In the optimiser panel choose a service and whether emergencies happen *Anywhere* or *Where people live*, and find the best stations as before. Then, in *Test the optimiser in traffic* (header link *In traffic*), choose the same and press *Test in traffic*: the backend simulates the top 5 sites at two traffic levels and three seeds (36 simulations; a few minutes). The table ranks them by what happened in traffic, next to the optimiser's estimate for the same emergencies, with 95% intervals and the delay the response added to other traffic.
+
 Things to watch for: the route changing when a road closes, vehicles slowing on shared roads, the ambulance's response time being measured in *simulated* seconds, and the detour making the response slower.
 
 ## B. Reproducing the same steps with the API
@@ -208,3 +211,28 @@ curl -X POST "http://127.0.0.1:8000/scenarios/studies/sweep" -H "Content-Type: a
 If the backend stops while a study is running, it is resumed when the backend starts again (finished scenarios keep their results; set `RESUME_STUDIES=false` to turn this off). A cancelled or interrupted study can also be resumed by hand: `curl -X POST "http://127.0.0.1:8000/scenarios/studies/<STUDY_ID>/resume"`.
 
 `GET /scenarios/nearest-road?latitude=...&longitude=...` finds the junction pair of the road nearest a point, and `GET /scenarios/metrics` lists what studies can be ranked by. The same seed always gives the same trips, so comparing a disruption with its baseline is trip by trip.
+
+### 11. Traffic models, emergency services and the optimiser in traffic (Stage 5)
+
+```bash
+# a run with the realistic traffic model (or traffic_model=simple)
+curl -X POST "http://127.0.0.1:8000/simulation/start?start=<START>&destination=<DEST>&traffic_model=osm"
+
+# a fire station and engine (speed defaults to the service's: 17 m/s), and a fire
+curl -X POST "http://127.0.0.1:8000/station/create?latitude=52.63&longitude=1.29&station_type=fire"
+curl -X POST "http://127.0.0.1:8000/station/add-vehicle?station_id=0"
+curl -X POST "http://127.0.0.1:8000/emergency/create?latitude=52.62&longitude=1.30&emergency_type=fire"
+# a second one while the engine is busy: 202, "emergency queued"
+curl -X POST "http://127.0.0.1:8000/emergency/create?latitude=52.64&longitude=1.28&emergency_type=fire"
+curl "http://127.0.0.1:8000/emergency/status"          # service, state, waited_seconds
+
+# the optimiser for police stations, emergencies where people live
+curl "http://127.0.0.1:8000/optimiser/stations?service=police&distribution=population"
+
+# its top 5 sites tested in traffic (needs a database), then follow it
+curl -X POST http://127.0.0.1:8000/optimiser/evaluations -H "Content-Type: application/json" \
+  -d '{"kind": "ranking", "top": 5, "service": "ambulance", "demand": [500, 1500], "seeds": [1, 2, 3]}'
+curl "http://127.0.0.1:8000/optimiser/evaluations/<EVALUATION_ID>"
+```
+
+Scenario specs take `traffic_model`, a `service` per station, and emergencies as one group or a list of groups, each with its own `service` and `distribution` (`uniform` or `population`); the result's `emergencies.detail` has the queue (`queued`, `mean_wait_seconds`) and each service's figures. The same evaluation from the command line, without the API: `python -m backend.optimiser.run_evaluation`.

@@ -88,12 +88,13 @@ def markdown(settings, report, wall, scenario_seconds, workers):
             f"{row['estimate_gap_percent']:+.0f}% | {row['estimated_rank']} |"
         )
     lines += ["", "Per demand level (mean ± 95% interval over the seeds; p90 and worst pooled over all runs):", "",
-              "| Candidate | Vehicles | Mean response | p90 | Worst | Within target | Unreached | Network delay | Added by the response |",
-              "|---|---|---|---|---|---|---|---|---|"]
+              "| Candidate | Vehicles | Mean response | Of which waiting for a vehicle | p90 | Worst | Within target | Unreached | Network delay | Added by the response |",
+              "|---|---|---|---|---|---|---|---|---|---|"]
     for row in report["candidates"]:
         for d in row["by_demand"]:
             lines.append(
                 f"| {row['label']} | {d['vehicles']} | {interval(d['mean_response_seconds'])} | "
+                f"{minutes(d.get('mean_wait_seconds'))} | "
                 f"{minutes(d['p90_response_seconds'])} | {minutes(d['worst_response_seconds'])} | "
                 f"{interval(d['within_target_percent'], 1, '%', 0)} | {d['unreached']} | "
                 f"{interval(d['network_delay_vehicle_hours'], 1, 'veh-h', 1)} | "
