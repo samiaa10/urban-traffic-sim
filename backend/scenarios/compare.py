@@ -246,7 +246,8 @@ def _fmt(value, unit):
     if value is None:
         return "n/a"
     if unit == "vehicle-hours":
-        return f"{value:,.1f} vehicle-hours"
+        # Two decimals below 10: scenarios often differ by hundredths
+        return f"{value:,.2f} vehicle-hours" if abs(value) < 10 else f"{value:,.1f} vehicle-hours"
     if unit == "%":
         return f"{value:.0f}%"
     if unit == "s":
@@ -308,8 +309,10 @@ def spec_differences(spec_a, spec_b):
     return notes
 
 
-def explain(items, metric=DEFAULT_METRIC):
-    """Plain-English sentences on how the scenarios rank and why."""
+def explain(items, metric=DEFAULT_METRIC, road_name=None):
+    """Plain-English sentences on how the scenarios rank and why.
+
+    road_name(start, end), if given, names roads (else junction ids)."""
 
     if len(items) < 2:
         return ["Run at least two scenarios to compare them."]
@@ -350,7 +353,7 @@ def explain(items, metric=DEFAULT_METRIC):
             f"Trip by trip (the same {trip_by_trip['trips_compared']} completed trips in both): "
             f"{trip_by_trip['trips_slower']} took longer in {second['name']} and "
             f"{trip_by_trip['trips_faster']} took less time (by more than {CHANGE_SECONDS} s); "
-            f"in total {abs(trip_by_trip['extra_vehicle_hours']):.1f} vehicle-hours "
+            f"in total {_fmt(abs(trip_by_trip['extra_vehicle_hours']), 'vehicle-hours')} "
             f"{'more' if trip_by_trip['extra_vehicle_hours'] >= 0 else 'less'}"
             + (
                 f", worst single trip +{trip_by_trip['worst_increase_seconds']:.0f} s."
@@ -379,13 +382,17 @@ def explain(items, metric=DEFAULT_METRIC):
     else:
         changes = road_changes(best_item["result"], runner_up["result"], limit=3)
         if changes["increases"]:
+            def label(change):
+                name = road_name(change["start_node"], change["end_node"]) if road_name else None
+                return name or f"{change['start_node']}-{change['end_node']} (junction ids)"
+
             parts = [
-                f"{c['start_node']}-{c['end_node']} (+{c['change_vehicle_seconds']:,.0f} vehicle-seconds)"
+                f"{label(c)} (+{c['change_vehicle_seconds']:,.0f} vehicle-seconds)"
                 for c in changes["increases"]
             ]
             sentences.append(
                 f"The roads that lost the most extra time in {second['name']} are "
-                + ", ".join(parts) + " (junction ids)."
+                + ", ".join(parts) + "."
             )
 
     # Closing roads does not always make things worse
@@ -401,7 +408,7 @@ def explain(items, metric=DEFAULT_METRIC):
     return sentences
 
 
-def compare(items, metric=DEFAULT_METRIC, baseline_name=None):
+def compare(items, metric=DEFAULT_METRIC, baseline_name=None, road_name=None):
     """Ranking, explanation, and (if a baseline is named) each scenario's
     difference from the baseline, trip by trip where possible."""
 
@@ -431,5 +438,5 @@ def compare(items, metric=DEFAULT_METRIC, baseline_name=None):
         "metric": {"key": metric, **METRICS[metric]},
         "baseline": baseline_name,
         "ranking": ranking,
-        "explanation": explain(items, metric),
+        "explanation": explain(items, metric, road_name),
     }

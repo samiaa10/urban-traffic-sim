@@ -7,6 +7,8 @@ export const API_URL = "http://127.0.0.1:8002"
 // Click the map at a point given as fractions of its width and height
 export async function clickMap(page: Page, x: number, y: number) {
   const map = page.locator(".leaflet-container")
+  // Positions are on screen: the map must be in view to be clicked
+  await map.scrollIntoViewIfNeeded()
   const box = await map.boundingBox()
   if (!box) throw new Error("The map is not on the page")
   await page.mouse.click(box.x + box.width * x, box.y + box.height * y)

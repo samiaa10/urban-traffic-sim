@@ -236,3 +236,17 @@ def test_compare_against_a_baseline(baseline, cut):
     )
     with pytest.raises(ValueError):
         compare([cut, baseline], baseline_name="Nope")
+
+
+def test_the_explanation_names_roads_when_the_map_has_names(baseline, cut):
+    text = " ".join(explain([cut, baseline], road_name=lambda a, b: f"Road {a}-{b}"))
+
+    assert "The roads that lost the most extra time in Network cut are Road " in text
+    assert "junction ids" not in text
+
+
+def test_small_delays_are_given_to_two_decimals():
+    sentences = explain([fake("A", 0.712), fake("B", 0.738)])
+
+    assert "A ranks first on network delay (0.71 vehicle-hours)" in sentences[0]
+    assert "B is second (0.74 vehicle-hours, 0.03 vehicle-hours more" in sentences[0]

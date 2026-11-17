@@ -110,6 +110,14 @@ def road_name_field(graph, a, b):
     return {"name": graph.road_name(a, b)}
 
 
+def road_namer(context):
+    """road_name(start, end) for explanations, or None on a map without
+    road names."""
+
+    graph = context.graph
+    return graph.road_name if graph.has_road_info else None
+
+
 def check_metric(metric):
     if metric not in METRICS:
         raise HTTPException(
@@ -266,7 +274,7 @@ def full_item(repo, scenario):
     }
 
 
-def ranking_for(repo, scenarios, metric):
+def ranking_for(repo, scenarios, metric, road_name=None):
     """Ranking of the completed scenarios (summaries only) and an
     explanation of the top two (loading just those two in full)."""
 
@@ -286,7 +294,7 @@ def ranking_for(repo, scenarios, metric):
     if len(done) >= 2:
         by_id = {str(s.id): s for s in done}
         top = [full_item(repo, by_id[row["id"]]) for row in ranked[:2]]
-        explanation = explain(top, metric)
+        explanation = explain(top, metric, road_name)
 
     return ranked, explanation
 
@@ -507,7 +515,7 @@ def get_study(
 
         scenarios = repo.scenarios(study.id, with_results=True)
         body = study_json(study, scenarios)
-        ranking, explanation = ranking_for(repo, scenarios, metric)
+        ranking, explanation = ranking_for(repo, scenarios, metric, road_namer(context))
 
     body["ranking_metric"] = {"key": metric, **METRICS[metric]}
     body["ranking"] = ranking
@@ -617,7 +625,7 @@ def compare_scenarios(
             raise HTTPException(status_code=400, detail="baseline must be one of ids")
         baseline_name = match[0]["name"]
 
-    outcome = compare(items, metric, baseline_name)
+    outcome = compare(items, metric, baseline_name, road_namer(context))
     outcome["scenarios"] = [{"scenario_id": i["id"], "name": i["name"]} for i in items]
     return outcome
 

@@ -26,7 +26,7 @@ test("live simulation", async ({ page }) => {
   await expect(mapNotice(page)).toContainText("accident on")
   // Let congestion build up
   await page.waitForTimeout(40_000)
-  await page.screenshot({ path: `${OUT}/live-simulation.png` })
+  await page.screenshot({ path: `${OUT}/live-simulation.jpg`, type: "jpeg", quality: 82 })
 
   const analytics = page.getByRole("region", { name: "Live traffic" })
   await analytics.scrollIntoViewIfNeeded()
@@ -39,7 +39,7 @@ test("emergency response", async ({ page }) => {
   await page.getByRole("button", { name: "Trigger Fire Emergency" }).click()
   await expect(mapNotice(page)).toContainText("dispatched")
   await page.waitForTimeout(6_000)
-  await page.screenshot({ path: `${OUT}/emergency-response.png` })
+  await page.screenshot({ path: `${OUT}/emergency-response.jpg`, type: "jpeg", quality: 82 })
 })
 
 test("station optimiser", async ({ page }) => {
@@ -50,21 +50,20 @@ test("station optimiser", async ({ page }) => {
   const results = page.getByRole("region", { name: "Optimiser results" })
   await expect(results.getByRole("heading", { name: "Multi-station placement" })).toBeVisible({ timeout: 60_000 })
   await page.locator("#map").scrollIntoViewIfNeeded()
-  await page.screenshot({ path: `${OUT}/station-optimiser.png` })
+  await page.screenshot({ path: `${OUT}/station-optimiser.jpg`, type: "jpeg", quality: 82 })
   await results.screenshot({ path: `${OUT}/optimiser-results.png` })
 })
 
 test("scenario study", async ({ page }) => {
   test.skip(!process.env.E2E_DATABASE_URL, "Needs E2E_DATABASE_URL")
-  test.setTimeout(300_000)
+  test.setTimeout(600_000)
   await page.goto("/")
   const builder = page.getByRole("region", { name: "Scenario builder" })
-  await builder.getByRole("button", { name: "Close a road" }).first().click()
-  await clickMap(page, 0.5, 0.5)
-  await builder.getByRole("button", { name: "Run 2 scenarios" }).click()
+  // A Monte Carlo study: the baseline and 20 sets of 3 random closures
+  await builder.getByText("Large study: random closures").click()
+  await builder.getByRole("button", { name: "Run random-closure study" }).click()
   const results = page.getByRole("region", { name: "Study results" })
-  await expect(results.getByRole("table", { name: "Scenario ranking" })).toBeVisible({ timeout: 280_000 })
-  await results.getByRole("button", { name: /Show details of/ }).last().click()
-  await page.waitForTimeout(1_500)
-  await page.getByRole("region", { name: "Scenario results" }).screenshot({ path: `${OUT}/scenario-study.png` })
+  await expect(results.getByText("completed", { exact: true })).toBeVisible({ timeout: 580_000 })
+  await page.addStyleTag({ content: ".topbar { position: static !important; }" })
+  await results.screenshot({ path: `${OUT}/scenario-study.png` })
 })

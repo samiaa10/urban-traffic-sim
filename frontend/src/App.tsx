@@ -184,6 +184,9 @@ function App() {
   // emergency service the emergency button raises
   const [trafficModel, setTrafficModel] = useState<TrafficModel>("osm")
   const [emergencyService, setEmergencyService] = useState<ServiceName>("ambulance")
+  // The service of the emergency on the map (the selector may have moved
+  // on since): names its route, vehicle and status
+  const [dispatchedService, setDispatchedService] = useState<ServiceName>("ambulance")
 
   // Stations created in the current run (the next one's index)
   const stationsCreated = useRef(0)
@@ -211,6 +214,15 @@ function App() {
   // ------------------------------------------------
   // MAP CLICKING
   // ------------------------------------------------
+
+  // The next map click picks a road (for a scenario or a live incident).
+  // The map is brought into view, since the button may be far below it.
+  const pickRoad = (label: string | null, handler: ((lat: number, lon: number) => void) | null) => {
+    setRoadPick(label !== null && handler !== null ? { label, handler } : null)
+    if (label !== null) {
+      document.getElementById("map")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" })
+    }
+  }
 
   const handleMapClick = (location: Coordinate) => {
     // Picking a road for a scenario: this click is for that only
@@ -649,6 +661,7 @@ function App() {
 
   const triggerEmergency = async () => {
     const service = serviceOf(emergencyService)
+    setDispatchedService(service.name)
     try {
       setResult(`Setting up ${service.label.toLowerCase()} response...`)
 
@@ -887,7 +900,7 @@ function App() {
       symbol: "line",
     },
     emergencyActive && emergencyRoute.length > 0 && {
-      label: "Ambulance route",
+      label: `${serviceOf(dispatchedService).label} route`,
       colour: COLOURS.emergency,
       symbol: "dash",
     },
@@ -902,7 +915,7 @@ function App() {
       symbol: "dot",
     },
     ambulanceOnMap && {
-      label: "Ambulance",
+      label: serviceOf(dispatchedService).label,
       colour: COLOURS.emergency,
       symbol: "dot",
     },
@@ -1168,7 +1181,7 @@ function App() {
             {emergencyStatus && (
               <>
                 <div className="emergency-head">
-                  <span className="eyebrow">{serviceOf(emergencyService).label} status</span>
+                  <span className="eyebrow">{serviceOf(dispatchedService).label} status</span>
                   <span
                     className={`badge ${emergencyBadge[emergencyStatus.state].tone}`}
                   >
@@ -1236,7 +1249,7 @@ function App() {
                   ) : (
                     <Icon name="barrier" size={16} />
                   )}
-                  Close Road Ahead of Ambulance
+                  Close Road Ahead of {serviceOf(dispatchedService).label}
                 </button>
               )}
           </Panel>
@@ -1266,9 +1279,7 @@ function App() {
               }
               return body
             }}
-            onPickRoad={(label, handler) =>
-              setRoadPick(label !== null && handler !== null ? { label, handler } : null)
-            }
+            onPickRoad={pickRoad}
             onMessage={setResult}
           />
 
@@ -1583,9 +1594,7 @@ function App() {
         {routeInfo && <LiveAnalytics history={history} />}
 
         <ScenarioWorkspace
-          onPickRoad={(label, handler) =>
-            setRoadPick(label !== null && handler !== null ? { label, handler } : null)
-          }
+          onPickRoad={pickRoad}
           onShowOnMap={setScenarioOverlay}
           openStudy={studyToOpen}
         />

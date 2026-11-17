@@ -33,15 +33,21 @@ test("scenario studies compare a road closure with its baseline", async ({ page 
 
   await page.goto("/")
   const builder = page.getByRole("region", { name: "Scenario builder" })
-  // The second scenario closes a road picked on the map
-  await builder.getByRole("button", { name: "Close a road" }).first().click()
+  // The second scenario ("Road closure") closes a road picked on the map
+  await builder.getByRole("button", { name: "Close a road" }).nth(1).click()
+  // The builder is far below the map: the website brings the map into view
+  await expect(page.locator(".leaflet-container")).toBeInViewport({ ratio: 0.5 })
   await clickMap(page, 0.5, 0.5)
   await builder.getByRole("button", { name: "Run 2 scenarios" }).click()
 
   const results = page.getByRole("region", { name: "Study results" })
   await expect(results.getByRole("table", { name: "Scenario ranking" })).toBeVisible({ timeout: 200_000 })
   await expect(results.getByRole("table", { name: "Scenario ranking" }).getByRole("row")).toHaveCount(3)
-  await expect(results.getByLabel("Why this ranking")).not.toBeEmpty()
+  // The closure really is in the second scenario: the two differ, and
+  // trips change because of it
+  const why = results.getByLabel("Why this ranking")
+  await expect(why).not.toContainText("set up the same way")
+  await expect(why).toContainText("1 road closure that the other does not have")
 })
 
 test("saved runs appear in the history", async ({ page }) => {
