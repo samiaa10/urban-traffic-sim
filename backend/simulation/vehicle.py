@@ -1,6 +1,22 @@
 import math
 
 
+EARTH_RADIUS_M = 6371000
+
+
+def straight_line_metres(point1, point2):
+    """Straight-line distance between two (lat, lon) points (the same
+    formula as Vehicle.calculate_distance)."""
+
+    lat1, lon1 = math.radians(point1[0]), math.radians(point1[1])
+    lat2, lon2 = math.radians(point2[0]), math.radians(point2[1])
+
+    x = (lon2 - lon1) * math.cos((lat1 + lat2) / 2)
+    y = lat2 - lat1
+
+    return EARTH_RADIUS_M * math.sqrt(x * x + y * y)
+
+
 class Vehicle:
 
     def __init__(
@@ -43,6 +59,11 @@ class Vehicle:
         # part-way through. The scenario engine uses it to measure delay
         # without counting the unused rest of the arrival second.
         self.last_move_seconds = 0.0
+
+        # Seconds the distance driven in the last move() would have taken
+        # with no traffic (at the speed limit where limits apply), so
+        # delay = last_move_seconds - last_free_flow_seconds
+        self.last_free_flow_seconds = 0.0
 
         # Emergency vehicle state
         self.on_emergency = False
@@ -105,7 +126,14 @@ class Vehicle:
             x * x + y * y
         )
 
-    def move(self, time_seconds=1, is_blocked=None, speed_factor=None):
+    @property
+    def obeys_speed_limits(self):
+        """Ordinary vehicles keep to speed limits (in the osm traffic
+        model); emergency vehicles are exempt, as UK law allows on a call."""
+
+        return self.vehicle_type == "normal"
+
+    def move(self, time_seconds=1, is_blocked=None, speed_factor=None, limit_factor=None):
         """Drive for time_seconds.
 
         is_blocked(point_a, point_b) is an optional function that says
@@ -116,12 +144,18 @@ class Vehicle:
         how fast traffic lets a vehicle drive along that road, as a
         fraction of its full speed (1.0 = free flowing, 0.5 = half
         speed). Without it the vehicle always drives at full speed.
+
+        limit_factor(point_a, point_b) is an optional function giving the
+        road's speed limit as a fraction of the vehicle's speed (at most
+        1): the vehicle's free-flow speed on that road. Traffic then slows
+        it from there.
         """
 
         if self.finished:
             return
 
         time_left = time_seconds
+        free_flow_seconds = 0.0
 
         while time_left > 1e-9:
 
@@ -151,7 +185,12 @@ class Vehicle:
 
             self.speed_factor = factor
 
-            road_speed = self.speed * factor
+            free_speed = self.speed
+
+            if limit_factor is not None:
+                free_speed *= limit_factor(current_point, next_point)
+
+            road_speed = free_speed * factor
 
             # Distance we could cover with the time we have left
             reachable = road_speed * time_left
@@ -161,6 +200,7 @@ class Vehicle:
                 # Reach the next junction, then carry on with the
                 # time that is left over.
                 time_left -= remaining_segment / road_speed
+                free_flow_seconds += remaining_segment / free_speed
 
                 self.distance_travelled += (
                     remaining_segment
@@ -183,6 +223,7 @@ class Vehicle:
             else:
 
                 self.distance_on_segment += reachable
+                free_flow_seconds += reachable / free_speed
 
                 self.distance_travelled += reachable
 
@@ -193,6 +234,7 @@ class Vehicle:
             self.finished = True
 
         self.last_move_seconds = time_seconds - max(time_left, 0.0)
+        self.last_free_flow_seconds = free_flow_seconds
 
     def get_current_location(self):
 

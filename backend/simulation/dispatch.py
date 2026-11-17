@@ -23,7 +23,6 @@ import math
 
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
-from backend.simulation.simulation import segment_between
 
 
 logger = logging.getLogger(__name__)
@@ -89,7 +88,7 @@ def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="a
         start,
         target,
         return_stats=True,
-        traffic=simulation.get_traffic_density(),
+        traffic=simulation.get_segment_traffic(),
         blocked_segments=simulation.get_blocked_segments(),
     )
 
@@ -164,11 +163,15 @@ def remaining_seconds(simulation, vehicle):
         return 0.0
 
     traffic = simulation.get_traffic_density()
+    limit_factor = simulation.limit_factor_for(vehicle)
 
     def seconds_for(metres, point_a, point_b):
-        segment = segment_between(point_a, point_b)
-        factor = simulation.road_speed_factor(segment, traffic.get(segment, 0))
-        return metres / (vehicle.speed * factor)
+        road = simulation.traffic_key(point_a, point_b)
+        factor = simulation.road_speed_factor(road, traffic.get(road, 0))
+        free_speed = vehicle.speed
+        if limit_factor is not None:
+            free_speed *= limit_factor(point_a, point_b)
+        return metres / (free_speed * factor)
 
     # The rest of the road it is on...
     total = seconds_for(

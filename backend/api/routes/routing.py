@@ -70,7 +70,7 @@ def route(
 
     if run is not None:
         with run.lock:
-            traffic = run.simulation.get_traffic_density()
+            traffic = run.simulation.get_segment_traffic()
             blocked_segments = set(run.simulation.get_blocked_segments())
 
     path, distance, nodes_explored = a_star(

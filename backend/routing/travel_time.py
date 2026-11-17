@@ -12,6 +12,12 @@ where the speed factor comes from the same function the simulation uses to
 move vehicles (traffic and accidents), so the router, the ETA and the
 movement all agree on what a road costs.
 
+With speed limits (the osm traffic model, simulation/road_model.py) the
+vehicle speed on each road is min(vehicle speed, the road's limit), and
+traffic is looked up per direction (directed=True): the speed factor
+function is then given the road's key in driving direction,
+((lat, lon), (lat, lon)), instead of the sorted segment key.
+
 RoadNetwork wraps the Graph once and precomputes what every search needs
 (road segment keys, road lengths, which junctions can reach each other), so
 a search does no repeated set-up work. That matters when hundreds of
@@ -20,6 +26,8 @@ vehicles are re-planning during a simulation.
 
 import heapq
 import math
+
+from backend.routing.road_attributes import default_speed_limit
 
 
 EARTH_RADIUS_M = 6_371_000
@@ -68,11 +76,30 @@ class RoadNetwork:
             for (a, b), length in self.length.items()
         }
 
-        # For each junction: (neighbour, length, segment key) of every road
-        # leaving it, so a search needs no lookups per road
+        # Speed limit of every directed road (m/s), from the map's
+        # OpenStreetMap attributes; roads the map has none for get the UK
+        # built-up default. Only used when a search obeys limits.
+        unknown_limit = default_speed_limit("road")
+        self.limit = {}
+        for a, b in self.length:
+            info = graph.road(a, b)
+            self.limit[(a, b)] = info.speed_limit if info is not None else unknown_limit
+        self.max_limit = max(self.limit.values(), default=unknown_limit)
+
+        # For each junction: (neighbour, length, segment key, directed key,
+        # speed limit) of every road leaving it, so a search needs no
+        # lookups per road
         self.adjacent = {node: [] for node in graph.nodes}
         for (a, b), length in self.length.items():
-            self.adjacent[a].append((b, length, self.segment[(a, b)]))
+            self.adjacent[a].append((
+                b,
+                length,
+                self.segment[(a, b)],
+                (self.position[a], self.position[b]),
+                self.limit[(a, b)],
+            ))
+
+        self._osm_roads = None
 
         # Flat x/y coordinates in metres for a fast distance estimate that
         # is still a guaranteed lower bound (see _planar_lower_bound)
@@ -84,6 +111,8 @@ class RoadNetwork:
         self.landmarks = []
         self._from_landmark = []   # list of {node: metres from landmark}
         self._to_landmark = []     # list of {node: metres to landmark}
+        self._seconds_from_landmark = []   # {node: seconds at the limits}
+        self._seconds_to_landmark = []
 
     # --------------------------------------------------------------
     # Fast straight-line lower bound
@@ -129,10 +158,23 @@ class RoadNetwork:
     # Landmarks (ALT: A*, Landmarks, Triangle inequality)
     # --------------------------------------------------------------
 
-    def _all_distances(self, source, reverse=False):
-        """Dijkstra from source over road lengths (backwards if reverse)."""
+    def _all_distances(self, source, reverse=False, seconds_at_limit=False):
+        """Dijkstra from source over road lengths (backwards if reverse).
+        With seconds_at_limit, over each road's time at its speed limit."""
 
-        if reverse:
+        if seconds_at_limit:
+            limit = self.limit
+            if reverse:
+                incoming = self._incoming()
+                neighbours = lambda node: (                     # noqa: E731
+                    (n, length / limit[(n, node)]) for n, length in incoming.get(node, ())
+                )
+            else:
+                neighbours = lambda node: (                     # noqa: E731
+                    (n, length / limit[(node, n)])
+                    for n, length in ((n, self.length[(node, n)]) for n, _ in self.neighbours(node))
+                )
+        elif reverse:
             incoming = self._incoming()
             neighbours = lambda node: incoming.get(node, ())   # noqa: E731
         else:
@@ -178,12 +220,20 @@ class RoadNetwork:
         most trips. Road lengths never change and congestion only makes
         roads slower, so these free-flow bounds stay valid under any traffic.
         Costs 2 x count Dijkstra searches, once.
+
+        The same landmarks also get travel-time tables: seconds to and from
+        them with every road driven at its speed limit. A vehicle that obeys
+        limits never covers a road faster than that and traffic only slows
+        it, so they give lower bounds in seconds for speed-limited searches
+        (see _time_estimator). 2 x count more searches.
         """
 
         nodes = sorted(self.main_component())
         self.landmarks = []
         self._from_landmark = []
         self._to_landmark = []
+        self._seconds_from_landmark = []
+        self._seconds_to_landmark = []
 
         if not nodes or count < 1:
             return
@@ -199,6 +249,13 @@ class RoadNetwork:
             backward = self._all_distances(current, reverse=True)
             self._from_landmark.append(forward)
             self._to_landmark.append(backward)
+
+            self._seconds_from_landmark.append(
+                self._all_distances(current, seconds_at_limit=True)
+            )
+            self._seconds_to_landmark.append(
+                self._all_distances(current, reverse=True, seconds_at_limit=True)
+            )
 
             for node in nodes:
                 nearest[node] = min(nearest[node], forward.get(node, math.inf))
@@ -220,6 +277,81 @@ class RoadNetwork:
             from_destination = backward.get(destination)
             if from_node is not None and from_destination is not None:
                 bound = max(bound, from_node - from_destination)
+
+        return bound
+
+    # How many landmarks a speed-limited search uses: the ones giving the
+    # best bound from its start. Checking all 8 at every junction cost more
+    # than their extra tightness saved (docs/traffic_benchmark.md).
+    ACTIVE_LANDMARKS = 2
+
+    def _landmark_seconds(self, pair, node):
+        """Lower bound (seconds at the limits) from node to the pair's
+        destination using one landmark's tables."""
+
+        forward, to_destination, backward, from_destination = pair
+        bound = 0.0
+        if to_destination is not None:
+            to_node = forward.get(node)
+            if to_node is not None:
+                bound = max(bound, to_destination - to_node)
+        if from_destination is not None:
+            from_node = backward.get(node)
+            if from_node is not None:
+                bound = max(bound, from_node - from_destination)
+        return bound
+
+    def _time_pairs(self, destination):
+        return [
+            (forward, forward.get(destination), backward, backward.get(destination))
+            for forward, backward in zip(self._seconds_from_landmark, self._seconds_to_landmark)
+        ]
+
+    def _time_estimator(self, start, destination, speed):
+        """Heuristic for a speed-limited search: the larger of the
+        straight-line bound (at the fastest limit) and the best
+        ACTIVE_LANDMARKS travel-time landmark bounds. Both are lower bounds
+        on the time any limit-obeying vehicle needs, under any traffic, so
+        A* stays exact."""
+
+        pairs = self._time_pairs(destination)
+        pairs.sort(key=lambda pair: -self._landmark_seconds(pair, start))
+        chosen = pairs[: self.ACTIVE_LANDMARKS]
+
+        xy = self._xy
+        target_x, target_y = xy[destination]
+        scale = self.PLANAR_SAFETY / speed
+        hypot = math.hypot
+
+        def estimate(node):
+            x, y = xy[node]
+            bound = hypot(target_x - x, target_y - y) * scale
+
+            for forward, to_destination, backward, from_destination in chosen:
+                if to_destination is not None:
+                    to_node = forward.get(node)
+                    if to_node is not None and to_destination - to_node > bound:
+                        bound = to_destination - to_node
+                if from_destination is not None:
+                    from_node = backward.get(node)
+                    if from_node is not None and from_node - from_destination > bound:
+                        bound = from_node - from_destination
+
+            return bound
+
+        return estimate
+
+    def lower_bound_seconds(self, node, destination, speed, limits=False):
+        """A lower bound on the seconds a vehicle of top speed `speed` needs
+        from node to destination under any traffic (obeying limits if
+        `limits`): the road-distance bound at its top speed, and with
+        limits also every travel-time landmark bound."""
+
+        bound = self.lower_bound_metres(node, destination) / self.top_speed(speed, limits)
+
+        if limits:
+            for pair in self._time_pairs(destination):
+                bound = max(bound, self._landmark_seconds(pair, node))
 
         return bound
 
@@ -367,6 +499,8 @@ class RoadNetwork:
         speed_factor=None,
         blocked_segments=None,
         heuristic="straight_line",
+        directed=False,
+        limits=False,
     ):
         """A* search for the quickest route from start to destination.
 
@@ -379,7 +513,14 @@ class RoadNetwork:
         Returns (path, seconds, nodes_explored). path is [] and seconds is
         infinity if the destination cannot be reached.
 
-        heuristic       "straight_line" (default) or "landmarks"
+        heuristic       "straight_line" (default) or "landmarks"; with
+                        limits and landmark tables, "straight_line" also
+                        uses the best travel-time landmarks
+                        (_time_estimator), which are much tighter there
+        directed        speed_factor is given each road's key in driving
+                        direction instead of its segment key
+        limits          obey speed limits: each road is driven at
+                        min(speed, its limit)
 
         The heuristic is a lower bound on the remaining road distance (the
         straight line on a flat projection, shrunk so it never exceeds the
@@ -387,7 +528,8 @@ class RoadNetwork:
         landmark bound, see use_landmarks) driven at top speed. No road can be driven faster
         than that (speed factors are at most 1) and closures only remove
         roads, so the estimate never overestimates and A* returns the true
-        fastest route either way.
+        fastest route either way. With limits, "top speed" is the lower of
+        the vehicle's speed and the highest limit on the network.
 
         Why straight line by default: on Norwich, landmarks make A* explore
         about a fifth fewer junctions but each estimate checks every
@@ -407,12 +549,17 @@ class RoadNetwork:
         if start == destination:
             return [start], 0.0, 1
 
+        # The fastest any road can be driven, for the estimate
+        fastest = min(speed, self.max_limit) if limits else speed
+
         if heuristic == "landmarks":
-            estimate = self._estimator(destination, speed)
+            estimate = self._estimator(destination, fastest)
+        elif limits and getattr(self, "_seconds_from_landmark", None):
+            estimate = self._time_estimator(start, destination, fastest)
         else:
             xy = self._xy
             target_x, target_y = xy[destination]
-            scale = self.PLANAR_SAFETY / speed
+            scale = self.PLANAR_SAFETY / fastest
             hypot = math.hypot
 
             def estimate(node):
@@ -446,20 +593,22 @@ class RoadNetwork:
                 path.reverse()
                 return path, seconds, explored
 
-            for neighbour, length, segment in adjacent[node]:
+            for neighbour, length, segment, key, limit in adjacent[node]:
 
                 if segment in blocked:
                     continue
 
+                road_speed = limit if limits and limit < speed else speed
+
                 if speed_factor is None:
-                    cost = seconds + length / speed
+                    cost = seconds + length / road_speed
                 else:
-                    factor = speed_factor(segment)
+                    factor = speed_factor(key if directed else segment)
 
                     if factor <= 0:
                         continue
 
-                    cost = seconds + length / (speed * factor)
+                    cost = seconds + length / (road_speed * factor)
 
                 if cost < best.get(neighbour, infinity):
                     best[neighbour] = cost
@@ -468,20 +617,40 @@ class RoadNetwork:
 
         return [], math.inf, explored
 
-    def path_seconds(self, path, speed, speed_factor=None):
+    def path_seconds(self, path, speed, speed_factor=None, directed=False, limits=False):
         """Seconds to drive along a path of junctions (same costs as above)."""
 
         total = 0.0
 
         for a, b in zip(path, path[1:]):
-            factor = (
-                1.0 if speed_factor is None
-                else speed_factor(self.segment[(a, b)])
-            )
+            if speed_factor is None:
+                factor = 1.0
+            elif directed:
+                factor = speed_factor((self.position[a], self.position[b]))
+            else:
+                factor = speed_factor(self.segment[(a, b)])
 
             if factor <= 0:
                 return math.inf
 
-            total += self.length[(a, b)] / (speed * factor)
+            limit = self.limit[(a, b)]
+            road_speed = limit if limits and limit < speed else speed
+
+            total += self.length[(a, b)] / (road_speed * factor)
 
         return total
+
+    def top_speed(self, speed, limits=False):
+        """The fastest a vehicle of this speed can drive anywhere."""
+
+        return min(speed, self.max_limit) if limits else speed
+
+    def osm_roads(self):
+        """The osm traffic model for this network (built once, shared)."""
+
+        if self._osm_roads is None:
+            from backend.simulation.road_model import OsmRoads
+
+            self._osm_roads = OsmRoads(self)
+
+        return self._osm_roads

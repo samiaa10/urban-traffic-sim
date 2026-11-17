@@ -166,6 +166,25 @@ def resume_studies(value):
     raise ValueError("RESUME_STUDIES must be true or false: " + value)
 
 
+def traffic_model(value):
+    """Turn TRAFFIC_MODEL into the traffic model new runs and scenarios use
+    when they do not ask for one (simulation/road_model.py). Not set: osm
+    (OpenStreetMap speed limits, lanes and per-direction traffic)."""
+
+    from backend.simulation.road_model import OSM, TRAFFIC_MODELS
+
+    if value is None or not value.strip():
+        return OSM
+
+    text = value.strip().lower()
+    if text in TRAFFIC_MODELS:
+        return text
+
+    raise ValueError(
+        "TRAFFIC_MODEL must be one of " + ", ".join(TRAFFIC_MODELS) + ": " + value
+    )
+
+
 DEFAULT_MAX_STUDY_SCENARIOS = 1000
 
 

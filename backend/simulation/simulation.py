@@ -4,6 +4,7 @@ from backend.simulation.accidents import Accident
 from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
+from backend.simulation.road_model import SIMPLE_ROADS, undirected
 
 
 # How busy a road is, from the number of vehicles on it. The map colours
@@ -71,6 +72,10 @@ def speed_factor_on_road(vehicle_count, accident=None):
     return factor
 
 
+# Congestion levels, least to most congested
+LEVEL_ORDER = ["clear", "light", "moderate", "heavy"]
+
+
 def segment_between(point_a, point_b):
     """Road segment key for two route points (direction does not matter)."""
 
@@ -82,8 +87,12 @@ def segment_between(point_a, point_b):
 
 class Simulation:
 
-    def __init__(self, route):
+    def __init__(self, route, road_model=None):
         self.vehicles = []
+
+        # How roads behave: speed limits, capacity and how traffic slows
+        # vehicles (road_model.py). The simple model is the original rules.
+        self.road_model = road_model or SIMPLE_ROADS
 
         # Simulated time in seconds (goes up by 1 every step)
         self.time = 0
@@ -207,11 +216,39 @@ class Simulation:
                 self.clear_accident(segment)
 
     def road_speed_factor(self, segment, vehicle_count):
-        """Fraction of full speed on this road with this many vehicles."""
+        """Fraction of free-flow speed on this road with this many vehicles.
 
-        return speed_factor_on_road(
-            vehicle_count, self.accidents.get(segment)
+        segment is the road's traffic key (road_model.py: sorted in the
+        simple model, in driving direction in the osm model)."""
+
+        return self.road_model.speed_factor(
+            segment, vehicle_count, self.accidents.get(undirected(segment))
         )
+
+    def traffic_key(self, point_a, point_b):
+        """The key traffic on the road from point_a to point_b is counted
+        under (see road_model.py)."""
+
+        return self.road_model.key(point_a, point_b)
+
+    def limit_factor_for(self, vehicle):
+        """Function(point_a, point_b) -> the road's speed limit as a
+        fraction of the vehicle's speed, or None if no limit applies to it
+        (simple model, or an emergency vehicle)."""
+
+        model = self.road_model
+
+        if not model.has_limits or not vehicle.obeys_speed_limits:
+            return None
+
+        speed = vehicle.speed
+        key = model.key
+        limit = model.limit
+
+        def factor(point_a, point_b):
+            return min(1.0, limit(key(point_a, point_b)) / speed)
+
+        return factor
 
     def is_segment_blocked(self, segment):
         """Check whether a road segment is blocked."""
@@ -445,10 +482,11 @@ class Simulation:
         # (A vehicle that crosses several short roads in one second keeps
         # using this snapshot; the speed is re-read every second.)
         traffic = self.get_traffic_density()
+        key = self.road_model.key
 
         def speed_factor(point_a, point_b):
-            segment = segment_between(point_a, point_b)
-            return self.road_speed_factor(segment, traffic.get(segment, 0))
+            road = key(point_a, point_b)
+            return self.road_speed_factor(road, traffic.get(road, 0))
 
         for vehicle in self.vehicles:
 
@@ -472,7 +510,8 @@ class Simulation:
             vehicle.move(
                 1,
                 is_blocked=self.is_road_closed,
-                speed_factor=speed_factor
+                speed_factor=speed_factor,
+                limit_factor=self.limit_factor_for(vehicle)
             )
 
         self.time += 1
@@ -496,7 +535,10 @@ class Simulation:
     # ========================================
 
     def get_traffic_density(self):
+        """Vehicles on each road, keyed by traffic key (road_model.py)."""
+
         traffic = {}
+        key = self.road_model.key
 
         for vehicle in self.vehicles:
 
@@ -506,51 +548,59 @@ class Simulation:
             if vehicle.position >= len(vehicle.route) - 1:
                 continue
 
-            current_point = vehicle.route[vehicle.position]
-            next_point = vehicle.route[vehicle.position + 1]
-
-            segment = (
-                (
-                    current_point["latitude"],
-                    current_point["longitude"]
-                ),
-                (
-                    next_point["latitude"],
-                    next_point["longitude"]
-                )
+            road = key(
+                vehicle.route[vehicle.position],
+                vehicle.route[vehicle.position + 1]
             )
 
-            segment = tuple(sorted(segment))
-
-            if segment not in traffic:
-                traffic[segment] = 0
-
-            traffic[segment] += 1
+            traffic[road] = traffic.get(road, 0) + 1
 
         return traffic
+
+    def get_segment_traffic(self):
+        """Vehicles on each road segment, both directions together (the
+        sorted segment key). This is what the shortest-route search's
+        traffic penalty (a_star.py) counts, whatever the traffic model."""
+
+        if not self.road_model.directed:
+            return self.get_traffic_density()
+
+        counts = {}
+        for road, count in self.get_traffic_density().items():
+            segment = undirected(road)
+            counts[segment] = counts.get(segment, 0) + count
+
+        return counts
 
     # ========================================
     # CONGESTION
     # ========================================
 
     def get_congestion(self):
+        """Congestion per road segment (both directions together, for the
+        map): vehicles on it, and the level of its busier direction."""
 
         traffic = self.get_traffic_density()
 
         congestion = {}
 
-        for segment, vehicle_count in traffic.items():
+        for road, vehicle_count in traffic.items():
 
+            segment = undirected(road)
             accident = self.accidents.get(segment)
 
             # An accident's lost capacity shows in the level too, so the
             # map colour matches how slowly vehicles really move there
-            congestion[segment] = {
-                "vehicle_count": vehicle_count,
-                "level": congestion_level(
-                    effective_vehicle_count(vehicle_count, accident)
-                ),
-            }
+            level = self.road_model.level(road, vehicle_count, accident)
+
+            entry = congestion.get(segment)
+
+            if entry is None:
+                congestion[segment] = {"vehicle_count": vehicle_count, "level": level}
+            else:
+                entry["vehicle_count"] += vehicle_count
+                if LEVEL_ORDER.index(level) > LEVEL_ORDER.index(entry["level"]):
+                    entry["level"] = level
 
         return congestion
 

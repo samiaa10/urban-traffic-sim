@@ -103,6 +103,13 @@ class ScenarioSpec(Strict):
     closures: List[Closure] = Field(default_factory=list, max_length=50)
     accidents: List[Accident] = Field(default_factory=list, max_length=50)
     rerouting: bool = True
+    # How roads behave (simulation/road_model.py): "osm" uses OpenStreetMap
+    # speed limits, lanes and per-direction traffic; "simple" is the
+    # original rules. Not given: the API fills in the server's default
+    # (TRAFFIC_MODEL) before saving the study; a spec still without one
+    # (saved before this field existed, or built directly in code) runs
+    # the simple model it always ran.
+    traffic_model: Optional[Literal["osm", "simple"]] = None
     stations: List[Station] = Field(default_factory=list, max_length=20)
     emergencies: Emergencies = Emergencies()
     # Stop here even if trips are still on their way
@@ -114,10 +121,20 @@ class ScenarioSpec(Strict):
             raise ValueError("emergencies need at least one station")
         return self
 
-    def fingerprint(self):
-        """SHA-256 of everything that affects the result (not the name)."""
+    @property
+    def effective_traffic_model(self):
+        return self.traffic_model or "simple"
 
-        body = self.model_dump(mode="json", exclude={"name"})
+    def fingerprint(self):
+        """SHA-256 of everything that affects the result (not the name).
+        The simple traffic model is left out, so a spec keeps the
+        fingerprint it had before traffic_model existed."""
+
+        exclude = {"name"}
+        if self.effective_traffic_model == "simple":
+            exclude.add("traffic_model")
+
+        body = self.model_dump(mode="json", exclude=exclude)
         text = json.dumps(body, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(text.encode()).hexdigest()
 
@@ -128,6 +145,13 @@ class ScenarioSpec(Strict):
         body = self.model_dump(mode="json", include={"seed", "demand", "surges"})
         text = json.dumps(body, sort_keys=True, separators=(",", ":"))
         return hashlib.sha256(text.encode()).hexdigest()[:16]
+
+
+def load_stored_spec(spec_dict):
+    """A ScenarioSpec from a stored spec (one saved before traffic_model
+    existed has none, and so runs the simple model it ran with)."""
+
+    return ScenarioSpec.model_validate(spec_dict)
 
 
 def validate_against_graph(spec, graph):

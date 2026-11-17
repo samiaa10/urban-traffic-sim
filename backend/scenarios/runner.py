@@ -30,15 +30,19 @@ import time
 
 from backend.routing.travel_time import RoadNetwork
 from backend.scenarios.impact import ImpactTracker, percentile
-from backend.scenarios.spec import ScenarioSpec, validate_against_graph
+from backend.scenarios.spec import ScenarioSpec, load_stored_spec, validate_against_graph
 from backend.simulation import dispatch, rerouting
 from backend.simulation.demand import DemandModel, Zone
 from backend.simulation.simulation import Simulation
-from backend.simulation.traffic_manager import DEFAULT_SPEED, ReroutePolicy, TrafficManager
+from backend.simulation.road_model import make_road_model
+from backend.simulation.traffic_manager import ReroutePolicy, TrafficManager, car_speed
 
 
 # Bump when a change here would change results for the same spec
-ENGINE_VERSION = 1
+# 2: speed limits, capacity and per-direction traffic (the osm traffic
+# model, spec.traffic_model); specs saved before version 2 ran the simple
+# model and still do
+ENGINE_VERSION = 2
 
 # Trip statuses in the per-trip arrays
 FINISHED, UNFINISHED, UNROUTABLE = "finished", "unfinished", "unroutable"
@@ -56,13 +60,16 @@ class World:
         self.node_by_point = rerouting.build_node_lookup(graph)
         self._free_flow = {}
 
-    def free_flow_seconds(self, origin, destination, speed=DEFAULT_SPEED):
+    def free_flow_seconds(self, origin, destination, speed, limits=False):
         """Fastest time for a trip with no traffic and no closures (cached:
-        the same trips recur across scenarios with the same seed)."""
+        the same trips recur across scenarios with the same seed). With
+        limits, each road is driven at most at its speed limit."""
 
-        key = (origin, destination, speed)
+        key = (origin, destination, speed, limits)
         if key not in self._free_flow:
-            self._free_flow[key] = self.network.fastest_path(origin, destination, speed)[1]
+            self._free_flow[key] = self.network.fastest_path(
+                origin, destination, speed, limits=limits
+            )[1]
         return self._free_flow[key]
 
 
@@ -110,7 +117,7 @@ def run_scenario(world, spec, progress=None, measure=True):
     """
 
     if not isinstance(spec, ScenarioSpec):
-        spec = ScenarioSpec.model_validate(spec)
+        spec = load_stored_spec(spec)
 
     problems = validate_against_graph(spec, world.graph)
     if problems:
@@ -123,8 +130,12 @@ def run_scenario(world, spec, progress=None, measure=True):
 
     # A simulation needs a first vehicle; park one where it cannot matter
     parked = network.point(world.demand.nodes[0])
-    simulation = Simulation([parked, parked])
+    simulation = Simulation(
+        [parked, parked],
+        road_model=make_road_model(spec.effective_traffic_model, network),
+    )
     simulation.vehicles[0].finished = True
+    trip_speed = car_speed(simulation)
 
     traffic = TrafficManager(
         network,
@@ -207,11 +218,11 @@ def run_scenario(world, spec, progress=None, measure=True):
         """Route a trip under current traffic and closures and put it on
         the road; a trip with no route stays unroutable."""
 
-        path, _, _ = traffic.plan(trip.origin, trip.destination, DEFAULT_SPEED)
+        path, _, _ = traffic.plan(trip.origin, trip.destination, trip_speed)
         if not path:
             trip.status = UNROUTABLE
             return
-        vehicle = simulation.add_vehicle(network.points(path), DEFAULT_SPEED)
+        vehicle = simulation.add_vehicle(network.points(path), trip_speed)
         vehicle.origin, vehicle.destination = trip.origin, trip.destination
         trip.vehicle = vehicle
         tracker.track(vehicle)
@@ -345,7 +356,10 @@ def _result(spec, world, simulation, traffic, tracker, trips, surges,
             continue
 
         lost = float(getattr(vehicle, "scenario_delay", 0.0))
-        reference = float(world.free_flow_seconds(trip.origin, trip.destination))
+        reference = float(world.free_flow_seconds(
+            trip.origin, trip.destination,
+            car_speed(simulation), simulation.road_model.has_limits,
+        ))
 
         journey.append(vehicle.journey_seconds)
         free_flow.append(reference)

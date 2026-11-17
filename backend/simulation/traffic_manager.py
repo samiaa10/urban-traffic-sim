@@ -63,6 +63,15 @@ from backend.simulation.demand import DemandModel, Zone
 DEFAULT_SPEED = 13.9   # m/s, the same default car speed as Vehicle
 
 
+def car_speed(simulation, speed=DEFAULT_SPEED):
+    """Top speed for a new car: in the osm traffic model the road's speed
+    limit decides (road_model.CAR_TOP_SPEED), otherwise `speed`."""
+
+    from backend.simulation.road_model import CAR_TOP_SPEED
+
+    return CAR_TOP_SPEED if simulation.road_model.has_limits else speed
+
+
 class ReroutePolicy:
 
     def __init__(
@@ -220,6 +229,17 @@ class TrafficManager:
 
         return self.simulation.road_speed_factor(segment, round(count) + 1)
 
+    @property
+    def road_model(self):
+        return self.simulation.road_model
+
+    def _accident_keys(self):
+        """Traffic keys of every road with an accident (both directions in
+        the osm model)."""
+
+        keys_of = self.road_model.keys_of_segment
+        return {key for segment in self.simulation.accidents for key in keys_of(segment)}
+
     def _slow_roads(self, traffic):
         """{road: joining speed factor} for every road that is not free flowing.
 
@@ -233,7 +253,7 @@ class TrafficManager:
         def build():
             slow = {}
 
-            for segment in set(traffic) | set(self.simulation.accidents):
+            for segment in set(traffic) | self._accident_keys():
                 factor = self._joining_factor(segment, traffic.get(segment, 0))
 
                 if factor != 1.0:
@@ -304,15 +324,24 @@ class TrafficManager:
             return None
 
         route = vehicle.route
-        return rerouting.segment_key(
+        return self.simulation.traffic_key(
             route[vehicle.position], route[vehicle.position + 1]
         )
+
+    def _obeys_limits(self, vehicle):
+        """Whether searches for this vehicle obey speed limits (osm model,
+        and not an emergency vehicle; None = a new car)."""
+
+        if not self.road_model.has_limits:
+            return False
+        return vehicle is None or vehicle.obeys_speed_limits
 
     def plan(self, start, destination, speed, traffic=None, vehicle=None):
         """Fastest route under current traffic, accidents and closures.
 
         Pass the vehicle when re-planning one already on the road, so its
-        own presence is not counted as traffic in its way.
+        own presence is not counted as traffic in its way (and so an
+        emergency vehicle is planned without speed limits).
         """
 
         if traffic is None:
@@ -328,6 +357,8 @@ class TrafficManager:
                 traffic, self._own_segment(vehicle)
             ),
             blocked_segments=self.simulation.get_blocked_segments(),
+            directed=self.road_model.directed,
+            limits=self._obeys_limits(vehicle),
         )
 
         self.stats["searches"] += 1
@@ -364,9 +395,12 @@ class TrafficManager:
         generator=None,
         origin_zone=None,
         destination_zone=None,
-        speed=DEFAULT_SPEED,
+        speed=None,
     ):
         """Add `count` vehicles with demand-model trips and fastest routes.
+
+        speed defaults to car_speed() (the speed limits decide in the osm
+        traffic model, DEFAULT_SPEED otherwise).
 
         Every new vehicle is routed with the same traffic snapshot (taken
         once, before any of them are added), which keeps spawning a large
@@ -374,6 +408,7 @@ class TrafficManager:
         """
 
         generator = generator or self.random
+        speed = speed if speed is not None else car_speed(self.simulation)
         traffic = self.planning_traffic()
         started = time.perf_counter()
 
@@ -469,7 +504,13 @@ class TrafficManager:
         ):
             return math.inf
 
-        return self.network.path_seconds(nodes, vehicle.speed, factor)
+        return self.network.path_seconds(
+            nodes,
+            vehicle.speed,
+            factor,
+            directed=self.road_model.directed,
+            limits=self._obeys_limits(vehicle),
+        )
 
     def _record_avoided(self, vehicle, new_nodes):
         """Remember the closed or accident roads the vehicle just routed round.
@@ -610,8 +651,8 @@ class TrafficManager:
         # No route can beat the free-flow lower bound (landmarks + straight
         # line, at top speed), so if even that would not save enough, do not
         # search at all
-        best_possible = (
-            self.network.lower_bound_metres(start, destination) / vehicle.speed
+        best_possible = self.network.lower_bound_seconds(
+            start, destination, vehicle.speed, self._obeys_limits(vehicle)
         )
 
         if (

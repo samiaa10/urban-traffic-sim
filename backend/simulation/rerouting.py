@@ -160,7 +160,7 @@ def reroute_affected_vehicles(
     blocked = simulation.get_blocked_segments()
 
     # Traffic is measured once and shared by every recalculation
-    traffic = simulation.get_traffic_density()
+    traffic = simulation.get_segment_traffic()
 
     stats = {
         "vehicles_checked": 0,
