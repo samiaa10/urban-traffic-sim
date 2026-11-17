@@ -34,7 +34,7 @@ from backend.scenarios.spec import ScenarioSpec, load_stored_spec, validate_agai
 from backend.simulation.demand import CITY_CENTRE, Zone
 
 
-router = APIRouter(prefix="/scenarios")
+router = APIRouter(prefix="/scenarios", tags=["Scenarios"])
 
 
 # ------------------------------------------------------------
@@ -469,6 +469,8 @@ def list_studies(
     offset: int = Query(0, ge=0),
     context: AppContext = Depends(get_context),
 ):
+    """Saved scenario studies, newest first, without their scenarios (paged)."""
+
     require_jobs(context)
     from backend.db.scenario_repository import ScenarioRepository
 
@@ -515,6 +517,9 @@ def get_study(
 
 @router.post("/studies/{study_id}/cancel")
 def cancel_study(study_id: str, context: AppContext = Depends(get_context)):
+    """Stop a running study: scenarios not yet started are skipped and
+    completed results are kept. 409 if it has already finished."""
+
     jobs = require_jobs(context)
     if not jobs.cancel_study(parse_id(study_id, "Study")):
         raise HTTPException(status_code=409, detail="The study has already finished or does not exist")
@@ -551,6 +556,9 @@ def resume_study(study_id: str, context: AppContext = Depends(get_context)):
 
 @router.delete("/studies/{study_id}")
 def delete_study(study_id: str, context: AppContext = Depends(get_context)):
+    """Delete a study and everything saved about its scenarios (a running study
+    is cancelled first)."""
+
     jobs = require_jobs(context)
     from backend.db.scenario_repository import ScenarioRepository
 

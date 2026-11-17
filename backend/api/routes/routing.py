@@ -18,15 +18,17 @@ from backend.routing.a_star import a_star
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("/", tags=["Service"])
 def root():
+    """The API's name and that it is online."""
+
     return {
         "name": "NORWICH//SIM",
         "status": "online"
     }
 
 
-@router.get("/health")
+@router.get("/health", tags=["Service"])
 def health():
     """Liveness: the process answers (no database or other checks), for
     the hosting platform's health check."""
@@ -34,7 +36,7 @@ def health():
     return {"status": "ok"}
 
 
-@router.get("/ready")
+@router.get("/ready", tags=["Service"])
 def ready(context: AppContext = Depends(get_context)):
     """Readiness: whether saving works. 200 with the database "ok" or "not
     configured"; 503 if a database is configured but cannot be reached
@@ -66,12 +68,15 @@ def ready(context: AppContext = Depends(get_context)):
     return {"status": "ok", "database": "ok", "live_runs": len(context.registry)}
 
 
-@router.get("/nearest-node")
+@router.get("/nearest-node", tags=["Routing"])
 def nearest_node(
     latitude: float,
     longitude: float,
     context: AppContext = Depends(get_context)
 ):
+    """The road junction nearest a point (how the website turns a map click
+    into a start or destination)."""
+
     graph = context.graph
     nearest = nearest_node_id(graph, latitude, longitude)
 
@@ -82,7 +87,7 @@ def nearest_node(
     }
 
 
-@router.get("/route")
+@router.get("/route", tags=["Routing"])
 def route(
     start: int,
     destination: int,

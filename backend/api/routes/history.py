@@ -16,7 +16,7 @@ from backend.api.context import AppContext
 from backend.api.routes.common import get_context, parse_run_id
 
 
-router = APIRouter()
+router = APIRouter(tags=["History"])
 
 PREFIX = "/simulations/{simulation_id}/history"
 
@@ -144,6 +144,8 @@ def station_history(
     simulation_id: str,
     context: AppContext = Depends(get_context)
 ):
+    """The run's emergency stations and their vehicles, as saved."""
+
     from backend.db.serializers import station_json
 
     with History(context, simulation_id) as (repo, run):

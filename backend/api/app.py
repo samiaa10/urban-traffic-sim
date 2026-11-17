@@ -63,6 +63,45 @@ def open_database(url):
     return database
 
 
+API_DESCRIPTION = """
+Traffic simulation, routing and emergency-response planning on the real road
+network of Norwich (OpenStreetMap, 5,058 junctions and 10,980 road segments).
+
+**Runs.** `POST /simulation/start` plans a route and starts a simulation run
+with its own ID. Every endpoint that acts on a run exists twice: at its
+original path (`/simulation/step`), acting on the *default* run, and at
+`/simulations/{simulation_id}/...`, acting on the named run. Several runs
+can go at once, each with its own vehicles, closures and stations.
+
+**Typical use.** Start a run, then `POST .../step` once a second (with
+`seconds` to go faster); add a fleet or a rush hour, close roads or add
+accidents, add stations and vehicles, and raise emergencies. Read the live
+congestion, the emergency status and, with a database, the saved history.
+
+**Planning.** The optimiser ranks station locations or chooses a set of
+stations; `/optimiser/evaluations` tests its best answers in full traffic
+simulations. `/scenarios` runs and compares whole scenarios, and studies of
+hundreds of them in the background.
+
+**Limits.** Expensive requests are rate-limited per client (429 with
+`Retry-After`). Saving, history, studies and evaluations need PostgreSQL
+(`DATABASE_URL`); without it they answer 503 and everything else works.
+`GET /ready` says whether the database is reachable.
+"""
+
+API_TAGS = [
+    {"name": "Service", "description": "Health and readiness."},
+    {"name": "Routing", "description": "Junctions and A* routes on the road network."},
+    {"name": "Simulation runs", "description": "Start, step, list, stop and restart runs; fleets and live congestion."},
+    {"name": "Traffic", "description": "Rush-hour surges and dynamic rerouting."},
+    {"name": "Incidents", "description": "Road closures and accidents, with rerouting of the vehicles they affect."},
+    {"name": "Emergency services", "description": "Stations, ambulances, fire engines and police cars, dispatch and response times."},
+    {"name": "Optimiser", "description": "Where emergency stations should go, and those answers tested in traffic."},
+    {"name": "Scenarios", "description": "Whole scenarios simulated, compared and ranked; large studies in the background."},
+    {"name": "History", "description": "What a run did, as saved in PostgreSQL."},
+]
+
+
 def create_app(
     graph_file,
     cors_origins=None,
@@ -122,8 +161,9 @@ def create_app(
 
     app = FastAPI(
         title="NORWICH//SIM API",
-        description="Urban Traffic Simulation and routing API",
-        version="0.3.0",
+        description=API_DESCRIPTION,
+        version="1.0.0",
+        openapi_tags=API_TAGS,
         lifespan=lifespan,
     )
 

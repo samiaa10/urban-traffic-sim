@@ -176,7 +176,7 @@ docker compose up --build
 Then open **http://localhost:8080**. The API's own documentation is at http://localhost:8000/docs. The first build takes a few minutes. Start-up order is: the database (once healthy), then a one-off `migrate` container (`alembic upgrade head`), then the backend (once the migration has succeeded), then the frontend. nginx serves the frontend and forwards `/api/...` to the backend, so the browser only talks to one address.
 
 - `Ctrl+C` or `docker compose down` stops it; saved runs stay in the `pgdata` volume. `docker compose down -v` deletes them.
-- Settings go in a `.env` file next to `docker-compose.yml` (not committed), for example `POSTGRES_PASSWORD=...`, `FRONTEND_PORT=8081`, `BACKEND_PORT=8001` (if 8080 or 8000 is already in use), `LOG_LEVEL=DEBUG`, `MAX_LIVE_RUNS=4`.
+- Settings go in a `.env` file next to `docker-compose.yml` (not committed), for example `POSTGRES_PASSWORD=...`, `FRONTEND_PORT=8081`, `BACKEND_PORT=8001` (if 8080 or 8000 is already in use), `LOG_LEVEL=DEBUG`, `MAX_LIVE_RUNS=4`, `RATE_LIMIT_PER_MINUTE=0`, `LOG_FORMAT=json`. The backend sits behind nginx, which sends the security headers and passes each visitor's address on for the rate limit (`TRUST_PROXY` is set).
 - `python scripts/compose_smoke_test.py` builds and starts the stack under its own name and volume, checks it end to end (including that saved runs survive a backend restart) and removes it again. CI runs it on every push.
 
 ## Road-network data
@@ -468,11 +468,11 @@ Then go back to the backend's **Environment** tab and set `CORS_ORIGINS` to the 
 
 ### Check that it works
 
-1. Open `https://<your-backend>.onrender.com/` and wait (up to a minute if it was asleep). You should see `{"name":"NORWICH//SIM","status":"online"}`. `/docs` shows the API documentation.
+1. Open `https://<your-backend>.onrender.com/health` and wait (up to a minute if it was asleep). You should see `{"status":"ok"}`; `/ready` should say `"database":"ok"`. `/docs` shows the API documentation.
 2. Open the frontend address, click two points in Norwich, then **Calculate Route**. A route and moving vehicles mean it is working end to end.
 3. Try **Find best ambulance station locations**. Results mean the optimiser works too.
 
-Every push to the deployed branch redeploys both services automatically.
+Every push to the deployed branch redeploys both services, once its GitHub Actions checks have passed (`autoDeployTrigger: checksPass` in the Blueprint), so a commit that fails its tests is never deployed. Render checks the backend through `/health` and restarts it if that stops answering.
 
 ### If something goes wrong
 

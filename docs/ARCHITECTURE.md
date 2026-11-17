@@ -18,20 +18,27 @@ flowchart TB
     OSM[(OpenStreetMap)] -->|"osm_loader.py (run once)"| PKL[("Norwich road graph<br/>data/osm/norwich_graph.pkl<br/>5,058 junctions, 10,980 segments")]
 
     subgraph FE["Frontend: React + TypeScript + Vite"]
-        APP["App.tsx + OptimiserPanel<br/>controls, status panel, polling"]
+        APP["App.tsx: route, closures, emergencies,<br/>one update at a time"]
+        LIVE["Live controls + live charts<br/>pause, speed, fleets, rush hour,<br/>incidents picked on the map"]
+        PANELS["Optimiser, In traffic,<br/>Scenarios, History"]
         MAP["Leaflet map (react-leaflet)<br/>routes, vehicles, congestion, markers"]
         APP --> MAP
+        LIVE --> APP
+        PANELS --> MAP
     end
 
     subgraph BE["Backend: FastAPI (backend/api: app.py + routes/)"]
-        API["HTTP endpoints + CORS<br/>original paths + /simulations/{id}/..."]
+        PROT["protection.py<br/>rate limits, size limit,<br/>request log, headers"]
+        API["HTTP endpoints + CORS<br/>original paths + /simulations/{id}/...<br/>/health, /ready"]
+        PROT --> API
         REG["Run registry (sessions.py)<br/>live runs by ID, one lock each"]
         REC["Recorder (recorder.py)<br/>saves what happens to a run"]
         ROUTING["Routing engine<br/>Graph, A*, Dijkstra,<br/>RoadNetwork: travel-time A*, landmarks"]
         SIM["Simulation engine<br/>vehicles, congestion, accidents,<br/>closures, events"]
         TM["Traffic manager<br/>fleets, surges, demand model,<br/>dynamic rerouting"]
         EMER["Emergency response<br/>stations, dispatch,<br/>ETA, response time"]
-        OPT["Optimisation engine<br/>single + multi-station optimiser"]
+        OPT["Optimisation engine<br/>single + multi-station optimiser,<br/>tested in traffic (evaluation.py)"]
+        SCEN["Scenario engine (backend/scenarios)<br/>run, measure, compare;<br/>studies in worker processes"]
         API --> REG
         REG --> TM
         REG --> REC
@@ -44,10 +51,15 @@ flowchart TB
         SIM --> ROUTING
         EMER --> SIM
         OPT --> ROUTING
+        API --> SCEN
+        SCEN --> TM
+        OPT --> SCEN
     end
 
     PKL -->|"loaded at start-up"| API
-    PG[("PostgreSQL (optional)<br/>runs, history,<br/>optimiser results")]
+    PG[("PostgreSQL (optional)<br/>runs, history, optimiser results,<br/>scenario studies")]
+    SCEN -->|"results"| PG
+    BACKUP["backup_database.sh<br/>weekly encrypted backup (Actions)"] -.-> PG
     REC -->|"SQLAlchemy<br/>(backend/db)"| PG
     OPT -.->|"results saved<br/>via the API"| PG
     APP <-->|"HTTP + JSON<br/>127.0.0.1:8000, or /api via nginx"| API
@@ -57,7 +69,8 @@ flowchart TB
         PYT["pytest: routing, simulation,<br/>emergency, optimiser, API,<br/>database (real PostgreSQL)"]
         BEN["Benchmark scripts<br/>(three save to docs/*.md)"]
         FET["Frontend: node:test logic tests<br/>+ Vitest / React Testing Library"]
-        CI["GitHub Actions CI<br/>(+ PostgreSQL service,<br/>Docker Compose smoke test)"]
+        E2E["Playwright end-to-end:<br/>real browser, real backend,<br/>real Norwich map"]
+        CI["GitHub Actions CI: 5 jobs<br/>(+ PostgreSQL service,<br/>Docker Compose smoke test)"]
     end
 
     PYT -.-> BE
@@ -67,6 +80,9 @@ flowchart TB
     FET -.-> FE
     CI -.-> PYT
     CI -.-> FET
+    CI -.-> E2E
+    E2E -.-> FE
+    E2E -.-> BE
 ```
 
 The Norwich data is downloaded once and saved as a pickle file. The API loads it when it starts, and the benchmark and optimiser scripts load it themselves. See [Road-network data](../README.md#road-network-data).
@@ -566,18 +582,20 @@ Scenario studies run in worker processes inside the backend container (`SCENARIO
 
 ## API endpoints
 
-Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs`.
+Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs` (and `/redoc`): an overview, then every operation grouped by tag (Service, Routing, Simulation runs, Traffic, Incidents, Emergency services, Optimiser, Scenarios, History), each with a description; `backend/tests/test_api_docs.py` keeps it that way.
 
 **Which run.** The endpoints that act on a simulation exist twice (see [Runs and their IDs](#runs-and-their-ids)): at the path in the table below, acting on the **default run** (404 `No simulation is running` if there is none), and under `/simulations/{simulation_id}`, acting on that run (404 if there never was such a run, 409 if it has ended). The second column gives the per-run path; the parameters and answers are the same.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Health check (`{"name": "NORWICH//SIM", "status": "online"}`) |
+| GET | `/` | `{"name": "NORWICH//SIM", "status": "online"}` |
+| GET | `/health` | Liveness: `{"status": "ok"}` while the process answers (Render's and Docker's health check) |
+| GET | `/ready` | Readiness: the database `ok` or `not configured` (200), or 503 `degraded` when it cannot be reached, with the number of live runs |
 | GET | `/nearest-node?latitude&longitude` | Nearest junction to a point |
 | GET | `/route?start&destination&simulation_id` | Shortest A\* route between two junction ids (plus 50 m per vehicle on a road). Uses the traffic and closures of the run named by `simulation_id`, or of the default run, if any |
-| POST | `/simulation/start?start&destination` | Start a simulation with a vehicle from start to destination, plus one coming back if a return route exists. Also creates the traffic manager (real road lengths, dynamic rerouting). It becomes the default run (the previous default stops, recorded as `replaced`). The answer includes its `simulation_id`; 503 if a database is configured but the run could not be saved |
+| POST | `/simulation/start?start&destination&traffic_model&replace_default` | Start a simulation with a vehicle from start to destination, plus one coming back if a return route exists. Also creates the traffic manager (real road lengths, dynamic rerouting). It becomes the default run (the previous default stops, recorded as `replaced`); with `replace_default=false`, as the website sends, it replaces nothing. The answer includes its `simulation_id`; 503 if a database is configured but the run could not be saved |
 | GET | `/simulation/state` | Position and progress of vehicle 0 |
-| POST | `/simulation/step` | Run surges, advance one simulated second, react to events and re-plan. Returns all vehicles (position, `speed_factor` where 1.0 is free flowing, `journey_seconds`, `reroutes`), `simulation_time` and `rerouted_this_step` |
+| POST | `/simulation/step?seconds` | Run surges, advance `seconds` (1 to 60, default 1) simulated seconds, react to events and re-plan after each. Returns all vehicles (position, `speed_factor` where 1.0 is free flowing, `journey_seconds`, `reroutes`), `simulation_time`, `rerouted_this_step` and a `summary` for the live charts (vehicles driving and held up, average speed, arrivals, mean journey, reroutes, closed roads, accidents) |
 | GET | `/simulation/congestion` | Vehicle count and congestion level per road segment (the level includes any accident's lost capacity) |
 | POST | `/simulation/reroute?vehicle_id` | Recalculate one vehicle's route (travel time, traffic, accidents, closures) |
 | POST | `/simulation/fleet?count&seed` | Add `count` (1 to 2,000) vehicles with demand-model trips and fastest routes. Returns `spawned`, `failed`, `seconds`, `total_vehicles` |

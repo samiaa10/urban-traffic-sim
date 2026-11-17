@@ -9,7 +9,7 @@ from backend.api.sessions import LiveRun
 from backend.simulation.demand import Zone
 
 
-router = APIRouter()
+router = APIRouter(tags=["Traffic"])
 
 
 @run_route(router, "post", "/traffic/surge", "/traffic/surge")

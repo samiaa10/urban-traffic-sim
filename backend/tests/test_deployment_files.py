@@ -129,7 +129,7 @@ def test_render_checks_the_api_through_its_health_endpoint(blueprint):
     api = service(blueprint, "norwich-sim-api")
 
     assert api["healthCheckPath"] == "/health"
-    assert '@router.get("/health")' in (ROOT / "backend/api/routes/routing.py").read_text()
+    assert '@router.get("/health"' in (ROOT / "backend/api/routes/routing.py").read_text()
 
 
 def test_render_deploys_only_commits_whose_checks_passed(blueprint):

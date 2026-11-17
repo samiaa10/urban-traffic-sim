@@ -26,7 +26,7 @@ from backend.simulation.traffic_manager import TrafficManager, car_speed
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["Simulation runs"])
 
 
 TrafficModelQuery = Query(
@@ -468,6 +468,8 @@ def restart_simulation(
 
 @run_route(router, "get", "/simulation/state", "/state")
 def simulation_state(run: LiveRun = Depends(default_run)):
+    """Where the run's first vehicle (the one on the planned route) is, how far
+    it has gone and whether it has arrived."""
 
     with run.lock:
         vehicle = run.simulation.vehicles[0]
@@ -563,6 +565,9 @@ def simulation_step(
 
 @run_route(router, "get", "/simulation/congestion", "/congestion")
 def simulation_congestion(run: LiveRun = Depends(default_run)):
+    """Every road with vehicles on it: how many, and its congestion level
+    (light, moderate or heavy), including capacity lost to accidents. The
+    website draws this as the live congestion layer."""
 
     with run.lock:
         congestion = run.simulation.get_congestion()
@@ -598,6 +603,8 @@ def reroute_vehicle(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
+    """Plan a new route for one vehicle from where it is now, around closed
+    roads and with current congestion."""
 
     with run.lock:
         simulation = run.simulation
