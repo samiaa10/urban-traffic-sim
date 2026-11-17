@@ -183,6 +183,8 @@ render.yaml, requirements-deploy.txt   Render deployment (PostgreSQL database, b
 
 `routing/graph.py` is a small custom class. Each node (junction) has a latitude and longitude, and each directed edge has a length in metres. Because OpenStreetMap roads can be one-way, a route from A to B may exist while B to A does not.
 
+`graph.road_info[(from, to)]` keeps each directed road's OpenStreetMap attributes as a `RoadInfo` (`routing/road_attributes.py`): road class, speed limit (m/s), lanes in its own direction, one-way, and name, each marked as tagged or defaulted. The edges themselves are unchanged, so every search and the optimiser work as before; maps without attributes (the hand-made test maps) simply have an empty `road_info`. How tags become numbers, the defaults, and how much of Norwich is tagged are in [the road network guide](road_network.md).
+
 ### Routing
 
 `a_star` takes the graph, a start and a destination, and optionally `traffic` and `blocked_segments`:
@@ -213,7 +215,27 @@ Congestion is not only drawn on the map, it changes how vehicles move:
 5. Each vehicle keeps `journey_seconds`, a clock that runs every step until it arrives, including time stuck behind a closed road. Congestion and closures both lengthen a journey, and `/simulation/step` reports `speed_factor`, `journey_seconds` and `reroutes` per vehicle.
 6. `dispatch.remaining_seconds` computes an ETA the same way, so the ETA shown in the status panel grows when the route is congested or has an accident.
 
-One traffic count drives everything: `get_traffic_density()` keys each road by `segment_between`, which sorts the two end points, so **both directions of a road are counted together**. The same count sets vehicle speed, colours the map, and feeds both routers. Every vehicle is slowed by it, ambulances on a call included (there is no ambulance priority). Simplification: a vehicle that crosses several short roads in one second keeps using that second's snapshot.
+One traffic count drives everything: `get_traffic_density()` keys each road by its traffic key (below). The same count sets vehicle speed, colours the map, and feeds both routers. Every vehicle is slowed by it, ambulances on a call included (there is no ambulance priority). Simplification: a vehicle that crosses several short roads in one second keeps using that second's snapshot.
+
+### Traffic models
+
+Each `Simulation` has a road model (`simulation/road_model.py`), chosen per run (`traffic_model` on `/simulation/start` and `/simulations`), per scenario (`ScenarioSpec.traffic_model`), or by the server's `TRAFFIC_MODEL` (default `osm`). Everything that needs a road's speed asks it: movement, routing, ETAs and delay measurement, so planned and driven times stay equal in both models (tested on random maps with random limits).
+
+| | `simple` (the original rules, above) | `osm` |
+|---|---|---|
+| Traffic key | sorted end points: both directions counted together | end points in driving direction: each direction on its own |
+| Free-flow speed | the vehicle's own speed everywhere | `min(vehicle speed, the road's limit)`; cars get a top speed of 70 mph, so the limit decides. Emergency vehicles are exempt (UK law allows it on a call, and the station optimiser assumes it) |
+| Congestion | 1 vehicle free, 2 at 60%, 3+ at 30% | Greenshields: `factor = max(0.05, 1 - others / capacity)`, capacity = lanes x max(length, 30 m) / 7.5 m. Only *other* vehicles count, so a lone vehicle is never slowed; the 5% floor keeps a queue creeping |
+| Accidents | raise the effective count, then their speed factor | divide the capacity by their capacity factor, then their speed factor |
+| Map colours | by count | by speed factor: light >= 0.8, moderate >= 0.4, heavy below. Each road is drawn once, in its busier direction's colour |
+
+Closures and accidents always cover both directions in both models. The shortest-route search (`a_star.py`, `/route`) keeps its flat 50 m penalty per vehicle; `Simulation.get_segment_traffic()` gives it both directions together whatever the model.
+
+In the osm model, `RoadNetwork.fastest_path(..., directed=True, limits=True)` costs each road at `length / (min(speed, limit) x factor)`; its estimate divides the straight-line (or landmark) distance by the fastest speed anywhere on the network, so it still never overestimates. `Vehicle.move` takes the limit as a `limit_factor` (the limit as a fraction of the vehicle's speed) and records `last_free_flow_seconds`, so `scenarios/impact.py` measures delay as time taken minus the time at the speed limits: a lone vehicle still loses exactly 0 s.
+
+Old data stays correct: runs saved before migration `0004` have `traffic_model = simple`, and Restart uses the run's model. Scenario specs saved before the field existed have none and run the simple model (`ScenarioSpec.effective_traffic_model`); a simple spec keeps its old fingerprint. The API writes the server's default into specs that do not give one, so a study resumed later runs the model it started with. The scenario engine version is 2.
+
+The 30 m minimum length matters because a quarter of Norwich's roads are shorter than 20 m (mostly at junctions); the sensitivity of the results to it is in [the traffic benchmark](traffic_benchmark.md).
 
 ### Real road lengths
 

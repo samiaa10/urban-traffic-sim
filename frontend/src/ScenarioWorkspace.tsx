@@ -17,6 +17,7 @@ import {
   isFinished,
   linePoints,
   postJson,
+  pickedRoadLabel,
   progressLabel,
   randomClosureRequest,
   request,
@@ -25,6 +26,7 @@ import {
   METRIC_OPTIONS,
   type Draft,
   type NearestRoad,
+  type Road,
   type RoadImpact,
   type ScenarioDetail,
   type Study,
@@ -145,17 +147,21 @@ export function ScenarioWorkspace({
           const road = await request<NearestRoad>(
             `/scenarios/nearest-road?latitude=${latitude}&longitude=${longitude}`
           )
-          const label = `${road.start}-${road.destination}`
+          const label = pickedRoadLabel(road)
+          // The same road (by its junctions) is only listed once; two
+          // roads can share a name
+          const other = (r: Road) =>
+            r.start !== road.start || r.destination !== road.destination
           setDrafts((current) =>
             current.map((d) => {
               if (d.key !== key) return d
               const item = { start: road.start, destination: road.destination, label }
               return kind === "closure"
-                ? { ...d, closures: [...d.closures.filter((c) => c.label !== label), item] }
+                ? { ...d, closures: [...d.closures.filter(other), item] }
                 : {
                     ...d,
                     accidents: [
-                      ...d.accidents.filter((a) => a.label !== label),
+                      ...d.accidents.filter(other),
                       { ...item, severity: "severe", start_at: 120 },
                     ],
                   }
