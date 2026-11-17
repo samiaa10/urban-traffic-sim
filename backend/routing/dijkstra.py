@@ -3,18 +3,14 @@
 import heapq
 
 
+INFINITY = float("inf")
+
+
 def dijkstra(graph, start, destination, return_stats=False):
-    distances = {
-        node: float("inf")
-        for node in graph.nodes
-    }
-
-    previous = {
-        node: None
-        for node in graph.nodes
-    }
-
-    distances[start] = 0
+    # Filled in as junctions are reached (a junction not in the table is
+    # infinitely far), instead of a table over every junction per call
+    distances = {start: 0}
+    previous = {start: None}
 
     priority_queue = [(0, start)]
 
@@ -25,7 +21,7 @@ def dijkstra(graph, start, destination, return_stats=False):
             priority_queue
         )
 
-        if current_distance > distances[current_node]:
+        if current_distance > distances.get(current_node, INFINITY):
             continue
 
         nodes_explored += 1
@@ -37,7 +33,7 @@ def dijkstra(graph, start, destination, return_stats=False):
 
             new_distance = current_distance + weight
 
-            if new_distance < distances[neighbour]:
+            if new_distance < distances.get(neighbour, INFINITY):
                 distances[neighbour] = new_distance
                 previous[neighbour] = current_node
 
@@ -46,7 +42,7 @@ def dijkstra(graph, start, destination, return_stats=False):
                     (new_distance, neighbour)
                 )
 
-    if distances[destination] == float("inf"):
+    if distances.get(destination, INFINITY) == INFINITY:
         if return_stats:
             return [], float("inf"), nodes_explored
 

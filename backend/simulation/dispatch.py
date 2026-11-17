@@ -29,7 +29,20 @@ logger = logging.getLogger(__name__)
 
 
 def nearest_junction(graph, latitude, longitude):
-    """The junction closest to a point (straight line, in degrees)."""
+    """The junction closest to a point (straight line, in degrees).
+
+    Uses the grid index (routing/spatial.py), which gives exactly the
+    answer of the scan below (nearest_junction_scan), ties included."""
+
+    from backend.routing.spatial import index_for
+
+    found = index_for(graph).nearest(latitude, longitude)
+    return found[0] if found else None
+
+
+def nearest_junction_scan(graph, latitude, longitude):
+    """The original scan over every junction (the reference the index is
+    tested against)."""
 
     nearest = None
     nearest_distance = float("inf")

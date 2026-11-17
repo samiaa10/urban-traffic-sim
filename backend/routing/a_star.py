@@ -61,20 +61,37 @@ def a_star(
     if blocked_segments is None:
         blocked_segments = set()
 
-    distances = {
-        node: float("inf")
-        for node in graph.nodes
-    }
+    infinity = float("inf")
 
-    previous = {
-        node: None
-        for node in graph.nodes
-    }
+    # Filled in as junctions are reached (a junction not in the table is
+    # infinitely far), instead of a table over every junction per call
+    distances = {start: 0}
+    previous = {start: None}
 
-    distances[start] = 0
+    # Segment keys are only needed to check closures and count traffic
+    needs_segments = bool(blocked_segments) or traffic is not None
+
+    # heuristic() for this destination, with the destination's part worked
+    # out once (the same arithmetic in the same order, so the same values)
+    nodes = graph.nodes
+    lat2 = radians(nodes[destination]["latitude"])
+    lon2 = radians(nodes[destination]["longitude"])
+    cos_lat2 = cos(lat2)
+
+    def estimate(node):
+        node_data = nodes[node]
+        lat1 = radians(node_data["latitude"])
+        lon1 = radians(node_data["longitude"])
+        a = (
+            sin((lat2 - lat1) / 2) ** 2
+            + cos(lat1)
+            * cos_lat2
+            * sin((lon2 - lon1) / 2) ** 2
+        )
+        return EARTH_RADIUS_M * (2 * atan2(sqrt(a), sqrt(1 - a)))
 
     priority_queue = [
-        (heuristic(graph, start, destination), 0, start)
+        (estimate(start), 0, start)
     ]
 
     nodes_explored = 0
@@ -85,7 +102,7 @@ def a_star(
             priority_queue
         )
 
-        if current_distance > distances[current_node]:
+        if current_distance > distances.get(current_node, infinity):
             continue
 
         nodes_explored += 1
@@ -99,14 +116,15 @@ def a_star(
             # Check whether road is blocked
             # --------------------------------
 
-            segment = get_segment(
-                graph,
-                current_node,
-                neighbour
-            )
+            if needs_segments:
+                segment = get_segment(
+                    graph,
+                    current_node,
+                    neighbour
+                )
 
-            if segment in blocked_segments:
-                continue
+                if segment in blocked_segments:
+                    continue
 
             # --------------------------------
             # Congestion cost
@@ -135,18 +153,14 @@ def a_star(
                 + congestion_cost
             )
 
-            if new_distance < distances[neighbour]:
+            if new_distance < distances.get(neighbour, infinity):
 
                 distances[neighbour] = new_distance
                 previous[neighbour] = current_node
 
                 estimated_total_cost = (
                     new_distance
-                    + heuristic(
-                        graph,
-                        neighbour,
-                        destination
-                    )
+                    + estimate(neighbour)
                 )
 
                 heapq.heappush(
@@ -162,7 +176,7 @@ def a_star(
     # No route exists
     # --------------------------------
 
-    if distances[destination] == float("inf"):
+    if distances.get(destination, infinity) == infinity:
 
         if return_stats:
             return [], float("inf"), nodes_explored

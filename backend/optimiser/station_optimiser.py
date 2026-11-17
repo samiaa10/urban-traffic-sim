@@ -37,6 +37,7 @@ Limitations (worth stating in your README):
 """
 
 import heapq
+import weakref
 import itertools
 import math
 import random
@@ -85,6 +86,31 @@ def shortest_distances(graph, source, blocked_segments=None):
     return distances
 
 
+# graph -> {junction: how many junctions it can reach}, filled on demand
+_REACH = weakref.WeakKeyDictionary()
+
+
+def reach_count(graph, node):
+    """How many junctions `node` can drive to (itself included), with no
+    roads closed: len(shortest_distances(graph, node)), found by a
+    breadth-first search (distances are not needed) and remembered per map,
+    since it never changes."""
+
+    cache = _REACH.setdefault(graph, {})
+
+    if node not in cache:
+        seen = {node}
+        stack = [node]
+        while stack:
+            for neighbour, _ in graph.get_neighbours(stack.pop()):
+                if neighbour not in seen:
+                    seen.add(neighbour)
+                    stack.append(neighbour)
+        cache[node] = len(seen)
+
+    return cache[node]
+
+
 def snap_with_check(graph, latitude, longitude, min_reach=0.9, tries=50):
     """Like snap_to_road, but also says whether the junction is well connected.
 
@@ -93,17 +119,14 @@ def snap_with_check(graph, latitude, longitude, min_reach=0.9, tries=50):
     in which case the closest junction is returned anyway.
     """
 
-    def gap(node):
-        data = graph.nodes[node]
-        return (
-            (data["latitude"] - latitude) ** 2
-            + (data["longitude"] - longitude) ** 2
-        )
+    from backend.routing.spatial import index_for
 
-    closest = sorted(graph.nodes, key=gap)[:tries]
+    # The `tries` nearest junctions, as sorted(graph.nodes, key=squared
+    # distance)[:tries] gave (grid index: same order, ties included)
+    closest = index_for(graph).nearest(latitude, longitude, tries, squared=True)
 
     for node in closest:
-        reach = len(shortest_distances(graph, node))
+        reach = reach_count(graph, node)
         if reach >= min_reach * len(graph.nodes):
             return node, True
 
