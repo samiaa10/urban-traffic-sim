@@ -49,7 +49,16 @@ from backend.routing.a_star import get_segment
 # Bump this whenever a change here would give different results for the
 # same request. Saved results are only reused (?reuse=true) for requests
 # with the same version, so old answers never pass for new ones.
-OPTIMISER_VERSION = 1
+# 2: station sets are found by exhaustive search where feasible
+# (best_station_set), so some sets differ from version 1's greedy + swaps.
+OPTIMISER_VERSION = 2
+
+# Exhaustive set search up to this many possible sets (Norwich: all
+# 501,942 sets of 5 from 38 candidates take about 1.5 s)
+EXHAUSTIVE_SET_LIMIT = 2_000_000
+
+# Random restarts of the swap search when exhaustive search is too big
+RANDOM_RESTARTS = 12
 
 
 def shortest_distances(graph, source, blocked_segments=None):
@@ -625,6 +634,65 @@ def refine_by_swapping(times, chosen, penalty, max_passes=20):
     return members
 
 
+def exhaustive_best_set(times, count, penalty):
+    """The set of `count` candidates with the lowest (ranking value,
+    unreached count): every possible set, scored in bulk with numpy (the
+    same score as set_score). Ties go to the first set in
+    itertools.combinations order."""
+
+    import numpy as np
+
+    table = np.array([
+        [math.inf if t is None else t for t in row] for row in times
+    ])
+    emergencies = table.shape[1]
+    best = None
+
+    combinations = itertools.combinations(range(len(times)), count)
+    while True:
+        chunk = list(itertools.islice(combinations, 50_000))
+        if not chunk:
+            break
+        members = np.array(chunk)
+        fastest = table[members].min(axis=1)
+        unreached = np.isinf(fastest).sum(axis=1)
+        score = np.where(np.isinf(fastest), penalty, fastest).sum(axis=1) / emergencies
+        # lexsort: last key first; stable, so the earliest set wins ties
+        index = np.lexsort((unreached, score))[0]
+        candidate = (float(score[index]), int(unreached[index]))
+        if best is None or candidate < best[0]:
+            best = (candidate, [int(m) for m in members[index]])
+
+    return best[1]
+
+
+def best_station_set(times, count, penalty, seed=1):
+    """The best set of `count` candidates the search can find.
+
+    Up to EXHAUSTIVE_SET_LIMIT possible sets: every set is tried, so it is
+    the best there is. On Norwich (38 candidates) greedy + swaps alone
+    missed the best 4- or 5-station set in 3 of 10 checks, by up to 2.2%
+    (docs/optimiser_evaluation.md). Beyond the limit: greedy + swaps, plus
+    swaps from RANDOM_RESTARTS random starting sets, keeping the best.
+    """
+
+    if math.comb(len(times), count) <= EXHAUSTIVE_SET_LIMIT:
+        return exhaustive_best_set(times, count, penalty)
+
+    best = refine_by_swapping(times, greedy_selection(times, count, penalty), penalty)
+    best_score = set_score(times, best, penalty)
+    generator = random.Random(seed)
+
+    for _ in range(RANDOM_RESTARTS):
+        start = generator.sample(range(len(times)), count)
+        found = refine_by_swapping(times, start, penalty)
+        found_score = set_score(times, found, penalty)
+        if found_score < best_score:
+            best, best_score = found, found_score
+
+    return best
+
+
 def order_by_contribution(times, members, penalty):
     """Put a set in the order a planner would build it.
 
@@ -739,10 +807,9 @@ def optimise_station_set(
     penalty = unreachable_penalty(times)
 
     # --- the chosen set ----------------------------------------
-    # Pick greedily, improve by swapping, then list the stations in the
-    # order they add value.
-    chosen = greedy_selection(times, count, penalty)
-    chosen = refine_by_swapping(times, chosen, penalty)
+    # The best set the search can find (every set where feasible, see
+    # best_station_set), listed in the order the stations add value.
+    chosen = best_station_set(times, count, penalty, seed)
     chosen = order_by_contribution(times, chosen, penalty)
 
     picks = []

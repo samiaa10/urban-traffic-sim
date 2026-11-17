@@ -117,5 +117,69 @@ def main():
         )
 
 
+    in_traffic(graph)
+
+
+def in_traffic(graph, vehicles=1000, pairs=60, warmup=120):
+    """The same check with traffic (osm model): 1,000 cars on the road and
+    60 ambulances, each sent at the same moment from its own station to its
+    own emergency along the fastest route under that traffic, with right of
+    way and no speed limits (the realistic rules). How much slower than the
+    optimiser's distance / speed estimate does traffic make them?"""
+
+    from backend.simulation import dispatch
+    from backend.simulation.road_model import make_road_model
+    from backend.simulation.traffic_manager import TrafficManager
+
+    network = RoadNetwork(graph)
+    network.use_landmarks(8)
+    generator = random.Random(SEED)
+    nodes = sorted(network.main_component())
+
+    parked = network.point(nodes[0])
+    simulation = Simulation([parked, parked], road_model=make_road_model("osm", network))
+    simulation.vehicles[0].finished = True
+    manager = TrafficManager(network, simulation)
+    manager.spawn_vehicles(vehicles, random.Random(SEED))
+    for _ in range(warmup):
+        manager.step()
+
+    traffic = simulation.get_traffic_density()
+    calls = []
+    while len(calls) < pairs:
+        station_node, emergency_node = generator.sample(nodes, 2)
+        free = shortest_distances(graph, station_node).get(emergency_node)
+        if free is None or free < 500:
+            continue
+        here = network.point(station_node)
+        station = simulation.add_station(here["latitude"], here["longitude"])
+        ambulance = simulation.add_emergency_vehicle([here, here], station, speed=SPEED)
+        station.available_vehicles.remove(ambulance)
+        ambulance.available, ambulance.on_emergency = False, True
+        latitude, longitude = network.position[emergency_node]
+        emergency = simulation.create_emergency(latitude, longitude)
+        path, _, _ = dispatch._plan(simulation, network, ambulance, emergency_node, traffic)
+        ambulance.set_route(network.points(path), reset_distance=True)
+        emergency.assigned_vehicle = ambulance
+        emergency.dispatched_at = simulation.time
+        calls.append((emergency, free / SPEED))
+
+    for _ in range(3000):
+        if all(emergency.resolved for emergency, _ in calls):
+            break
+        manager.step()
+
+    gaps = [
+        100 * (emergency.response_time - estimate) / estimate
+        for emergency, estimate in calls if emergency.resolved
+    ]
+    print(
+        f"{len(gaps)} ambulances with {vehicles} cars on the road (osm model, after "
+        f"{warmup} s): simulation vs optimiser response time, mean difference "
+        f"{statistics.mean(gaps):+.1f}%, median {statistics.median(gaps):+.1f}%, range "
+        f"{min(gaps):+.1f}% to {max(gaps):+.1f}%"
+    )
+
+
 if __name__ == "__main__":
     main()
