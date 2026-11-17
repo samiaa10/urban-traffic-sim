@@ -636,3 +636,25 @@ def test_queued_emergencies_are_saved_when_sent_or_when_the_run_ends(make_app):
     assert saved[1]["waited_seconds"] > 0
     assert saved[1]["response_time_seconds"] > saved[0]["response_time_seconds"]
     assert any(e.get("cancel_reason") == "still_queued" for e in saved[2:])
+
+
+def test_a_queued_emergency_that_becomes_unreachable_is_saved_as_refused(make_app):
+    client = TestClient(make_app(traffic_model="osm"))
+    run_id = start(client)
+    app = client.app
+    client.post("/station/create", params=point(app, 0))
+    client.post("/station/add-vehicle", params={"station_id": 0})
+    far = point(app, 15)
+    assert client.post("/emergency/create", params=far).status_code == 200
+    assert client.post("/emergency/create", params=far).status_code == 202
+
+    # Close every road into junction 15 while the second one waits
+    graph = app.state.context.graph
+    for neighbour in {b for b, _ in graph.get_neighbours(15)} | {a for a, roads in graph.edges.items() for b, _ in roads if b == 15}:
+        client.post("/incident/block", params={"start": neighbour, "destination": 15})
+    for _ in range(300):
+        client.post("/simulation/step")
+    client.delete(f"/simulations/{run_id}")
+
+    saved = history(client, run_id, "/emergencies")["emergencies"]
+    assert [e["cancel_reason"] for e in saved if e["status"] == "cancelled"] == ["no_route"]

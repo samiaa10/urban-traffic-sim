@@ -380,3 +380,73 @@ def test_a_one_group_spec_runs_exactly_as_before(world):
     result = run_scenario(world, spec)
     assert result["emergencies"]["requested"] == 3
     assert result["emergencies"]["detail"]["queued"] == 0
+
+
+# ------------------------------------------------------------
+# Emergencies no vehicle can reach (found in the Stage 5 audit: they were
+# queued for ever, with searches every simulated second)
+# ------------------------------------------------------------
+
+def island_graph():
+    """river_graph plus junction 9, which no road reaches."""
+
+    graph = river_graph()
+    graph.add_node(9, 52.6300, 1.3000)
+    return graph
+
+
+def test_an_emergency_no_station_can_reach_is_refused_not_queued():
+    simulation, network = osm_simulation(island_graph())
+    station = add_station(simulation, network, 3)
+    latitude, longitude = network.position[9]
+
+    outcome = dispatch.dispatch_emergency(network.graph, simulation, latitude, longitude)
+
+    assert outcome["status"] == "no_route"
+    assert outcome["emergency"].cancel_reason == "no_route"
+    assert simulation.queued_emergencies() == []
+    # The vehicle was never taken: still free at its station
+    assert station.has_available_vehicle()
+    assert dispatch.dispatch_emergency(network.graph, simulation, 52.62, 1.28)["status"] == "dispatched"
+
+
+def test_it_waits_when_only_a_busy_vehicle_could_reach_it():
+    """Station B's road to the emergency is closed, so only station A can
+    get there; while A's vehicle is out the emergency waits for it."""
+
+    simulation, network = osm_simulation(river_graph())
+    add_station(simulation, network, 1)          # A: the long way round
+    add_station(simulation, network, 3)          # B: direct road...
+    simulation.block_segment(network.segment[(3, 0)])   # ...now closed
+
+    first = dispatch.dispatch_emergency(network.graph, simulation, 52.62, 1.28)
+    assert first["status"] == "dispatched"
+    assert first["vehicle"].home_station.latitude == network.position[1][0]
+
+    second = dispatch.dispatch_emergency(network.graph, simulation, 52.62, 1.28)
+    assert second["status"] == "queued"
+
+    run_until_resolved(simulation, [first["emergency"], second["emergency"]], limit=5000)
+    assert second["emergency"].assigned_vehicle.home_station.latitude == network.position[1][0]
+
+
+def test_a_queued_emergency_cut_off_by_a_closure_is_refused():
+    simulation, network = osm_simulation(river_graph())
+    add_station(simulation, network, 3)
+    first = dispatch.dispatch_emergency(network.graph, simulation, 52.62, 1.28)
+    second = dispatch.dispatch_emergency(network.graph, simulation, 52.62, 1.28)
+    assert second["status"] == "queued"
+
+    # Every way to the emergency closes while it waits
+    simulation.block_segment(network.segment[(3, 0)])
+    simulation.block_segment(network.segment[(2, 0)])
+
+    for _ in range(600):
+        simulation.step()
+        dispatch.after_step(simulation)
+        if second["emergency"].cancel_reason is not None:
+            break
+
+    assert second["emergency"].cancel_reason == "no_route"
+    assert simulation.queued_emergencies() == []
+    assert first["emergency"].resolved or first["emergency"].active

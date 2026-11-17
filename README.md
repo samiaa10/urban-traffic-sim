@@ -34,7 +34,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic tests and frontend interaction tests, plus a Docker Compose smoke test, all run on every push by GitHub Actions.
 - **Logging.** The API logs start-up and each emergency dispatch through Python's `logging` module; `LOG_LEVEL` controls how much.
 - **Several simulations at once.** Every run has an ID. The original endpoints act on the run started by `/simulation/start`, and every one of them is also available as `/simulations/{id}/...`, so runs can be driven independently (each with its own lock, at most `MAX_LIVE_RUNS` in memory). The web interface uses its run's ID.
-- **PostgreSQL persistence (optional).** With `DATABASE_URL` set, each run's history is saved as it happens: closures and accidents (and whether they expired or were cleared), stations and ambulances, emergencies from dispatch to arrival (or why nothing could be sent), fleets, surges, a timeline of events, and a metrics snapshot every simulated minute. After a restart, runs that were live come back as `interrupted` with their history intact. The data model is designed properly (13 tables, rules the database enforces itself) and explained in [the architecture guide](docs/ARCHITECTURE.md#persistence). Saving adds no measurable time to a simulation step ([benchmark](docs/persistence_benchmark.md)).
+- **PostgreSQL persistence (optional).** With `DATABASE_URL` set, each run's history is saved as it happens: closures and accidents (and whether they expired or were cleared), stations and ambulances, emergencies from dispatch to arrival (or why nothing could be sent), fleets, surges, a timeline of events, and a metrics snapshot every simulated minute. After a restart, runs that were live come back as `interrupted` with their history intact. The data model is designed properly (13 tables for runs and optimiser results, 20 with the scenario and evaluation tables; rules the database enforces itself) and explained in [the architecture guide](docs/ARCHITECTURE.md#persistence). Saving adds no measurable time to a simulation step ([benchmark](docs/persistence_benchmark.md)).
 - **Saved optimiser results.** Every optimiser answer is saved and can be listed and fetched again (`/optimiser/runs`); `reuse=true` answers an identical request from the database in about 6 ms instead of computing it again (about 750 ms).
 - **Database migrations** with Alembic; the API refuses to start on a database that is not up to date.
 - **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
@@ -89,7 +89,7 @@ pip install -r requirements.txt
 
 ### 3. Download the Norwich road network
 
-The backend cannot start without the road-network file. The finished Norwich map is committed to the repository (`data/osm/norwich_graph.pkl`, about 0.5 MB, so the deployed backend has it), which means a fresh clone already has it and **you can skip this step**. Run it only to refresh the map from OpenStreetMap or if the file is missing (see [Road-network data](#road-network-data)):
+The backend cannot start without the road-network file. The finished Norwich map is committed to the repository (`data/osm/norwich_graph.pkl`, about 1.6 MB with road attributes, so the deployed backend has it), which means a fresh clone already has it and **you can skip this step**. Run it only to refresh the map from OpenStreetMap or if the file is missing (see [Road-network data](#road-network-data)):
 
 ```bash
 python -m backend.routing.osm_loader
@@ -207,14 +207,14 @@ The tests use small hand-built road networks (`backend/tests/helpers.py`, and a 
 
 Tests that load the real Norwich map, and the station-set search, need `numpy` (in `requirements.txt`). `backend/tests/test_api.py` and `test_sessions.py` test the HTTP endpoints through FastAPI's `TestClient`, so they need `fastapi` and `httpx` (both in `requirements.txt`); if either is missing those files are skipped and everything else still runs. The checks of `render.yaml`, `docker-compose.yml` and the CI workflow need `pyyaml` and are skipped without it.
 
-**Database tests.** `backend/tests/db/` (104 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
+**Database tests.** `backend/tests/db/` (125 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
 
 ```bash
 createdb norwich_sim_test
 TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
 ```
 
-Without `TEST_DATABASE_URL` they are skipped: **567 tests pass and 103 are skipped**; with it, **all 670 run**. Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+Without `TEST_DATABASE_URL` they are skipped: **678 tests pass and 124 are skipped**; with it, **all 802 run** (counted on 2026-11-17). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
 
 What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 

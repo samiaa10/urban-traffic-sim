@@ -103,7 +103,7 @@ backend/
 │   └── benchmark_scenarios.py  Cost by fleet size, measuring overhead, parallel speed-up, saving, a 400-scenario study
 │                               (--save writes docs/scenario_benchmark.md)
 ├── db/
-│   ├── models.py               SQLAlchemy 2.0 models: the 13 tables (see Persistence)
+│   ├── models.py               SQLAlchemy 2.0 models: the 20 tables (see Persistence and Scenarios)
 │   ├── repository.py           RunRepository and OptimiserRepository: all database reads and writes
 │   ├── scenario_repository.py  ScenarioRepository: studies, scenarios and their results
 │   ├── serializers.py          Rows -> the API's JSON (including rebuilding optimiser answers exactly)
@@ -308,7 +308,7 @@ Three services, each with its own stations, vehicles, speed and response target:
 | | Original (`simple`) | Realistic (`osm`) |
 |---|---|---|
 | Who is sent | nearest station in a straight line with a vehicle free | the free vehicle of the service that would arrive first: one fastest-route search per free vehicle under current traffic and closures (`dispatch._send`) |
-| Nothing free | refused (404) | queued (202), answered oldest first as soon as a vehicle of that service is free (`dispatch.after_step`, called by `TrafficManager.step`); the response time includes the wait, and the run records `dispatched_at` |
+| Nothing free | refused (404) | queued (202), answered oldest first as soon as a vehicle of that service is free (`dispatch.after_step`, called by `TrafficManager.step`); the response time includes the wait, and the run records `dispatched_at`; an emergency no station of the service can reach at all (with the roads closed now) is refused as `no_route` instead, as the original rules do, and a queued one is refused the same way if closures later cut it off (re-checked only when a road closes or reopens) |
 | After the call | back at the station at once | drives back (`going_home`), free to be sent again from on the way, parked when it arrives |
 | Traffic | slows it like any car | gives way: it loses half the time other traffic would (`emergency_factor`), and speed limits do not apply |
 
@@ -398,7 +398,7 @@ A live run cannot be resumed after a restart: vehicle positions and routes are n
 
 ### The data model
 
-`backend/db/models.py` (SQLAlchemy 2.0); 13 tables in two groups.
+`backend/db/models.py` (SQLAlchemy 2.0). The run and optimiser tables, 13 of the 20, in two groups (the scenario and evaluation tables are under Scenarios).
 
 ```mermaid
 erDiagram
@@ -678,7 +678,7 @@ The screen is one workspace: a fixed navy header, a controls column on the left,
 
 `test_api.py` drives the real FastAPI app through `TestClient`. `main.py` reads the `NORWICH_SIM_GRAPH` environment variable (default: the Norwich pickle), and the test file points it at a small 4x4 grid map with a one-way dead end and an unconnected junction, so the endpoints are tested without the Norwich data. The file is skipped if `fastapi` or `httpx` is not installed. A fixture empties the run registry before every test; `api.simulation` and `api.traffic` still read the default run's simulation and traffic manager (a module `__getattr__` in `main.py`), so the tests that inspect them did not change. `test_sessions.py` and the database tests build apps with `create_app` directly, so each test gets a fresh app, and a second app on the same database is what a restart looks like.
 
-**Database tests.** `backend/tests/db/` (104 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`, for example `postgresql://norwich:norwich@localhost:5433/norwich_sim_test`. SQLite is deliberately not used as a stand-in: the schema relies on PostgreSQL enums, arrays, UUIDs, partial unique indexes and check constraints. The database is wiped and migrated at the start, so its name must contain `test`. Without `TEST_DATABASE_URL` the tests are skipped (103 of them; one needs no database), unless `REQUIRE_DATABASE_TESTS=1` (set in CI), which turns that into a failure. Each repository test runs inside a transaction that is rolled back; tests through the API commit for real and empty the tables afterwards.
+**Database tests.** `backend/tests/db/` (125 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`, for example `postgresql://norwich:norwich@localhost:5433/norwich_sim_test`. SQLite is deliberately not used as a stand-in: the schema relies on PostgreSQL enums, arrays, UUIDs, partial unique indexes and check constraints. The database is wiped and migrated at the start, so its name must contain `test`. Without `TEST_DATABASE_URL` the tests are skipped (124 of them; one needs no database), unless `REQUIRE_DATABASE_TESTS=1` (set in CI), which turns that into a failure. Each repository test runs inside a transaction that is rolled back; tests through the API commit for real and empty the tables afterwards.
 
 - `test_migrations`: every table and enum type created; upgrade, downgrade to empty (types included) and upgrade again; the models and migrations agree.
 - `test_run_repository`, `test_optimiser_repository`: what the repositories write, every database rule refusing bad data, cascades and `SET NULL`, data surviving a brand new engine, optimiser answers rebuilt to identical JSON, and request keys.
