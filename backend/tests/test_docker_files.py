@@ -367,3 +367,38 @@ def test_nginx_sends_security_headers_in_every_location():
         if "add_header" in block:
             assert 'X-Content-Type-Options "nosniff" always' in block
             assert 'X-Frame-Options "DENY" always' in block
+
+
+# ------------------------------------------------------------
+# Database backups (.github/workflows/backup.yml)
+# ------------------------------------------------------------
+
+def test_the_backup_workflow_encrypts_and_skips_without_secrets():
+    yaml = pytest.importorskip("yaml")
+    backup = yaml.safe_load(text(".github/workflows/backup.yml"))
+    job = backup["jobs"]["backup"]
+    commands = steps_text(job)
+
+    # PyYAML reads the "on" key as True
+    triggers = backup.get("on", backup.get(True))
+    assert "schedule" in triggers and "workflow_dispatch" in triggers
+    assert backup["permissions"] == {"contents": "read"}
+
+    # Secrets only, never a committed address
+    assert job["env"]["DATABASE_URL"] == "${{ secrets.DATABASE_BACKUP_URL }}"
+    assert 'if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]' in commands
+
+    # pg_dump of the database's major version, then encrypted; only the
+    # encrypted file is uploaded
+    assert "postgres:16 " in commands and "scripts/backup_database.sh" in commands
+    assert "openssl enc -aes-256-cbc -pbkdf2" in commands
+    assert "rm backups/norwich_sim.dump" in commands
+    upload = next(s for s in job["steps"] if "upload-artifact" in s.get("uses", ""))
+    assert upload["with"]["path"].endswith(".enc")
+    assert 1 <= upload["with"]["retention-days"] <= 90
+
+
+def test_backups_are_never_committed():
+    assert "backups/" in text(".gitignore").splitlines()
+    for script in ("backup_database.sh", "restore_database.sh"):
+        assert (ROOT / "scripts" / script).stat().st_mode & 0o111, script

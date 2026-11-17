@@ -481,15 +481,34 @@ With the Blueprint, Render creates the database and sets the backend's `DATABASE
 
 By hand (Option B): **New +** > **Postgres**, plan Free, then set the backend's `DATABASE_URL` to its **Internal Database URL** and use the start command in the table above.
 
-**The free database expires.** Render's free PostgreSQL stops working 30 days after it is created, and is deleted 14 days after that unless you upgrade it; it has no backups. Once it has expired the backend can no longer reach it. To carry on for free, delete the expired database, create a new free one, and set the backend's `DATABASE_URL` to its Internal Database URL (the start command creates the tables); saved runs and studies are lost. To keep the app running without any database, delete `DATABASE_URL` from the backend's environment: runs are then kept in memory only, and history and studies answer 503.
+**The free database expires.** Render's free PostgreSQL stops working 30 days after it is created and is deleted 14 days after that unless upgraded, and it has no backups. The app is built so that this costs saved history at most, never the site:
 
-*These are Render's free-database terms at the time of writing; check [render.com/docs/free](https://render.com/docs/free).*
+- **The API keeps running.** If the database cannot be reached when the backend starts, it starts anyway with saving off: simulations, the optimiser and the live controls all work, history and studies answer 503, and `GET /ready` reports `degraded`. Delete `DATABASE_URL` to make that permanent.
+- **Back it up** before it expires (see [Backups](#backups)).
+- **Move to a database that does not expire.** Neon's free plan, for example, has no expiry date (it pauses compute after 5 idle minutes and resumes on the next request) and 1 GB per project, with no card needed. Create a PostgreSQL 16 project there, restore the latest backup into it with `scripts/restore_database.sh`, then on Render set the backend's `DATABASE_URL` to the Neon connection string (keep `?sslmode=require`) and delete the Render database. The start command's `alembic upgrade head` brings the schema up to date. Or create a new free Render database every month and restore into that.
+
+*These are Render's and Neon's free-plan terms as of November 2026; check [render.com/docs/free](https://render.com/docs/free) and [neon.com/pricing](https://neon.com/pricing).*
+
+### Backups
+
+```bash
+scripts/backup_database.sh "$DATABASE_URL"                  # -> backups/norwich_sim-<date>.dump
+scripts/restore_database.sh backups/norwich_sim-<date>.dump "$DATABASE_URL" --yes
+```
+
+The backup is one compressed `pg_dump` file with every table, including the schema version, so `alembic upgrade head` after a restore brings an older backup up to date. It is written under a temporary name and checked before it gets its real name, so a failed backup never leaves a file that looks good. The restore runs in one transaction (all or nothing) and refuses without `--yes`, because it replaces the app's tables. For Render, use the database's **External Database URL**. You need `pg_dump` and `pg_restore` for PostgreSQL 16 (`brew install postgresql@16`); `backups/` is ignored by Git.
+
+**Weekly, automatically.** `.github/workflows/backup.yml` backs up the deployed database every Monday (and on demand from the Actions tab) once two repository secrets are set: `DATABASE_BACKUP_URL` (the External Database URL) and `BACKUP_PASSPHRASE`. The dump is encrypted before it is uploaded, because anyone signed in to GitHub can download a public repository's artifacts, and it is kept for 30 days. Without the secrets the job notes that it skipped. To restore one, download the artifact, then:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in norwich_sim.dump.enc -out norwich_sim.dump -pass env:BACKUP_PASSPHRASE
+```
 
 ### Limits of this deployment
 
-- **Runs are kept apart, but there is one default run.** Each visitor's simulation has its own ID and its own vehicles and closures. Starting a new route makes that run the default and replaces the previous default, so if two people start routes at the same time, the first one's run is replaced (and their next step fails). Fine for a portfolio demo where one visitor looks at a time; not a multi-user service.
-- **The optimiser is open to anyone**, and searches use the shared free CPU. There is no login or rate limiting.
-- Restarting or waking the backend ends every live run. Without a database nothing is kept; with one, their history is kept, they are marked `interrupted`, and they can be restarted from their setup in the History section. Studies that were running are resumed.
+- **Visitors are kept apart.** Each visitor's simulation has its own ID, vehicles, closures, stations and live controls, and the website never replaces somebody else's run. At most `MAX_LIVE_RUNS` (8) runs are in memory: a ninth visitor stops the run idle longest, and runs left unused for 30 minutes are stopped.
+- **Expensive requests are rate-limited** (30 a minute per visitor) and the optimiser and studies share the free service's CPU, so a busy moment makes them slower for everyone. There is no login.
+- **Restarting or waking the backend ends every live run.** Without a database nothing is kept; with one, their history is kept, they are marked `interrupted`, and they can be restarted from their setup in the History section. Studies that were running are resumed.
 
 ## Demo
 
@@ -554,5 +573,5 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 | `docker compose up` says a port is already allocated | Something else uses 8080 or 8000. Set `FRONTEND_PORT` / `BACKEND_PORT` in a `.env` file. |
 | A scenario study answers `503 ... need a database` | Scenario studies are stored in PostgreSQL; start the backend with `DATABASE_URL`. |
 | A study stays at "0 of N scenarios" | The first scenarios are still running (500 vehicles take about 16 s each), or `SCENARIO_WORKERS` processes could not start: check the backend log. |
-| The backend on Render fails with database connection errors about a month after it was set up | Render's free database has expired. See [The database](#the-database). |
+| About a month after it was set up, History and Scenarios say the database is unavailable and `/ready` says `degraded` | Render's free database has expired (the simulation still works). See [The database](#the-database). |
 | Database tests are all skipped | Set `TEST_DATABASE_URL` to a PostgreSQL database whose name contains `test` (it is wiped). |

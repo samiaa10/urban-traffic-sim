@@ -88,7 +88,7 @@ def require_jobs(context):
     if context.database is None or context.jobs is None:
         raise HTTPException(
             status_code=503,
-            detail="Scenario studies need a database (DATABASE_URL is not set)",
+            detail=f"Scenario studies need a database ({context.no_database_reason})",
         )
     return context.jobs
 

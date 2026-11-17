@@ -19,3 +19,6 @@ cache/
 # Virtual environments
 .venv/
 venv/.DS_Store
+
+# Database backups (scripts/backup_database.sh)
+backups/

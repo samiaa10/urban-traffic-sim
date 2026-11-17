@@ -288,7 +288,7 @@ def require_database(context):
     if context.database is None:
         raise HTTPException(
             status_code=503,
-            detail="Saved optimiser results need a database (DATABASE_URL is not set)"
+            detail=f"Saved optimiser results need a database ({context.no_database_reason})"
         )
 
 

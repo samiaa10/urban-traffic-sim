@@ -345,7 +345,7 @@ def restart_simulation(
     if context.database is None:
         raise HTTPException(
             status_code=503,
-            detail="Restarting needs a database (DATABASE_URL is not set)"
+            detail=f"Restarting needs a database ({context.no_database_reason})"
         )
 
     run_uuid = parse_run_id(simulation_id)

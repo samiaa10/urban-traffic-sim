@@ -147,9 +147,13 @@ def test_an_unreachable_database_degrades_the_api_instead_of_stopping_it(graph_f
     assert ready.json()["status"] == "degraded"
     assert "127.0.0.1" not in ready.text and "user" not in ready.json()["detail"]
     # Simulation still works, it just is not saved
-    assert client.post("/simulation/start", params={"start": 0, "destination": 15}).status_code == 200
+    started = client.post("/simulation/start", params={"start": 0, "destination": 15})
+    assert started.status_code == 200
     assert client.post("/simulation/step").status_code == 200
-    assert client.get("/simulations/x/history").status_code in (404, 503)
+    # Saving is off, and the answer says why
+    history = client.get(f"/simulations/{started.json()['simulation_id']}/history/events")
+    assert history.status_code == 503
+    assert "could not be reached" in history.json()["detail"]
 
 
 # ------------------------------------------------------------

@@ -31,7 +31,7 @@ def History(context, simulation_id):
     if context.database is None:
         raise HTTPException(
             status_code=503,
-            detail="History needs a database (DATABASE_URL is not set)"
+            detail=f"History needs a database ({context.no_database_reason})"
         )
 
     run_uuid = parse_run_id(simulation_id)

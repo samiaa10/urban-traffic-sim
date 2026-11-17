@@ -75,6 +75,14 @@ class AppContext:
         # half-built tables.
         self.network_lock = threading.Lock()
 
+    @property
+    def no_database_reason(self):
+        """Why nothing can be saved, for 503 answers."""
+
+        if self.database_error is not None:
+            return "the database could not be reached when the server started"
+        return "DATABASE_URL is not set"
+
     def scenario_world(self):
         """The scenario engine's World for this map (built on first use:
         its own RoadNetwork with landmarks and demand model). Used to check
