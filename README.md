@@ -31,7 +31,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 - **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
 - **Performance engineering.** A grid spatial index for nearest-junction lookups (31x faster, identical answers), distance searches that no longer touch every junction per call (A\* 3.26 to 1.41 ms, now faster than Dijkstra), travel-time landmark bounds that keep speed-limited A\* exact while exploring half the junctions, batched rerouting for vehicles heading to the same place (2.9x per step when trips share destinations), exhaustive station-set search where feasible, parallel candidate searches for large optimiser runs, profiling of the main workloads ([profiling](docs/profiling.md)), and runs of 10,000 vehicles ([traffic benchmark](docs/traffic_benchmark.md)).
 - **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, and dynamic traffic at increasing fleet sizes.
-- **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic tests and frontend interaction tests, plus a Docker Compose smoke test, all run on every push by GitHub Actions.
+- **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic and interaction tests, end-to-end tests in a real browser (Playwright), plus a Docker Compose smoke test, all run on every push by GitHub Actions.
 - **Logging.** The API logs start-up, each emergency dispatch and one line per request (method, path, status, time taken, run ID; as text or JSON) through Python's `logging` module; `LOG_LEVEL` controls how much. The once-a-second polling requests are logged at `DEBUG` only.
 - **Production protections.** Rate limits on expensive requests per visitor, a 2 MB request limit, security headers, `GET /health` (the process is up) and `GET /ready` (and the database answers), runs left unused stopped after 30 minutes, and visitors who never replace each other's runs. If the database cannot be reached at start-up the API still starts and simulates, without saving, and `/ready` reports `degraded`.
 - **Several simulations at once.** Every run has an ID. The original endpoints act on the run started by `/simulation/start`, and every one of them is also available as `/simulations/{id}/...`, so runs can be driven independently (each with its own lock, at most `MAX_LIVE_RUNS` in memory). The web interface uses its run's ID.
@@ -139,7 +139,7 @@ npm run dev
 
 Open the address Vite prints, which should be **`http://localhost:5173`**. Use `localhost`, not `127.0.0.1`: by default the backend only allows cross-origin requests from `http://localhost:5173` (change it with `CORS_ORIGINS`). The frontend calls the backend at `http://127.0.0.1:8000` unless `VITE_API_URL` is set when it is built or started (see `frontend/src/config.ts`).
 
-Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (all frontend tests: `test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run preview`.
+Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (`test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run test:e2e` (Playwright, real browser and backend), `npm run preview`.
 
 ### 6. Optional: save runs in PostgreSQL
 
@@ -231,17 +231,27 @@ npm install        # once, to install the test tools
 npm test           # runs both kinds of test below
 ```
 
-There are two kinds of frontend test:
+There are three kinds of frontend test:
 
 - **Logic tests** (`frontend/tests/`, `npm run test:unit`) use Node's built-in test runner and add no dependencies. They test the logic behind the simulation screen (status messages, traffic summary, route conversion), the optimiser's requests and error handling (with `fetch` replaced by a fake), and the optimiser result tables (rendered to HTML).
-- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 67 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
+- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 91 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
 
-The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
+- **End-to-end tests** (`frontend/e2e/`, `npm run test:e2e`) use Playwright to drive the built website in a real Chromium against the real backend on the real Norwich map: nothing is faked. Playwright starts both servers itself on ports 8002 and 5174, so servers you already have on 8000 and 5173 are left alone. The 16 tests plan a route by clicking the map and watch it run; pause, resume and run at 10x; add a 2,000-vehicle fleet and a rush hour and check the page keeps up; add an accident and a closure on roads picked on the map and clear them; close a road on the route and reroute; send an ambulance, a fire engine and a police car; check two visitors never replace each other's runs; check a destination no road reaches gets the backend's reason; run the optimiser (ranking and a station set); run a scenario study and read its ranking; list saved runs; and check `/health`, `/ready` and the API docs. With `E2E_DATABASE_URL` set to a migrated PostgreSQL database, the study and history tests run (as in CI); without it they are skipped and a test checks the site says why saving is unavailable.
+
+```bash
+cd frontend
+npx playwright install chromium     # once
+npm run test:e2e
+E2E_DATABASE_URL=postgresql://norwich:norwich@localhost:5432/norwich_sim_e2e_test npm run test:e2e
+```
+
+`SCREENSHOTS=1 npx playwright test screenshots` takes the screenshots in `docs/screenshots/` from the real site the same way.
 
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 94) and the interaction tests (`npm run test:ui`, 67), as separate steps;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 117) and the interaction tests (`npm run test:ui`, 91), as separate steps;
+- the end-to-end tests (`npm run test:e2e`) in Chromium against the backend installed from `requirements-deploy.txt`, with a PostgreSQL 16 service container;
 - a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
 ## Benchmarks
@@ -556,7 +566,7 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **The optimiser's fast estimate ignores traffic**, so its ranking is a screen: "Test the optimiser in traffic" (or `run_evaluation`) checks its top answers in full simulations, which take minutes rather than seconds, and Render's free plan is too small for large ones. The screen still assumes a vehicle is always free; only the simulation models busy vehicles.
 - **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser is a heuristic (greedy plus swaps) that is only checked against the true best set for 2 and 3 stations. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.
 - **Python sets the speed limit of the project.** Everything is pure Python apart from numpy in the station-set search, so with 10,000 vehicles a simulated second takes 1.3 s with rerouting (see the traffic benchmark), and the optimiser parallelises only its candidate searches, and only for 200+ candidates.
-- **Frontend tests do not use real Leaflet or a real browser.** The interaction tests run in jsdom with a stand-in for the map, so map rendering, tile loading and real mouse behaviour on the map are not covered. There are no pause or reset buttons, and no authentication.
+- **End-to-end tests use one browser.** They run in Chromium only (not Firefox or Safari) at one desktop size; phone layouts are checked by hand. There is no authentication.
 
 ## Troubleshooting
 

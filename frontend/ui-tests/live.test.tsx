@@ -91,6 +91,27 @@ describe("live controls", () => {
     expect(backend.last("POST /simulation/step")?.query.get("seconds")).toBe("5")
   })
 
+  it("sends one update at a time when the backend is slower than a tick", async () => {
+    const { backend, polling } = await startRun()
+    const before = backend.count("POST /simulation/step")
+
+    // Two ticks while the first update is still being answered
+    await Promise.all([polling.tick(), polling.tick()])
+    expect(backend.count("POST /simulation/step")).toBe(before + 1)
+
+    // Once it is answered, the next tick sends the next one
+    await polling.tick()
+    expect(backend.count("POST /simulation/step")).toBe(before + 2)
+  })
+
+  it("shows the simulated time each update reports", async () => {
+    const { polling, user, panel } = await startRun()
+    await user.selectOptions(within(panel).getByRole("combobox", { name: "Simulation speed" }), "10")
+    await polling.tick()
+    await polling.tick()
+    expect(await screen.findByText(/Simulation time: 20 s/)).toBeTruthy()
+  })
+
   it("adds a fleet and starts a rush hour", async () => {
     const { backend, user, panel } = await startRun()
     await user.selectOptions(within(panel).getByRole("combobox", { name: "Fleet size" }), "500")

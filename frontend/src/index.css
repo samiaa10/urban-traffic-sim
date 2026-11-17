@@ -436,6 +436,12 @@ a {
   gap: 12px;
 }
 
+/* A button beside a labelled control lines up with the control, at its
+   own height (not stretched to the label and control together) */
+.fields > .btn {
+  align-self: end;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -1546,6 +1552,7 @@ a {
   display: flex;
   flex-direction: column;
   gap: 12px;
+  padding: var(--pad) 24px 24px;
   scroll-margin-top: calc(var(--topbar-h) + var(--gap));
 }
 

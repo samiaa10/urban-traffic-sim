@@ -225,15 +225,16 @@ describe("when the backend fails", () => {
 
     await user.click(calculateButton())
 
+    // The backend's reason, not a guess that it is not running
     expect(
-      await screen.findByText("Could not calculate route. Is the backend running?")
+      await screen.findByText("Could not calculate route: No route found")
     ).toBeTruthy()
     expect(backend.count("POST /simulation/start")).toBe(0)
     expect(polling.running()).toBe(0)
     expect(screen.queryByText(/Route: /)).toBeNull()
   })
 
-  it("shows the same error when the backend cannot be reached at all", async () => {
+  it("asks whether the backend is running when it cannot be reached at all", async () => {
     mockBackend({
       ...workingBackend(),
       "GET /nearest-node": new TypeError("Failed to fetch"),
@@ -264,7 +265,7 @@ describe("when the backend fails", () => {
     await user.click(calculateButton())
 
     expect(
-      await screen.findByText("Could not calculate route. Is the backend running?")
+      await screen.findByText("Could not start the simulation: boom")
     ).toBeTruthy()
     expect(polling.running()).toBe(0)
     expect(screen.queryByText(/Route: /)).toBeNull()

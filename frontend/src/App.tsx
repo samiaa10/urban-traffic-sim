@@ -282,9 +282,19 @@ function App() {
     setPaused(false)
     setConnectionLost(false)
 
+    // One update at a time: a busy run (thousands of vehicles at 10x) can
+    // take longer than a tick to step, and sending more steps while one is
+    // still being answered would only queue them behind the run's lock, so
+    // the page fell further and further behind. Ticks that come while an
+    // update is in flight are skipped: the page goes as fast as the
+    // backend can answer, and no faster.
+    let inFlight = false
+
     simulationInterval.current =
       window.setInterval(
         async () => {
+          if (inFlight) return
+          inFlight = true
           try {
             const response = await fetch(
               runUrl("/simulation/step", "/step") + stepQuery(speedRef.current),
@@ -300,6 +310,9 @@ function App() {
             const stepData = await response.json()
 
             setVehicles(stepData.vehicles)
+            if (typeof stepData.simulation_time === "number") {
+              setSimulationTime(stepData.simulation_time)
+            }
 
             // The live charts' next sample
             if (stepData.summary) {
@@ -337,9 +350,11 @@ function App() {
                 const statusData = await statusResponse.json()
                 const emergencies = statusData.emergencies ?? []
 
-                setSimulationTime(
-                  statusData.simulation_time ?? null
-                )
+                // The step's own time is newer; this only fills in for
+                // a backend whose steps do not report it
+                if (typeof stepData.simulation_time !== "number") {
+                  setSimulationTime(statusData.simulation_time ?? null)
+                }
 
                 setEmergencyStatus(
                   emergencies.length > 0
@@ -357,6 +372,8 @@ function App() {
           } catch {
             stopSimulationPolling()
             setConnectionLost(true)
+          } finally {
+            inFlight = false
           }
         },
         1000
@@ -440,7 +457,7 @@ function App() {
       const data = await routeResponse.json()
 
       if (!routeResponse.ok) {
-        throw new Error("Could not calculate route")
+        throw new Error(`Could not calculate route: ${data.detail ?? "no route between these points"}`)
       }
 
       // Convert backend coordinates into Leaflet coordinates
@@ -478,7 +495,7 @@ function App() {
         await simulationResponse.json()
 
       if (!simulationResponse.ok) {
-        throw new Error("Could not start simulation")
+        throw new Error(`Could not start the simulation: ${simulationData.detail ?? "the backend refused"}`)
       }
 
       // Later requests name this run, so they reach it even if another
@@ -511,8 +528,14 @@ function App() {
         nodesExplored: data.nodes_explored,
       })
       setResult("")
-    } catch {
-      setResult("Could not calculate route. Is the backend running?")
+    } catch (caught) {
+      // The backend answered with a reason (no route, too many runs, ...):
+      // show it. No answer at all (fetch failed): it may not be running.
+      setResult(
+        caught instanceof Error && caught.message.startsWith("Could not ")
+          ? caught.message
+          : "Could not calculate route. Is the backend running?"
+      )
     }
   }
 

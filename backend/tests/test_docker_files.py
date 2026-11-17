@@ -324,6 +324,21 @@ def test_ci_job_names_are_unchanged(workflow):
     assert jobs["frontend"]["name"] == "frontend (lint, build and test)"
 
 
+def test_ci_runs_the_end_to_end_tests_in_a_real_browser(workflow):
+    job = workflow["jobs"]["e2e"]
+    commands = steps_text(job)
+
+    # The real backend (as deployed) on a real, migrated PostgreSQL
+    assert job["services"]["postgres"]["image"].startswith("postgres:16")
+    assert "pip install -r requirements-deploy.txt" in commands
+    assert "alembic upgrade head" in commands
+    assert "E2E_DATABASE_URL" in job["env"]
+
+    assert "npx playwright install --with-deps chromium" in commands
+    assert "npm run test:e2e" in commands
+    assert (ROOT / "frontend" / "playwright.config.ts").is_file()
+
+
 def test_scenario_workers_are_set_in_compose(compose):
     """Scenario studies run in worker processes inside the backend
     container; Compose sets how many (and Docker must allow them)."""
