@@ -139,11 +139,27 @@ export async function requestJson<T>(
 
 export const SCENARIOS = 500
 
+// Which service and where emergencies happen (backend services.py and
+// population.py). The defaults (ambulance at the original 20 m/s and 8
+// minutes, emergencies anywhere) send exactly the original request.
+export type OptimiserOptions = {
+  service?: "ambulance" | "fire" | "police"
+  distribution?: "uniform" | "population"
+}
+
+export function optionQuery({ service, distribution }: OptimiserOptions = {}): string {
+  return (
+    (service && service !== "ambulance" ? `&service=${service}` : "") +
+    (distribution === "population" ? "&distribution=population" : "")
+  )
+}
+
 export function fetchRanking(
-  fetchImpl?: FetchLike
+  fetchImpl?: FetchLike,
+  options: OptimiserOptions = {}
 ): Promise<OptimiserResponse> {
   return requestJson<OptimiserResponse>(
-    `/optimiser/stations?scenarios=${SCENARIOS}`,
+    `/optimiser/stations?scenarios=${SCENARIOS}${optionQuery(options)}`,
     fetchImpl
   )
 }
@@ -151,11 +167,12 @@ export function fetchRanking(
 export function fetchStationSet(
   stations: number,
   targetMinutes: number,
-  fetchImpl?: FetchLike
+  fetchImpl?: FetchLike,
+  options: OptimiserOptions = {}
 ): Promise<StationSetResponse> {
   return requestJson<StationSetResponse>(
     `/optimiser/station-set?stations=${stations}` +
-      `&scenarios=${SCENARIOS}&target_seconds=${targetMinutes * 60}`,
+      `&scenarios=${SCENARIOS}&target_seconds=${targetMinutes * 60}${optionQuery(options)}`,
     fetchImpl
   )
 }
