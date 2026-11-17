@@ -23,6 +23,7 @@ Measured on the real Norwich network (5,058 junctions, 10,980 roads); each figur
 | Rerouting after a closure | re-planning only affected vehicles is 3.9x faster than re-planning all 1,000 ([report](docs/rerouting_benchmark.md)) |
 | Station optimiser | the best 3-station set reaches 99.6% of emergencies within 4 minutes, against 84.6% for random sets; exhaustive search over up to 2 million sets ([details](#emergency-station-optimiser)) |
 | Scenarios at scale | 400 full simulations in 21.5 minutes on 4 worker processes ([report](docs/scenario_benchmark.md)) |
+| Through the API | 1,197 requests a second; a step of 2,000 vehicles in 219 ms (4.6x faster than real time); 8 visitors at once each still faster than real time ([report](docs/api_benchmark.md)) |
 | Tests | 833 backend tests (127 of them on a real PostgreSQL), 118 frontend logic tests, 92 interaction tests and 16 end-to-end tests in a real browser; 5 CI jobs on every push |
 
 ## How it fits together
@@ -124,7 +125,7 @@ See the [demo guide](docs/DEMO.md) to try it yourself.
 - **Logging.** The API logs start-up, each emergency dispatch and one line per request (method, path, status, time taken, run ID; as text or JSON) through Python's `logging` module; `LOG_LEVEL` controls how much. The once-a-second polling requests are logged at `DEBUG` only.
 - **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
 - **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic and interaction tests, end-to-end tests in a real browser (Playwright), plus a Docker Compose smoke test, all run on every push by GitHub Actions.
-- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, and dynamic traffic at increasing fleet sizes.
+- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, dynamic traffic at increasing fleet sizes, scenario studies, persistence, and the whole API under load (throughput, latency, several visitors, memory).
 
 ## Tech stack
 
@@ -444,6 +445,25 @@ Same graph, seed 1, 500 random emergencies, 20 m/s, with a 4 minute target (`pyt
 How the set is chosen (optimiser version 2): where there are up to 2 million possible sets, every one is scored in bulk with numpy, so the answer is the best there is (all 501,942 sets of 5 from the 38 candidates take about 1.5 s). Before, greedy picking plus swaps was used; checked against every set on 5 seeds it found the best 4- and 5-station sets 7 times in 10 but missed by 1.2%, 2.2% and 0.01% the other times, which is why exhaustive search replaced it. Larger searches use greedy plus swaps from 12 extra random starting sets. (Greedy alone was 8% and 11% worse than the best 2- and 3-station sets.)
 
 With the default 8 minute target even one station reaches 99.6% of emergencies, because the model has no traffic and Norwich is compact, so coverage only separates the options at tighter targets (3 to 5 minutes). The 2 unreached emergencies can only be reached from 1 of the 38 candidates (probably because of one-way roads), and the chosen set does not include it, so they appear in every row.
+
+### Through the API: throughput, latency and memory
+
+```bash
+python -m backend.perf.api_benchmark --save
+```
+
+Starts the backend as deployed (uvicorn, one worker, the Norwich map, osm traffic) on port 8003 and measures it through HTTP, as a client sees it. Full results in [`docs/api_benchmark.md`](docs/api_benchmark.md) (2026-11-17, Python 3.9.6, macOS on Apple M1; timings depend on the machine):
+
+| Measurement | Result |
+|---|---|
+| Request overhead (`GET /health`) | 0.84 ms; 1,197 requests a second from one client, 2,293 from 8 at once |
+| `GET /route` across central Norwich | 2.6 ms mean, 5.9 ms p95 |
+| A step of a run with 502 vehicles | 47 ms at 1x (21x faster than real time), 116 ms at 5x |
+| A step of a run with 2,002 vehicles | 219 ms at 1x (4.6x real time), 777 ms at 5x (6.4x) |
+| 8 visitors with 502 vehicles each, stepping at once | 20.8 steps a second in total (about 20 for one run alone): each run gets 2.6 a second, still faster than real time |
+| Memory | 105 MB with the map loaded; about 8 MB more per 500-vehicle run |
+
+Because the backend is one process, simultaneous visitors share one core: total throughput stays the same and is divided between them.
 
 ### Persistence
 
