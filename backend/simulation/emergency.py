@@ -30,6 +30,9 @@ class Emergency:
         # emergency waited in the queue, see services.py)
         self.dispatched_at = None
 
+        # Why it was refused, if it was: "no_vehicle" or "no_route"
+        self.cancel_reason = None
+
     def resolve(self, resolved_time):
         self.resolved_at = resolved_time
         self.response_time = resolved_time - self.created_at

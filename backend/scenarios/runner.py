@@ -317,7 +317,9 @@ def run_scenario(world, spec, progress=None, measure=True):
         # 4. Stop when nothing is left to happen
         trips_done = tracker.all_finished
         emergencies_done = all(
-            e["status"] not in ("dispatched", "queued") or e["emergency"].resolved
+            e["status"] not in ("dispatched", "queued")
+            or e["emergency"].resolved
+            or e["emergency"].cancel_reason is not None
             for e in emergencies
         )
         if (
@@ -368,7 +370,12 @@ def _emergency_figures(entries, requested, target_of):
     return {
         "requested": requested,
         "dispatched": sum(1 for e in entries if _sent(e)),
-        "refused": sum(1 for e in entries if e["status"] in ("no_vehicle", "no_route")),
+        # Refused at once, or later from the queue (no station could reach it)
+        "refused": sum(
+            1 for e in entries
+            if e["status"] in ("no_vehicle", "no_route")
+            or (e["status"] == "queued" and e["emergency"].cancel_reason is not None)
+        ),
         "arrived": len(responses),
         "mean_response_seconds": float(sum(responses) / len(responses)) if responses else None,
         "worst_response_seconds": float(max(responses)) if responses else None,
@@ -406,6 +413,7 @@ def summarise_emergencies(spec, emergencies):
         "still_queued": sum(
             1 for e in emergencies
             if e["status"] == "queued" and e["emergency"].assigned_vehicle is None
+            and e["emergency"].cancel_reason is None
         ),
         "mean_wait_seconds": float(sum(waits) / len(waits)) if waits else None,
         "max_wait_seconds": float(max(waits)) if waits else None,

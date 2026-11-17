@@ -280,6 +280,15 @@ class RunRecorder:
             self.emergency_ids[emergency] = row.id
             self.queued.remove(emergency)
 
+        # Queued emergencies refused since (no station can reach them now)
+        for emergency in [e for e in self.queued if e.cancel_reason is not None]:
+            repo.cancel_emergency(
+                run_id, emergency.emergency_type,
+                emergency.latitude, emergency.longitude, emergency.created_at,
+                emergency.cancel_reason,
+            )
+            self.queued.remove(emergency)
+
         for emergency in [e for e in self.emergency_ids if e.resolved]:
             vehicle = emergency.assigned_vehicle
             repo.emergency_arrived(

@@ -100,3 +100,20 @@ def test_in_a_simple_run_nothing_free_is_still_refused(graph_file):
 
     assert client.post("/emergency/create", params={"latitude": lat, "longitude": lon}).status_code == 200
     assert client.post("/emergency/create", params={"latitude": lat, "longitude": lon}).status_code == 404
+
+
+def test_in_an_osm_run_an_unreachable_emergency_is_404_and_the_vehicle_stays_free(graph_file):
+    """The pre-Stage 5 behaviour (test_api.py) holds with the osm model too."""
+
+    client = client_for(graph_file, "osm")
+    lat, lon = corner(client, 0)
+    client.post("/station/create", params={"latitude": lat, "longitude": lon})
+    client.post("/station/add-vehicle", params={"station_id": 0})
+    island = corner(client, 99)
+
+    response = client.post("/emergency/create", params={"latitude": island[0], "longitude": island[1]})
+
+    assert response.status_code == 404
+    assert "No route" in response.json()["detail"]
+    far = corner(client, 15)
+    assert client.post("/emergency/create", params={"latitude": far[0], "longitude": far[1]}).status_code == 200

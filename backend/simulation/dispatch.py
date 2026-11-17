@@ -135,15 +135,52 @@ def _send(simulation, network, emergency, traffic):
     return vehicle, path, seconds, explored
 
 
+def _reachable(simulation, network, emergency):
+    """Whether any station of the emergency's service can drive to it at
+    all, with the roads closed now (traffic does not matter: it only
+    slows vehicles). If none can, waiting for a vehicle would be forever."""
+
+    graph = network.graph
+    target = nearest_junction(graph, emergency.latitude, emergency.longitude)
+    blocked = simulation.get_blocked_segments()
+    starts = {
+        nearest_junction(graph, station.latitude, station.longitude)
+        for station in simulation.stations
+        if station.station_type == emergency.emergency_type
+    }
+
+    return any(
+        network.fastest_path(start, target, 1.0, blocked_segments=blocked)[0]
+        for start in starts
+    )
+
+
+def _refuse(simulation, emergency, reason):
+    emergency.cancel_reason = reason
+    simulation.cancel_emergency(emergency)
+
+
 def _dispatch_by_drive_time(graph, simulation, emergency):
     network = simulation.road_model.network
     vehicle, path, _, explored = _send(simulation, network, emergency, simulation.get_traffic_density())
     outcome = {"emergency": emergency, "vehicle": vehicle, "vehicle_index": None}
 
     if vehicle is None:
-        if simulation.emergency_rules.queue and _has_service(simulation, emergency.emergency_type):
+        if not _has_service(simulation, emergency.emergency_type):
+            _refuse(simulation, emergency, "no_vehicle")
+            return {**outcome, "status": "no_vehicle"}
+
+        # No station of the service can reach it: refused, as the original
+        # rules do, rather than queued for ever
+        if not _reachable(simulation, network, emergency):
+            _refuse(simulation, emergency, "no_route")
+            return {**outcome, "status": "no_route"}
+
+        # Some vehicle could reach it, but none of those is free: it waits
+        if simulation.emergency_rules.queue:
             return {**outcome, "status": "queued"}
-        simulation.cancel_emergency(emergency)
+
+        _refuse(simulation, emergency, "no_vehicle")
         return {**outcome, "status": "no_vehicle"}
 
     return {
@@ -170,8 +207,10 @@ def _has_service(simulation, service):
 def after_step(simulation):
     """The realistic emergency rules' work after each simulated second
     (services.py): send vehicles that finished a call home, park the ones
-    that got there, and answer queued emergencies, oldest first. Returns
-    the emergencies dispatched from the queue."""
+    that got there, and answer queued emergencies, oldest first. A queued
+    emergency no station can reach any more (a road closed) is refused
+    with cancel_reason "no_route". Returns the emergencies dispatched from
+    the queue."""
 
     rules = simulation.emergency_rules
     if not (rules.queue or rules.drive_back):
@@ -210,6 +249,15 @@ def after_step(simulation):
             vehicle = _send(simulation, network, emergency, traffic)[0]
             if vehicle is not None:
                 dispatched.append(emergency)
+                continue
+
+            # Re-check whether any station can still reach it, but only
+            # when roads have closed or reopened since the last check
+            changes = len(simulation.events)
+            if getattr(emergency, "reach_checked_at", None) != changes:
+                emergency.reach_checked_at = changes
+                if not _reachable(simulation, network, emergency):
+                    _refuse(simulation, emergency, "no_route")
 
     return dispatched
 
@@ -242,6 +290,8 @@ def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="a
     vehicle = simulation.dispatch_from_nearest_station(emergency)
     if vehicle is not None:
         emergency.dispatched_at = simulation.time
+    else:
+        emergency.cancel_reason = "no_vehicle"
 
     outcome = {"emergency": emergency, "vehicle": vehicle, "vehicle_index": None}
 
@@ -273,6 +323,7 @@ def dispatch_emergency(graph, simulation, latitude, longitude, emergency_type="a
     vehicle_index = simulation.vehicles.index(vehicle)
 
     if not path:
+        emergency.cancel_reason = "no_route"
         simulation.cancel_emergency(emergency)
         return {**outcome, "status": "no_route", "vehicle_index": vehicle_index}
 
