@@ -342,3 +342,28 @@ def test_the_traffic_model_is_set_in_compose(compose):
 
     assert environment["TRAFFIC_MODEL"] == "${TRAFFIC_MODEL:-osm}"
     assert "TRAFFIC_MODEL" in text("backend/api/main.py")
+
+
+def test_the_backend_container_is_checked_through_its_health_endpoint():
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
+
+    assert "http://127.0.0.1:8000/health" in dockerfile
+
+
+def test_nginx_passes_only_the_visitors_own_address(compose):
+    conf = (ROOT / "frontend" / "nginx.conf").read_text()
+
+    # Not $proxy_add_x_forwarded_for, which keeps what the browser sent
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in conf
+    assert compose["services"]["backend"]["environment"]["TRUST_PROXY"] == "true"
+
+
+def test_nginx_sends_security_headers_in_every_location():
+    conf = (ROOT / "frontend" / "nginx.conf").read_text()
+    blocks = conf.split("location ")
+
+    # nginx drops server-level add_header in a location with its own
+    for block in blocks[1:]:
+        if "add_header" in block:
+            assert 'X-Content-Type-Options "nosniff" always' in block
+            assert 'X-Frame-Options "DENY" always' in block

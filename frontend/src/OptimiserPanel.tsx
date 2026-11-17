@@ -127,7 +127,10 @@ export function OptimiserPanel({
   setData,
   onSetResults,
   onLoadingChange,
+  simulationId,
 }: {
+  // The visitor's run: the optimiser plans around ITS closed roads
+  simulationId?: () => string | null
   data: OptimiserResponse | null
   onResults: (data: OptimiserResponse | null) => void
   setData: StationSetResponse | null
@@ -142,7 +145,8 @@ export function OptimiserPanel({
   const [targetMinutes, setTargetMinutes] = useState(8)
   const [service, setService] = useState<"ambulance" | "fire" | "police">("ambulance")
   const [distribution, setDistribution] = useState<"uniform" | "population">("uniform")
-  const options = { service, distribution }
+  // Read when a search starts, so it names the run running then
+  const options = () => ({ service, distribution, simulationId: simulationId?.() ?? null })
 
   useEffect(() => {
     onLoadingChange?.(loading !== null)
@@ -153,7 +157,7 @@ export function OptimiserPanel({
     setError("")
 
     try {
-      onResults(await fetchRanking(undefined, options))
+      onResults(await fetchRanking(undefined, options()))
     } catch (caught) {
       setError(describeFailure(caught))
     } finally {
@@ -166,7 +170,7 @@ export function OptimiserPanel({
     setError("")
 
     try {
-      onSetResults(await fetchStationSet(stationCount, targetMinutes, undefined, options))
+      onSetResults(await fetchStationSet(stationCount, targetMinutes, undefined, options()))
     } catch (caught) {
       setError(describeFailure(caught))
     } finally {

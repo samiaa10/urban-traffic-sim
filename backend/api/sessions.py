@@ -89,11 +89,14 @@ class LiveRun:
 class RunRegistry:
     """The live runs, by ID, plus which one is the default."""
 
-    def __init__(self, max_live=8):
+    def __init__(self, max_live=8, idle_seconds=None):
         if max_live < 1:
             raise ValueError("max_live must be at least 1")
 
         self.max_live = max_live
+        # Runs unused for longer than this are stopped when a run is added
+        # (None: only when the live-run limit needs the room)
+        self.idle_seconds = idle_seconds
         self._runs = {}
         self._default_id = None
 
@@ -115,6 +118,15 @@ class RunRegistry:
         stopped = []
 
         with self._lock:
+            if self.idle_seconds:
+                now = time.monotonic()
+                for idle in [r for r in self._runs.values() if now - r.last_used > self.idle_seconds]:
+                    del self._runs[idle.id]
+                    if idle.id == self._default_id:
+                        self._default_id = None
+                    stopped.append((idle, "stopped"))
+                    logger.info("Stopped simulation %s: unused for over %d s", idle.id, self.idle_seconds)
+
             if make_default and self._default_id is not None:
                 previous = self._runs.pop(self._default_id, None)
                 if previous is not None:

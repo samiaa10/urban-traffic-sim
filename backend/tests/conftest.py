@@ -10,3 +10,8 @@ for it explicitly (test_road_model.py, and traffic_model=osm requests).
 import os
 
 os.environ.setdefault("TRAFFIC_MODEL", "simple")
+
+# The server limits expensive requests per client (RATE_LIMIT_PER_MINUTE,
+# default 30); the tests make many from one client, so the limit is off
+# here and tested on its own (test_protection.py)
+os.environ.setdefault("RATE_LIMIT_PER_MINUTE", "0")

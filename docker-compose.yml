@@ -72,6 +72,11 @@ services:
       # The frontend reaches the API through its own nginx (same address),
       # so browsers only need CORS for direct use of port 8000
       CORS_ORIGINS: http://localhost:${FRONTEND_PORT:-8080}
+      # nginx sets X-Forwarded-For to the visitor's address (rate limits)
+      TRUST_PROXY: "true"
+      RATE_LIMIT_PER_MINUTE: ${RATE_LIMIT_PER_MINUTE:-30}
+      RUN_IDLE_MINUTES: ${RUN_IDLE_MINUTES:-30}
+      LOG_FORMAT: ${LOG_FORMAT:-text}
     # One container, one worker: live runs are kept in its memory
     # (see backend/Dockerfile). Do not scale this service.
     ports:

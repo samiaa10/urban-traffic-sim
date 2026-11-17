@@ -81,7 +81,8 @@ backend/
 │   ├── context.py              AppContext: graph, RoadNetwork, optimiser candidates, run registry, database (shared, read-only)
 │   ├── sessions.py             LiveRun (a simulation + traffic manager + lock + recorder) and RunRegistry (runs by ID)
 │   ├── recorder.py             RunRecorder: saves a live run's history to the database (NullRecorder without one)
-│   ├── settings.py             Reads CORS_ORIGINS, LOG_LEVEL, MAX_LIVE_RUNS, DATABASE_URL (no FastAPI, so testable on its own)
+│   ├── settings.py             Reads CORS_ORIGINS, LOG_LEVEL, MAX_LIVE_RUNS, DATABASE_URL, the rate limit and proxy settings (no FastAPI, so testable on its own)
+│   ├── protection.py           Rate limits, request size limit, request log, security headers
 │   └── routes/                 The endpoints, one file per area:
 │       ├── common.py           Finding a request's run (default or by ID), run_route (registers both paths), junction checks
 │       ├── routing.py          /, /nearest-node, /route
@@ -359,6 +360,19 @@ The report, per candidate and demand level: the simulated mean (95% interval ove
 
 `basicConfig` does nothing if logging is already set up (pytest's `caplog` relies on this), and uvicorn's own request logs keep uvicorn's format. The command-line tools (benchmarks, the optimiser CLI and `Simulation.run`'s demo) still `print`, because printing a report to the terminal is their job.
 
+### Running in public (`api/protection.py`)
+
+The deployed API is open to anyone, so one middleware, in-process like the runs themselves (no extra service), adds:
+
+- **Rate limits** on requests that cost real CPU time: starting runs, fleets and surges, the optimiser, scenario studies and evaluations. Each visitor has a token bucket of `RATE_LIMIT_PER_MINUTE` (default 30), refilled evenly; over it they get `429` with `Retry-After`. Stepping, status and history are never limited, so the once-a-second polling is unaffected. Behind a proxy (`TRUST_PROXY=true`) the visitor is the first address in `X-Forwarded-For`; the Docker nginx sets that header to the visitor's own address only, so a browser cannot choose it.
+- **A 2 MB request limit** (`413`); a 1,000-scenario study is about 0.5 MB.
+- **Security headers** (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on every answer; nginx and the Render static site send the same for the website.
+- **One log line per request** (method, path, status, milliseconds, run ID), as text or `LOG_FORMAT=json`. The polling requests are logged at `DEBUG`.
+
+**Health.** `GET /health` answers `200` while the process is up; Render and the Docker health check use it. `GET /ready` also checks the database (`SELECT 1`) and answers `503 degraded` when it cannot be reached. These are separate on purpose: a database outage should not make Render restart an API that can still simulate.
+
+**Starting without the database.** If `DATABASE_URL` is set but the database cannot be reached at start-up, the API logs the error and starts anyway with persistence off (runs show `recording: off`, history endpoints answer 503, `/ready` says why). Restarting the API once the database is back turns saving on again. A database that is reachable but has an out-of-date schema still stops start-up: that is a deployment mistake, not an outage.
+
 ## Persistence
 
 Stage 3 added two things: **simulation runs with their own IDs**, so several can run independently, and **PostgreSQL persistence**, so what happened in a run, and every optimiser result, survives a restart. Persistence is optional: with no `DATABASE_URL` the API behaves exactly as it did before Stage 3, and the history endpoints answer 503.
@@ -371,10 +385,10 @@ Before Stage 3 the API kept one `Simulation` and one `TrafficManager` in module-
 - The **`RunRegistry`** keeps the live runs by ID and knows which one is the **default run**: the one most recently started with `/simulation/start`.
 - Every endpoint that acts on a run is registered twice by `run_route` (`routes/common.py`): at its original path (`/simulation/step`, `/incident/block`, ...), where it acts on the default run, and under `/simulations/{simulation_id}/...`, where it acts on the named run. It is the same handler function either way; only the dependency that finds the run differs. So existing clients and tests keep working, and `/simulation/start` still replaces the previous default run, as the single global simulation used to be replaced. `POST /simulations` starts a run that is *not* the default and replaces nothing.
 - **Locking.** FastAPI runs these endpoints on a thread pool, so the frontend's polling and a user's action could change the same simulation at once (that was already possible before Stage 3). Every handler holds `run.lock` while it reads or changes the run. Different runs never wait for each other. The shared `RoadNetwork` is read-only, except that it builds its landmark tables the first time a traffic manager is created, by emptying and refilling them, so traffic managers are created one at a time (`AppContext.network_lock`).
-- **Memory.** Each live run can hold thousands of vehicles, so at most `MAX_LIVE_RUNS` (default 8) are kept. Starting one more stops the run that has been idle longest.
+- **Memory.** Each live run can hold thousands of vehicles, so at most `MAX_LIVE_RUNS` (default 8) are kept. Starting one more stops the run that has been idle longest, and runs nobody has used for `RUN_IDLE_MINUTES` (default 30) are stopped whenever a run starts.
 - **One process.** Live runs exist in one process's memory, so the backend must run as a single worker (`uvicorn ... --workers 1`, as in the Dockerfile and on Render). Saved history is in PostgreSQL and could be read by any number of processes.
 
-The frontend keeps the `simulation_id` that `/simulation/start` returns and sends every request about the running simulation to `/simulations/{id}/...` (`runPath` in `simulationHelpers.ts`), so its requests reach its own run even if someone else starts another. With an older backend that returns no ID it falls back to the original paths.
+The frontend starts its run with `/simulation/start?replace_default=false`, so a visitor never replaces somebody else's run (without it, the original behaviour stays: the previous default run is replaced). It keeps the `simulation_id` that `/simulation/start` returns and sends every request about the running simulation to `/simulations/{id}/...` (`runPath` in `simulationHelpers.ts`), so its requests reach its own run even if someone else starts another. With an older backend that returns no ID it falls back to the original paths.
 
 ### What is saved, and when
 

@@ -20,6 +20,10 @@ from backend.api.settings import (
     resume_studies,
     scenario_workers,
     traffic_model,
+    rate_limit_per_minute,
+    trust_proxy,
+    log_format,
+    run_idle_minutes,
 )
 
 
@@ -62,6 +66,13 @@ app = create_app(
     resume_studies=resume_studies(os.environ.get("RESUME_STUDIES")),
     # How roads behave in new runs and scenarios (default osm)
     traffic_model=traffic_model(os.environ.get("TRAFFIC_MODEL")),
+    # Expensive requests per client per minute (default 30; 0 = off), and
+    # whether to trust X-Forwarded-For for the client's address
+    rate_limit_per_minute=rate_limit_per_minute(os.environ.get("RATE_LIMIT_PER_MINUTE")),
+    trust_proxy=trust_proxy(os.environ.get("TRUST_PROXY")),
+    log_format=log_format(os.environ.get("LOG_FORMAT")),
+    # Stop live runs nobody has used for this long (default 30; 0 = never)
+    run_idle_minutes=run_idle_minutes(os.environ.get("RUN_IDLE_MINUTES")),
 )
 
 context = app.state.context

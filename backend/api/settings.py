@@ -185,6 +185,59 @@ def traffic_model(value):
     )
 
 
+def _whole_number(name, value, default, low, high):
+    if value is None or not value.strip():
+        return default
+    try:
+        number = int(value.strip())
+    except ValueError:
+        raise ValueError(f"{name} must be a whole number: {value}") from None
+    if not low <= number <= high:
+        raise ValueError(f"{name} must be between {low} and {high}: {value}")
+    return number
+
+
+def rate_limit_per_minute(value):
+    """RATE_LIMIT_PER_MINUTE: expensive requests (starting runs, fleets,
+    surges, the optimiser, studies) each client may make per minute
+    (api/protection.py). Not set: 30. 0 turns the limit off."""
+
+    return _whole_number("RATE_LIMIT_PER_MINUTE", value, 30, 0, 100_000)
+
+
+def run_idle_minutes(value):
+    """RUN_IDLE_MINUTES: a live run nobody has used for this long is
+    stopped (its history is kept), freeing its memory. Not set: 30.
+    0 keeps idle runs until the live-run limit needs the room."""
+
+    return _whole_number("RUN_IDLE_MINUTES", value, 30, 0, 7 * 24 * 60)
+
+
+def trust_proxy(value):
+    """TRUST_PROXY: take the client's address from X-Forwarded-For (set it
+    behind Render's proxy or the Docker nginx). Not set: no."""
+
+    if value is None or not value.strip():
+        return False
+    text = value.strip().lower()
+    if text in ("1", "true", "yes", "on"):
+        return True
+    if text in ("0", "false", "no", "off"):
+        return False
+    raise ValueError("TRUST_PROXY must be true or false: " + value)
+
+
+def log_format(value):
+    """LOG_FORMAT: "text" (default) or "json" for the request log."""
+
+    if value is None or not value.strip():
+        return "text"
+    text = value.strip().lower()
+    if text in ("text", "json"):
+        return text
+    raise ValueError("LOG_FORMAT must be text or json: " + value)
+
+
 DEFAULT_MAX_STUDY_SCENARIOS = 1000
 
 

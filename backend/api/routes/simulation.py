@@ -133,16 +133,23 @@ def start_simulation(
     start: int,
     destination: int,
     traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
+    replace_default: bool = Query(
+        True,
+        description="false: start the run without making it the default, so it "
+        "replaces nobody else's (the website does this and uses the run's id)",
+    ),
     context: AppContext = Depends(get_context)
 ):
     """Start a run and make it the default (the previous default stops).
 
     The original endpoints (/simulation/step and so on) act on this run.
     The answer includes its simulation_id for the /simulations/... ones.
+    With replace_default=false the run is started on its own, like POST
+    /simulations: several visitors can then each have a run.
     """
 
     run, details = build_run(context, start, destination, traffic_model=traffic_model)
-    add_run(context, run, make_default=True)
+    add_run(context, run, make_default=replace_default)
 
     logger.info("Simulation %s started (%s -> %s)", run.id, start, destination)
 

@@ -467,7 +467,8 @@ function App() {
 
       const simulationResponse = await fetch(
         `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}` +
-          `&traffic_model=${trafficModel}`,
+          // Its own run, replacing nobody else's (every later request names it)
+          `&traffic_model=${trafficModel}&replace_default=false`,
         {
           method: "POST",
         }
@@ -1255,6 +1256,7 @@ function App() {
             setData={stationSet}
             onSetResults={setStationSet}
             onLoadingChange={setOptimiserLoading}
+            simulationId={() => simulationId.current}
           />
         </aside>
 

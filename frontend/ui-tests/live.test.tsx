@@ -14,6 +14,8 @@ import {
   clickMap,
   controlPolling,
   mockBackend,
+  rankingAnswer,
+  withRunIds,
   workingBackend,
   type Backend,
 } from "./helpers.ts"
@@ -134,5 +136,26 @@ describe("live charts", () => {
     expect(within(section).getByText("40 driving, 10 held up, average speed 75% of free flow, 5 arrived")).toBeTruthy()
     expect(within(section).getByRole("img", { name: /Vehicles driving over/ })).toBeTruthy()
     expect(within(section).getByText("320 s")).toBeTruthy()
+  })
+})
+
+describe("each visitor's own run", () => {
+  it("starts a run that replaces nobody else's, and the optimiser plans around its roads", async () => {
+    const backend = mockBackend({
+      ...withRunIds(liveBackend(), "mine"),
+      "GET /optimiser/stations": { body: rankingAnswer(5) },
+    })
+    controlPolling()
+    const user = userEvent.setup()
+    render(<App />)
+    clickMap(START)
+    clickMap(DESTINATION)
+    await user.click(screen.getByRole("button", { name: /Calculate Route/ }))
+    await screen.findByText(/Route: /)
+
+    expect(backend.last("POST /simulation/start")?.query.get("replace_default")).toBe("false")
+
+    await user.click(screen.getByRole("button", { name: "Find best ambulance station locations" }))
+    expect(backend.last("GET /optimiser/stations")?.query.get("simulation_id")).toBe("mine")
   })
 })

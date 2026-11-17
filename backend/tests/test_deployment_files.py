@@ -123,3 +123,35 @@ def test_backend_runs_studies_in_process_on_the_small_free_service(blueprint):
 
     assert item["value"] == "0"
     assert "SCENARIO_WORKERS" in (ROOT / "backend/api/main.py").read_text()
+
+
+def test_render_checks_the_api_through_its_health_endpoint(blueprint):
+    api = service(blueprint, "norwich-sim-api")
+
+    assert api["healthCheckPath"] == "/health"
+    assert '@router.get("/health")' in (ROOT / "backend/api/routes/routing.py").read_text()
+
+
+def test_render_deploys_only_commits_whose_checks_passed(blueprint):
+    for name in ("norwich-sim-api", "norwich-sim"):
+        assert service(blueprint, name)["autoDeployTrigger"] == "checksPass"
+
+
+def test_the_public_api_trusts_renders_proxy_and_limits_expensive_requests(blueprint):
+    api = service(blueprint, "norwich-sim-api")
+    values = {item["key"]: item.get("value") for item in api["envVars"]}
+
+    assert values["TRUST_PROXY"] == "true"
+    assert int(values["RATE_LIMIT_PER_MINUTE"]) > 0
+    assert int(values["RUN_IDLE_MINUTES"]) > 0
+    main = (ROOT / "backend/api/main.py").read_text()
+    for key in ("TRUST_PROXY", "RATE_LIMIT_PER_MINUTE", "RUN_IDLE_MINUTES", "LOG_FORMAT"):
+        assert key in main
+
+
+def test_the_static_site_sends_security_headers(blueprint):
+    site = service(blueprint, "norwich-sim")
+    headers = {(h["path"], h["name"]): h["value"] for h in site["headers"]}
+
+    assert headers[("/*", "X-Content-Type-Options")] == "nosniff"
+    assert headers[("/*", "X-Frame-Options")] == "DENY"
