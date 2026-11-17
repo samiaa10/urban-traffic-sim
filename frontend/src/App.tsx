@@ -32,6 +32,9 @@ import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx
 import { HistoryPanel } from "./HistoryPanel.tsx"
 import type { RestartedRun } from "./history.ts"
 import { EvaluationSection } from "./EvaluationSection.tsx"
+import { LiveAnalytics } from "./LiveAnalytics.tsx"
+import { LiveControls } from "./LiveControls.tsx"
+import { appendSample, stepQuery, type Sample, type Speed } from "./live.ts"
 import {
   SERVICES,
   TRAFFIC_MODELS,
@@ -185,6 +188,13 @@ function App() {
   // Stations created in the current run (the next one's index)
   const stationsCreated = useRef(0)
 
+  // Live controls: paused, and simulated seconds per tick (a ref too, so
+  // the polling timer reads the current speed); the live charts' samples
+  const [paused, setPaused] = useState(false)
+  const [speed, setSpeed] = useState<Speed>(1)
+  const speedRef = useRef<Speed>(1)
+  const [history, setHistory] = useState<Sample[]>([])
+
   // Full URL of an endpoint that acts on the running simulation
   const runUrl = (original: string, perRun: string) =>
     `${API_URL}${runPath(simulationId.current, original, perRun)}`
@@ -269,6 +279,7 @@ function App() {
     }
 
     setRunning(true)
+    setPaused(false)
     setConnectionLost(false)
 
     simulationInterval.current =
@@ -276,7 +287,7 @@ function App() {
         async () => {
           try {
             const response = await fetch(
-              runUrl("/simulation/step", "/step"),
+              runUrl("/simulation/step", "/step") + stepQuery(speedRef.current),
               {
                 method: "POST",
               }
@@ -289,6 +300,13 @@ function App() {
             const stepData = await response.json()
 
             setVehicles(stepData.vehicles)
+
+            // The live charts' next sample
+            if (stepData.summary) {
+              setHistory((current) =>
+                appendSample(current, { time: stepData.simulation_time, ...stepData.summary })
+              )
+            }
 
             // Fetch live congestion data
             try {
@@ -369,6 +387,7 @@ function App() {
     setCongestion([])
     setSimulationTime(null)
     setScenarioOverlay(null)
+    setHistory([])
 
     simulationId.current = restarted.simulation_id
     setVehicles([
@@ -1198,6 +1217,37 @@ function App() {
               )}
           </Panel>
 
+          {/* LIVE CONTROLS */}
+          <LiveControls
+            active={routeInfo !== null}
+            paused={paused}
+            onPauseToggle={() => {
+              if (paused) {
+                startSimulationPolling()
+              } else {
+                stopSimulationPolling()
+                setPaused(true)
+              }
+            }}
+            speed={speed}
+            onSpeed={(value) => {
+              setSpeed(value)
+              speedRef.current = value
+            }}
+            send={async ([original, perRun]) => {
+              const response = await fetch(runUrl(original, perRun), { method: "POST" })
+              const body = await response.json().catch(() => ({}))
+              if (!response.ok) {
+                throw new Error(typeof body.detail === "string" ? body.detail : "The backend refused that")
+              }
+              return body
+            }}
+            onPickRoad={(label, handler) =>
+              setRoadPick(label !== null && handler !== null ? { label, handler } : null)
+            }
+            onMessage={setResult}
+          />
+
           {/* EMERGENCY STATION OPTIMISER */}
           <OptimiserPanel
             data={optimiser}
@@ -1504,6 +1554,9 @@ function App() {
         />
 
         {/* ---------------- SCENARIO ANALYSIS ---------------- */}
+        {/* ---------------- LIVE TRAFFIC CHARTS ---------------- */}
+        {routeInfo && <LiveAnalytics history={history} />}
+
         <ScenarioWorkspace
           onPickRoad={(label, handler) =>
             setRoadPick(label !== null && handler !== null ? { label, handler } : null)

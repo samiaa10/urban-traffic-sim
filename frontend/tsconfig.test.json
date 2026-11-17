@@ -22,6 +22,7 @@
     "src/OptimiserResults.tsx",
     "src/history.ts",
     "src/services.ts",
+    "src/live.ts",
     "src/scenarios.ts",
     "src/simulationHelpers.ts"
   ]

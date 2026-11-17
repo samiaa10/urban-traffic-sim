@@ -473,18 +473,30 @@ def simulation_state(run: LiveRun = Depends(default_run)):
 
 
 @run_route(router, "post", "/simulation/step", "/step")
-def simulation_step(run: LiveRun = Depends(default_run)):
+def simulation_step(
+    seconds: int = Query(1, ge=1, le=60, description="simulated seconds to advance (the website's speed control)"),
+    run: LiveRun = Depends(default_run),
+):
+    """Advance the run by `seconds` simulated seconds. Answers every
+    vehicle's position and state, and a summary of the traffic for live
+    charts (computed from the same pass over the vehicles)."""
 
     with run.lock:
         simulation = run.simulation
 
-        # Run surges, move all vehicles, then react to changes and re-plan
-        rerouted = run.traffic.step()
+        rerouted = 0
+        for _ in range(seconds):
+            # Run surges, move all vehicles, then react to changes and re-plan
+            rerouted += run.traffic.step()
 
-        # Save what changed (usually nothing: then no database work)
-        run.recorder.sync()
+            # Save what changed (usually nothing: then no database work)
+            run.recorder.sync()
 
         vehicles = []
+        active = held_up = arrived = 0
+        speed_sum = 0.0
+        journey_sum = 0
+        reroutes = 0
 
         for index, vehicle in enumerate(simulation.vehicles):
 
@@ -506,7 +518,30 @@ def simulation_step(run: LiveRun = Depends(default_run)):
                 "reroutes": vehicle.reroutes
             })
 
+            if vehicle.vehicle_type != "normal":
+                continue
+            reroutes += vehicle.reroutes
+            if vehicle.finished:
+                if vehicle.journey_seconds:
+                    arrived += 1
+                    journey_sum += vehicle.journey_seconds
+            else:
+                active += 1
+                speed_sum += vehicle.speed_factor
+                if vehicle.speed_factor < 1:
+                    held_up += 1
+
         simulation_time = simulation.time
+        summary = {
+            "active_vehicles": active,
+            "held_up": held_up,
+            "mean_speed_factor": speed_sum / active if active else None,
+            "arrived": arrived,
+            "mean_journey_seconds": journey_sum / arrived if arrived else None,
+            "reroutes": reroutes,
+            "closed_roads": len(simulation.get_blocked_segments()),
+            "accidents": len(simulation.accidents),
+        }
 
     # Already plain numbers, strings and booleans, so skip FastAPI's
     # general-purpose encoder: with 2,000 vehicles it took about 55 ms of
@@ -514,7 +549,8 @@ def simulation_step(run: LiveRun = Depends(default_run)):
     return JSONResponse({
         "vehicles": vehicles,
         "simulation_time": simulation_time,
-        "rerouted_this_step": rerouted
+        "rerouted_this_step": rerouted,
+        "summary": summary,
     })
 
 
