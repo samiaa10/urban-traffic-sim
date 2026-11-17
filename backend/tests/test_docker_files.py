@@ -323,3 +323,13 @@ def test_scenario_workers_are_set_in_compose(compose):
 
     assert environment["SCENARIO_WORKERS"].startswith("${SCENARIO_WORKERS:-")
     assert "SCENARIO_WORKERS" in text("backend/api/main.py")
+
+
+def test_the_traffic_model_is_set_in_compose(compose):
+    """The backend container uses the osm traffic model unless TRAFFIC_MODEL
+    in .env says otherwise (the same variable the API reads)."""
+
+    environment = services(compose)["backend"]["environment"]
+
+    assert environment["TRAFFIC_MODEL"] == "${TRAFFIC_MODEL:-osm}"
+    assert "TRAFFIC_MODEL" in text("backend/api/main.py")

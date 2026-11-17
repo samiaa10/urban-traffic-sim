@@ -2,7 +2,7 @@
 
 import logging
 import random
-from typing import Optional
+from typing import Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException, Query
 from fastapi.responses import JSONResponse
@@ -19,8 +19,9 @@ from backend.api.routes.common import (
 from backend.api.sessions import LiveRun
 from backend.routing.a_star import a_star
 from backend.simulation import rerouting
+from backend.simulation.road_model import make_road_model
 from backend.simulation.simulation import Simulation
-from backend.simulation.traffic_manager import TrafficManager
+from backend.simulation.traffic_manager import TrafficManager, car_speed
 
 
 logger = logging.getLogger(__name__)
@@ -28,11 +29,20 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
-def build_run(context, start, destination, restarted_from=None):
+TrafficModelQuery = Query(
+    None,
+    description="simple (original rules) or osm (OpenStreetMap speed limits, "
+    "lanes and per-direction traffic); default: the server's TRAFFIC_MODEL",
+)
+
+
+def build_run(context, start, destination, restarted_from=None, traffic_model=None):
     """A new run with two vehicles: start -> destination and back.
 
     Returns the run and the details /simulation/start reports.
     restarted_from (a UUID) links it to the ended run it restarts.
+    traffic_model: "simple" or "osm" (simulation/road_model.py); None uses
+    the server's default.
     """
 
     graph = context.graph
@@ -54,7 +64,18 @@ def build_run(context, start, destination, restarted_from=None):
             detail="No route between start and destination"
         )
 
-    simulation = Simulation(path_points(graph, path))
+    model_name = traffic_model or context.traffic_model
+
+    # Built once per map and shared, so made under the same lock as the
+    # landmark tables below
+    with context.network_lock:
+        road_model = make_road_model(model_name, context.network)
+
+    simulation = Simulation(path_points(graph, path), road_model=road_model)
+
+    # In the osm model a car's speed is set by each road's limit
+    speed = car_speed(simulation)
+    simulation.vehicles[0].speed = speed
 
     # Vehicle 2: the way back (one-way streets mean it may not exist, and
     # a vehicle with no route would crash the simulation)
@@ -68,7 +89,7 @@ def build_run(context, start, destination, restarted_from=None):
     second_path_coordinates = path_points(graph, second_path)
 
     if second_path_coordinates:
-        simulation.add_vehicle(second_path_coordinates)
+        simulation.add_vehicle(second_path_coordinates, speed)
 
     # Fleets, surges, dynamic rerouting; vehicles drive real road lengths.
     # One at a time: the first one builds the shared landmark tables.
@@ -91,6 +112,7 @@ def build_run(context, start, destination, restarted_from=None):
         "nodes_explored": nodes_explored,
         "vehicle_position": simulation.vehicles[0].get_current_location(),
         "simulation_id": run.id,
+        "traffic_model": road_model.name,
     }
 
     return run, details
@@ -110,6 +132,7 @@ def add_run(context, run, make_default):
 def start_simulation(
     start: int,
     destination: int,
+    traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
     context: AppContext = Depends(get_context)
 ):
     """Start a run and make it the default (the previous default stops).
@@ -118,7 +141,7 @@ def start_simulation(
     The answer includes its simulation_id for the /simulations/... ones.
     """
 
-    run, details = build_run(context, start, destination)
+    run, details = build_run(context, start, destination, traffic_model=traffic_model)
     add_run(context, run, make_default=True)
 
     logger.info("Simulation %s started (%s -> %s)", run.id, start, destination)
@@ -134,11 +157,12 @@ def start_simulation(
 def create_simulation(
     start: int,
     destination: int,
+    traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
     context: AppContext = Depends(get_context)
 ):
     """Start an independent run. It does not replace the default run."""
 
-    run, details = build_run(context, start, destination)
+    run, details = build_run(context, start, destination, traffic_model=traffic_model)
     add_run(context, run, make_default=False)
 
     logger.info("Simulation %s created (%s -> %s)", run.id, start, destination)
@@ -339,6 +363,7 @@ def restart_simulation(
             "start": row.start_node,
             "destination": row.destination_node,
             "rerouting": row.rerouting_enabled,
+            "traffic_model": row.traffic_model,
             "stations": [
                 {
                     "latitude": s.latitude, "longitude": s.longitude,
@@ -366,7 +391,10 @@ def restart_simulation(
             "fleets": [(f.requested, f.seed) for f in repo.fleet_spawns(run_uuid)],
         }
 
-    run, details = build_run(context, setup["start"], setup["destination"], run_uuid)
+    run, details = build_run(
+        context, setup["start"], setup["destination"], run_uuid,
+        traffic_model=setup["traffic_model"],
+    )
     simulation, traffic = run.simulation, run.traffic
     applied = {"stations": 0, "ambulances": 0, "closures": 0, "accidents": 0, "fleet_vehicles": 0}
 
@@ -549,7 +577,7 @@ def reroute_vehicle(
             context.graph,
             vehicle,
             context.node_by_point,
-            traffic=simulation.get_traffic_density(),
+            traffic=simulation.get_segment_traffic(),
             blocked_segments=simulation.get_blocked_segments(),
             route_finder=run.traffic.route_finder()
         )

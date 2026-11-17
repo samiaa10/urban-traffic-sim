@@ -123,6 +123,7 @@ def run_summary(run):
         "vehicles": run.vehicles_total,
         "vehicles_finished": run.vehicles_finished,
         "rerouting_enabled": run.rerouting_enabled,
+        "traffic_model": run.traffic_model,
         "graph_sha256": run.graph_sha256,
         "restarted_from": str(run.restarted_from) if run.restarted_from else None,
     }

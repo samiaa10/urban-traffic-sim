@@ -568,3 +568,41 @@ def test_deleting_the_old_run_keeps_the_restarted_one(client):
 
     run = client.get(f"/simulations/{new_id}").json()
     assert run["status"] == "active" and run["restarted_from"] is None
+
+
+# ------------------------------------------------------------
+# Traffic models
+# ------------------------------------------------------------
+
+def test_a_run_saves_its_traffic_model_and_a_restart_keeps_it(make_app):
+    client = TestClient(make_app())
+
+    response = client.post(
+        "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "osm"}
+    )
+    assert response.status_code == 200
+    body = response.json()
+    assert body["traffic_model"] == "osm"
+    old_id = body["simulation_id"]
+    assert client.get(f"/simulations/{old_id}").json()["traffic_model"] == "osm"
+
+    # The app's default (simple here) is not what a restart uses
+    client.delete(f"/simulations/{old_id}")
+    restarted = client.post(f"/simulations/{old_id}/restart").json()
+
+    assert restarted["traffic_model"] == "osm"
+    assert client.get(f"/simulations/{restarted['simulation_id']}").json()["traffic_model"] == "osm"
+
+
+def test_runs_use_the_servers_default_traffic_model(make_app):
+    osm_client = TestClient(make_app(traffic_model="osm"))
+    simple_client = TestClient(make_app())
+
+    osm_id = start(osm_client)
+    simple_id = start(simple_client)
+
+    assert osm_client.get(f"/simulations/{osm_id}").json()["traffic_model"] == "osm"
+    assert simple_client.get(f"/simulations/{simple_id}").json()["traffic_model"] == "simple"
+    assert osm_client.post(
+        "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "fast"}
+    ).status_code == 422

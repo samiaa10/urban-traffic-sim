@@ -30,8 +30,13 @@ class AppContext:
     def __init__(
         self, graph, max_live_runs=8, graph_file=None, database=None,
         metrics_interval=METRICS_INTERVAL, max_study_scenarios=1000,
+        traffic_model="simple",
     ):
         self.graph = graph
+
+        # The traffic model (simulation/road_model.py) new runs and
+        # scenarios use when they do not ask for one
+        self.traffic_model = traffic_model
         self.graph_file = Path(graph_file) if graph_file else None
 
         # Saved runs record which map their junction ids belong to

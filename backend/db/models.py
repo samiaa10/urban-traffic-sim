@@ -176,6 +176,12 @@ class SimulationRun(Base):
         Boolean, server_default=text("true")
     )
 
+    # How roads behaved (simulation/road_model.py). Runs saved before this
+    # column existed used the original rules, hence the default.
+    traffic_model: Mapped[str] = mapped_column(
+        String(16), server_default=text("'simple'")
+    )
+
     # Last recorded progress
     sim_time: Mapped[float] = mapped_column(Float, server_default=text("0"))
     vehicles_total: Mapped[int] = mapped_column(Integer, server_default=text("0"))
@@ -231,6 +237,9 @@ class SimulationRun(Base):
             "(status = 'active') = (ended_at IS NULL)", name="ended_when_not_active"
         ),
         CheckConstraint("sim_time >= 0", name="sim_time_not_negative"),
+        CheckConstraint(
+            "traffic_model IN ('simple', 'osm')", name="known_traffic_model"
+        ),
         CheckConstraint(
             "vehicles_finished >= 0 AND vehicles_finished <= vehicles_total",
             name="finished_within_total",

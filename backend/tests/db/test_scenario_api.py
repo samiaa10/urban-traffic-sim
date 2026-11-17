@@ -447,3 +447,45 @@ def test_only_interrupted_or_cancelled_studies_can_be_resumed(client, app):
 
     assert client.post(f"/scenarios/studies/{study['study_id']}/resume").status_code == 409
     assert client.post("/scenarios/studies/00000000-0000-0000-0000-000000000000/resume").status_code == 404
+
+
+# ------------------------------------------------------------
+# Traffic models
+# ------------------------------------------------------------
+
+def test_a_scenario_is_saved_with_the_traffic_model_it_runs(make_scenario_app):
+    app = make_scenario_app(traffic_model="osm")
+    client = TestClient(app)
+
+    study = run_study(client, app, [
+        scenario("Default"),
+        scenario("Original rules", traffic_model="simple"),
+    ])
+    details = {
+        s["name"]: client.get(f"/scenarios/{s['scenario_id']}").json()
+        for s in study["scenarios"]
+    }
+
+    # Not given: the server's default, written into the saved spec
+    assert details["Default"]["spec"]["traffic_model"] == "osm"
+    assert details["Original rules"]["spec"]["traffic_model"] == "simple"
+    assert all(d["status"] == "completed" for d in details.values())
+    # Same trips, different rules: the explanation says what differs
+    assert details["Default"]["trip_signature"] == details["Original rules"]["trip_signature"]
+    assert any("traffic model" in line for line in study["explanation"])
+
+
+def test_roads_are_only_named_on_a_map_with_openstreetmap_attributes(client, app):
+    from backend.api.routes.scenarios import road_name_field
+    from backend.routing.graph import Graph
+    from backend.routing.road_attributes import RoadInfo
+
+    # The grid test map has no attributes: answers keep their old shape
+    road = client.get("/scenarios/nearest-road", params={"latitude": 52.62, "longitude": 1.28}).json()
+    assert "name" not in road
+
+    graph = Graph()
+    graph.road_info[(1, 2)] = RoadInfo("primary", 13.4, True, 1, False, False, "Riverside Road")
+    graph.road_info[(2, 3)] = RoadInfo("residential", 8.9, True, 1, False, False, None)
+    assert road_name_field(graph, 2, 1) == {"name": "Riverside Road"}
+    assert road_name_field(graph, 2, 3) == {"name": None}

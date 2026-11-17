@@ -128,6 +128,7 @@ class RunRecorder:
                 rerouting_enabled=run.traffic.policy.enabled,
                 vehicles_total=len(run.simulation.vehicles),
                 restarted_from=run.restarted_from,
+                traffic_model=run.simulation.road_model.name,
             )
             return True
 
