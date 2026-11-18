@@ -1,6 +1,7 @@
 import math
 
 from backend.simulation.accidents import Accident
+from backend.simulation.disruptions import Flood, combine
 from backend.simulation.vehicle import Vehicle
 from backend.simulation.emergency import Emergency
 from backend.simulation.station import EmergencyStation
@@ -115,6 +116,15 @@ class Simulation:
         # Accidents: road segment -> Accident (the road stays open but slow)
         self.accidents = {}
 
+        # Who has each closed road closed (block_segment's `source`): it
+        # reopens only when nobody does
+        self._closed_by = {}
+
+        # Floods (disruptions.py), and each road's floods for quick lookup
+        self.floods = []
+        self._floods_on = {}
+        self._next_flood = 1
+
         # Things that happened to the road network, oldest first. Each is
         # {"time", "type", "segment"}; type is one of "road_closed",
         # "road_reopened", "accident", "accident_cleared". Whoever plans
@@ -175,21 +185,106 @@ class Simulation:
     # INCIDENTS / BLOCKED ROADS
     # ========================================
 
-    def block_segment(self, segment):
-        """Block a road segment because of an incident."""
+    def block_segment(self, segment, source="manual"):
+        """Block a road segment because of an incident.
+
+        source names who closed it (a manual closure, a flood, a failure):
+        several can close the same road, and it reopens only when every one
+        of them has reopened it (unblock_segment)."""
         segment = tuple(sorted(segment))
+        self._closed_by.setdefault(segment, set()).add(source)
 
         if segment not in self.blocked_segments:
             self.blocked_segments.add(segment)
             self.record_event("road_closed", segment)
 
-    def unblock_segment(self, segment):
-        """Reopen a previously blocked road segment."""
+    def unblock_segment(self, segment, source="manual"):
+        """Reopen a road closed by `source`; it stays closed while anything
+        else still has it closed."""
         segment = tuple(sorted(segment))
+        sources = self._closed_by.get(segment)
+        if sources is not None:
+            sources.discard(source)
+            if sources:
+                return
+            del self._closed_by[segment]
 
         if segment in self.blocked_segments:
             self.blocked_segments.discard(segment)
             self.record_event("road_reopened", segment)
+
+    def closed_by(self, segment):
+        """Who has a road closed (empty if it is open)."""
+        return set(self._closed_by.get(tuple(sorted(segment)), ()))
+
+    # ========================================
+    # FLOODS (disruptions.py)
+    # ========================================
+
+    def add_flood(self, segments, severity="moderate", duration=1800, recovery_seconds=900):
+        """Flood a set of roads from now. Returns the Flood."""
+
+        flood = Flood(self._next_flood, segments, severity, self.time, duration, recovery_seconds)
+        self._next_flood += 1
+        self.floods.append(flood)
+
+        for segment in flood.segments:
+            self._floods_on.setdefault(segment, []).append(flood)
+            if flood.closes_roads:
+                self.block_segment(segment, source=flood.source)
+            else:
+                self.record_event("flood", segment)
+
+        return flood
+
+    def _end_flood(self, flood):
+        if flood.closes_roads and not flood.reopened:
+            for segment in flood.segments:
+                self.unblock_segment(segment, source=flood.source)
+        self.floods.remove(flood)
+        for segment in flood.segments:
+            others = [f for f in self._floods_on.get(segment, []) if f is not flood]
+            if others:
+                self._floods_on[segment] = others
+            else:
+                self._floods_on.pop(segment, None)
+            self.record_event("flood_cleared", segment)
+
+    def clear_flood(self, ident):
+        """End a flood at once (its roads fully recovered). False if none."""
+        flood = next((f for f in self.floods if f.ident == ident), None)
+        if flood is None:
+            return False
+        self._end_flood(flood)
+        return True
+
+    def update_floods(self):
+        """Reopen closed roads when their flood starts receding, and remove
+        floods that have fully recovered (called by step)."""
+
+        for flood in list(self.floods):
+            stage = flood.stage(self.time)
+            if stage != "flooded" and flood.closes_roads and not flood.reopened:
+                flood.reopened = True
+                for segment in flood.segments:
+                    self.unblock_segment(segment, source=flood.source)
+            if stage == "over":
+                self._end_flood(flood)
+
+    def road_incident(self, segment):
+        """What incidents do to a road now: its accident and any floods on
+        it combined (an object with speed_factor and capacity_factor), or
+        None. segment is the sorted segment key."""
+
+        accident = self.accidents.get(segment)
+        floods = self._floods_on.get(segment)
+        if not floods:
+            return accident
+        return combine(accident, *(flood.effect(self.time) for flood in floods))
+
+    def incident_segments(self):
+        """Roads with an accident or a flood on them."""
+        return set(self.accidents) | set(self._floods_on)
 
     # ========================================
     # ACCIDENTS (road stays open, but slow)
@@ -231,7 +326,7 @@ class Simulation:
         simple model, in driving direction in the osm model)."""
 
         return self.road_model.speed_factor(
-            segment, vehicle_count, self.accidents.get(undirected(segment))
+            segment, vehicle_count, self.road_incident(undirected(segment))
         )
 
     def traffic_key(self, point_a, point_b):
@@ -568,6 +663,7 @@ class Simulation:
         self.time += 1
 
         self.clear_expired_accidents()
+        self.update_floods()
 
         self.check_emergencies()
 
@@ -642,7 +738,7 @@ class Simulation:
         for road, vehicle_count in traffic.items():
 
             segment = undirected(road)
-            accident = self.accidents.get(segment)
+            accident = self.road_incident(segment)
 
             # An accident's lost capacity shows in the level too, so the
             # map colour matches how slowly vehicles really move there

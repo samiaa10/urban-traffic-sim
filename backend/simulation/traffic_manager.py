@@ -249,7 +249,7 @@ class TrafficManager:
         the osm model)."""
 
         keys_of = self.road_model.keys_of_segment
-        return {key for segment in self.simulation.accidents for key in keys_of(segment)}
+        return {key for segment in self.simulation.incident_segments() for key in keys_of(segment)}
 
     def _slow_roads(self, traffic):
         """{road: joining speed factor} for every road that is not free flowing.
@@ -532,7 +532,7 @@ class TrafficManager:
         process_events).
         """
 
-        trouble = set(self.simulation.get_blocked_segments()) | set(self.simulation.accidents)
+        trouble = set(self.simulation.get_blocked_segments()) | self.simulation.incident_segments()
 
         if not trouble:
             return
@@ -575,7 +575,7 @@ class TrafficManager:
                 if not self._active(vehicle):
                     continue
 
-                worse = event["type"] in ("accident", "road_closed")
+                worse = event["type"] in ("accident", "road_closed", "flood")
 
                 if index in self._urgent and (worse or self._urgent[index] is None):
                     # Already flagged in a way that covers this event

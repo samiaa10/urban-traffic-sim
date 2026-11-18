@@ -343,13 +343,13 @@ class CellularTraffic:
 
     def _vmax(self, simulation, road, vehicle):
         cells = self.parameters.cells_per_step(min(road.limit, vehicle.speed))
-        accident = simulation.accidents.get(undirected(road.key))
+        accident = simulation.road_incident(undirected(road.key))
         if accident is not None:
             cells = max(1, round(cells * accident.speed_factor))
         return cells
 
     def _open_lanes(self, simulation, road):
-        accident = simulation.accidents.get(undirected(road.key))
+        accident = simulation.road_incident(undirected(road.key))
         if accident is None:
             return road.lanes
         count = max(1, round(len(road.lanes) * accident.capacity_factor))
