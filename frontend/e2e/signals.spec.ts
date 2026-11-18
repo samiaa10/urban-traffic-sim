@@ -19,7 +19,7 @@ test("adaptive signals switch on and the map shows their lights", async ({ page 
   await expect(mapNotice(page)).toContainText("Adaptive signals at 108 junctions, with emergency priority")
 
   // The dashboard reads the signals' state every tick
-  const response = await page.waitForResponse((r) => r.url().endsWith("/traffic/signals") && r.request().method() === "GET")
+  const response = await page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/traffic/signals") && r.request().method() === "GET")
   const state = await response.json()
   expect(state.controller).toBe("adaptive")
   expect(state.junctions).toHaveLength(108)

@@ -26,7 +26,7 @@ test("a run with the cellular automaton shows its queues", async ({ page }) => {
   await expect(analytics.getByRole("img", { name: /Stopped in queues over/ })).toBeVisible({ timeout: 20_000 })
 
   // The congestion the map draws carries the CA's own queue and density
-  const response = await page.waitForResponse((r) => r.url().endsWith("/congestion") && r.ok())
+  const response = await page.waitForResponse((r) => new URL(r.url()).pathname.endsWith("/congestion") && r.ok())
   const segments = (await response.json()).congestion as { stopped?: number; occupancy?: number }[]
   // (a road holding only cars still waiting to enter has no CA state yet)
   const measured = segments.filter((s) => typeof s.stopped === "number")
