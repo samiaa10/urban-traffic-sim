@@ -49,3 +49,11 @@ export const LINE = {
   reroute: 4,
   route: 3.5,
 } as const
+
+// 3D buildings: taller ones a little darker, in the app's slate blues.
+// Heights in metres where each colour applies (blended in between).
+export const BUILDINGS = [
+  { height: 0, colour: "#d3dae2", label: "Under 15 m" },
+  { height: 15, colour: "#bcc6d1", label: "15-40 m" },
+  { height: 40, colour: "#9eabb9", label: "Over 40 m" },
+] as const

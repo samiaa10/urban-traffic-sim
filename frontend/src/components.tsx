@@ -210,22 +210,27 @@ export function Panel({
 
 // How a layer is drawn: a line, a wide line, a dashed line, a solid dot
 // or an outlined ring. Mirrors the symbols used on the map itself.
-export type LegendSymbol = "line" | "wide" | "dash" | "dot" | "ring"
+export type LegendSymbol = "line" | "wide" | "dash" | "dot" | "ring" | "badge" | "block"
 
 export type LegendEntry = {
   label: string
   colour: string
   symbol: LegendSymbol
+  // A badge's letter, as drawn on the marker
+  letter?: string
 }
 
-function LegendSwatch({ colour, symbol }: Omit<LegendEntry, "label">) {
+function LegendSwatch({ colour, symbol, letter }: Omit<LegendEntry, "label">) {
   const modifier = symbol === "line" ? "" : ` legend-swatch--${symbol}`
 
   return (
     <span
       className={`legend-swatch${modifier}`}
-      style={{ background: colour, borderColor: colour, color: colour }}
-    />
+      style={{ background: colour, borderColor: colour, color: symbol === "badge" ? "#fff" : colour }}
+      aria-hidden="true"
+    >
+      {letter}
+    </span>
   )
 }
 
@@ -244,7 +249,7 @@ export function MapLegend({
             <div className="legend-items">
               {group.entries.map((entry) => (
                 <span className="legend-item" key={entry.label}>
-                  <LegendSwatch colour={entry.colour} symbol={entry.symbol} />
+                  <LegendSwatch colour={entry.colour} symbol={entry.symbol} letter={entry.letter} />
                   {entry.label}
                 </span>
               ))}

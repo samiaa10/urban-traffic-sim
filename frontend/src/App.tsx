@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react"
+import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
 import {
   MapContainer,
   TileLayer,
@@ -27,7 +27,18 @@ import {
   Spinner,
   type LegendEntry,
 } from "./components.tsx"
-import { COLOURS, LINE, MARKER } from "./mapStyles.ts"
+import { BUILDINGS, COLOURS, LINE, MARKER } from "./mapStyles.ts"
+import {
+  SERVICE_MARKERS,
+  closureFeatures,
+  congestionFeatures,
+  hotspotFeatures,
+  pointFeatures,
+  routeFeatures,
+  stationFeatures,
+  vehicleFeatures,
+} from "./mapData.ts"
+import { SHOWN } from "./OptimiserResults.tsx"
 import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx"
 import { HistoryPanel } from "./HistoryPanel.tsx"
 import type { RestartedRun } from "./history.ts"
@@ -65,6 +76,25 @@ type CongestionSegment = {
   vehicle_count: number
   level: string
 }
+
+// The 3D map (MapLibre) is only downloaded when someone switches to it
+const Map3D = lazy(() => import("./Map3D.tsx"))
+
+type MapView = "2d" | "3d"
+const MAP_VIEW_KEY = "norwich-sim-map-view"
+
+// The last view chosen, remembered in this browser (2D if none, or if
+// storage is blocked)
+function savedMapView(): MapView {
+  try {
+    return localStorage.getItem(MAP_VIEW_KEY) === "3d" ? "3d" : "2d"
+  } catch {
+    return "2d"
+  }
+}
+
+// An empty path that keeps its identity between renders
+const NO_PATH: Coordinate[] = []
 
 type RouteInfo = {
   distance: number
@@ -197,6 +227,19 @@ function App() {
   const [speed, setSpeed] = useState<Speed>(1)
   const speedRef = useRef<Speed>(1)
   const [history, setHistory] = useState<Sample[]>([])
+
+  // 2D (Leaflet) or 3D (MapLibre) map
+  const [mapView, setMapView] = useState<MapView>(savedMapView)
+  // 3D map only: clicks describe roads, buildings and vehicles
+  const [inspecting, setInspecting] = useState(false)
+  const chooseMapView = (view: MapView) => {
+    setMapView(view)
+    try {
+      localStorage.setItem(MAP_VIEW_KEY, view)
+    } catch {
+      // Storage blocked: the choice lasts until the page is reloaded
+    }
+  }
 
   // Full URL of an endpoint that acts on the running simulation
   const runUrl = (original: string, perRun: string) =>
@@ -857,12 +900,55 @@ function App() {
   // What the last action told the user: an error or plain information
   const resultIsError = /failed|could not/i.test(result)
 
+  // What the 3D map draws: the same state as the 2D map, one GeoJSON
+  // source each, rebuilt only when its own inputs change
+  const shownEmergencyRoute = emergencyActive ? emergencyRoute : NO_PATH
+  const shownIncidentRoute = incidentActive ? incidentRoute : NO_PATH
+  const routesData = useMemo(
+    () => routeFeatures({ route, incidentRoute: shownIncidentRoute, emergencyRoute: shownEmergencyRoute }),
+    [route, shownIncidentRoute, shownEmergencyRoute],
+  )
+  const closuresData = useMemo(
+    () => closureFeatures({ blockedAhead, scenarioClosures: scenarioOverlay?.closures ?? [] }),
+    [blockedAhead, scenarioOverlay],
+  )
+  const pointsData = useMemo(
+    () => pointFeatures({ start, destination, emergencyLocation }),
+    [start, destination, emergencyLocation],
+  )
+  const stationsData = useMemo(
+    () => stationFeatures({
+      candidates: optimiser?.results.slice(0, SHOWN) ?? [],
+      stations: stationSet?.stations ?? [],
+    }),
+    [optimiser, stationSet],
+  )
+  const congestionData = useMemo(() => congestionFeatures(congestion), [congestion])
+  const hotspotsData = useMemo(() => hotspotFeatures(scenarioOverlay?.hotspots ?? []), [scenarioOverlay])
+  const vehiclesData = useMemo(() => vehicleFeatures(vehicles), [vehicles])
+  const mapData = useMemo(
+    () => ({
+      congestion: congestionData,
+      hotspots: hotspotsData,
+      closures: closuresData,
+      routes: routesData,
+      points: pointsData,
+      stations: stationsData,
+      vehicles: vehiclesData,
+    }),
+    [congestionData, hotspotsData, closuresData, routesData, pointsData, stationsData, vehiclesData],
+  )
+
   // The state of the three route-planning steps
   const bothPointsChosen = start !== null && destination !== null
 
   // What the next click on the map will do (see handleMapClick)
+  // Picking a road for a scenario or live incident beats inspecting
+  const inspectingNow = mapView === "3d" && inspecting && !roadPick
   const nextClick = roadPick
     ? { label: roadPick.label, colour: COLOURS.closure }
+    : inspectingNow
+    ? { label: "Inspect", colour: COLOURS.closure }
     : !start
     ? { label: "Start point", colour: COLOURS.start }
     : !destination
@@ -886,6 +972,22 @@ function App() {
   const otherVehiclesOnMap = vehicles.some(
     (vehicle) => !(vehicle.vehicle_type === "ambulance" || vehicle.on_emergency)
   )
+
+  const servicesOnMap = Object.entries(SERVICE_MARKERS)
+    .filter(([type]) =>
+      vehicles.some(
+        (vehicle) =>
+          !vehicle.finished &&
+          (vehicle.vehicle_type === type ||
+            (type === "ambulance" && vehicle.on_emergency && !(vehicle.vehicle_type in SERVICE_MARKERS)))
+      )
+    )
+    .map(([, marker]) => marker)
+
+  const buildingLegend: LegendEntry[] =
+    mapView === "3d"
+      ? BUILDINGS.map((step) => ({ label: step.label, colour: step.colour, symbol: "block" }))
+      : []
 
   const layerLegend = (
     [
@@ -914,11 +1016,19 @@ function App() {
       colour: COLOURS.route,
       symbol: "dot",
     },
-    ambulanceOnMap && {
+    // The 2D map draws every emergency vehicle as a red dot; the 3D map
+    // gives each service its own colour and letter
+    mapView === "2d" && ambulanceOnMap && {
       label: serviceOf(dispatchedService).label,
       colour: COLOURS.emergency,
       symbol: "dot",
     },
+    ...(mapView === "3d" ? servicesOnMap : []).map((marker) => ({
+      label: marker.label,
+      colour: marker.colour,
+      symbol: "badge" as const,
+      letter: marker.letter,
+    })),
     emergencyLocation !== null && {
       label: "Incident",
       colour: COLOURS.emergency,
@@ -1371,6 +1481,19 @@ function App() {
               <h2>Norwich road network</h2>
               <p>OpenStreetMap road graph with A* routing</p>
             </div>
+            <div className="map-view" role="group" aria-label="Map view">
+              {(["2d", "3d"] as const).map((view) => (
+                <button
+                  key={view}
+                  type="button"
+                  className="map-view-option"
+                  aria-pressed={mapView === view}
+                  onClick={() => chooseMapView(view)}
+                >
+                  {view.toUpperCase()}
+                </button>
+              ))}
+            </div>
             <div className="map-mode" aria-live="polite">
               <span
                 className="swatch-dot"
@@ -1397,6 +1520,20 @@ function App() {
               </div>
             )}
 
+            {mapView === "3d" ? (
+              <Suspense fallback={<div className="map map-loading">Loading the 3D map…</div>}>
+                <Map3D
+                  data={mapData}
+                  onClick={handleMapClick}
+                  inspecting={inspectingNow}
+                  onInspectingChange={setInspecting}
+                  onFailed={(reason) => {
+                    chooseMapView("2d")
+                    setResult(`The 3D map could not start (${reason}), so the 2D map is shown.`)
+                  }}
+                />
+              </Suspense>
+            ) : (
             <MapContainer
               className="map"
               center={[52.6309, 1.2974]}
@@ -1571,12 +1708,14 @@ function App() {
                 )
               })}
             </MapContainer>
+            )}
 
             {/* LEGEND: congestion, plus whichever layers are on the map */}
             <MapLegend
               groups={[
                 { title: "Live congestion", entries: congestionLegend },
                 { title: "On the map", entries: layerLegend },
+                { title: "Building height", entries: buildingLegend },
               ]}
             />
           </div>
