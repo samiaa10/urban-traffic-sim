@@ -1,9 +1,10 @@
-"""Road closures and accidents."""
+"""Road closures, accidents, floods and bridge failures, and how reachable
+the city is while they last."""
 
 import math
-from typing import Optional
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
 from backend.api.context import AppContext
 from backend.api.routes.common import (
@@ -190,3 +191,129 @@ def clear_accident(
             "segment": segment_json(segment),
             "vehicles_to_recheck": recheck
         }
+
+
+
+# ------------------------------------------------------------
+# Floods and bridge failures (simulation/disruptions.py)
+# ------------------------------------------------------------
+
+def _reroute(run, context):
+    stats = rerouting.reroute_affected_vehicles(
+        context.graph, run.simulation, context.node_by_point,
+        route_finder=run.traffic.route_finder(),
+    )
+    run.traffic.process_events()
+    run.recorder.sync()
+    return stats
+
+
+@run_route(router, "post", "/incident/flood", "/incidents/flood")
+def create_flood(
+    latitude: float,
+    longitude: float,
+    radius_metres: float = Query(250, ge=20, le=5000),
+    severity: Literal["minor", "moderate", "severe", "closed"] = "closed",
+    duration_seconds: float = Query(1200, gt=0, le=86400),
+    recovery_seconds: float = Query(600, ge=0, le=86400),
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
+    """Flood every road inside a circle: closed or slowed for
+    duration_seconds, then recovering gradually over recovery_seconds. A
+    transport disruption, not a flood prediction: the area and severity are
+    yours to choose."""
+
+    from backend.simulation.disruptions import segments_in_area
+
+    if not (math.isfinite(latitude) and math.isfinite(longitude)):
+        raise HTTPException(status_code=422, detail="latitude and longitude must be numbers")
+    roads = segments_in_area(context.network, latitude, longitude, radius_metres)
+    if not roads:
+        raise HTTPException(status_code=422, detail="No road lies entirely inside that circle: make it bigger")
+
+    with run.lock:
+        flood = run.simulation.add_flood(roads, severity, duration_seconds, recovery_seconds)
+        stats = _reroute(run, context) if flood.closes_roads else None
+        if not flood.closes_roads:
+            run.traffic.process_events()
+        return {
+            "status": "flood created",
+            "flood": flood.describe(run.simulation.time),
+            "rerouting": stats,
+        }
+
+
+@run_route(router, "get", "/incident/floods", "/incidents/floods")
+def list_floods(run: LiveRun = Depends(default_run)):
+    """Every flood now: its roads, stage (flooded or recovering) and how far
+    it has recovered."""
+    with run.lock:
+        now = run.simulation.time
+        return {"floods": [flood.describe(now) for flood in run.simulation.floods]}
+
+
+@run_route(router, "post", "/incident/flood/clear", "/incidents/flood/clear")
+def clear_flood(
+    flood_id: int,
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
+    """End a flood at once: its roads reopen fully recovered."""
+    with run.lock:
+        if not run.simulation.clear_flood(flood_id):
+            raise HTTPException(status_code=404, detail="No such flood")
+        run.traffic.process_events()
+        run.recorder.sync()
+    return {"status": "flood cleared"}
+
+
+@run_route(router, "post", "/incident/bridges", "/incidents/bridges")
+def bridge_failure(
+    fail: bool = True,
+    names: Optional[List[str]] = Query(None, description="road names of the bridges; default: all"),
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
+    """Take the map's bridges (OpenStreetMap bridge=* roads) out of use, or
+    put them back (fail=false)."""
+
+    from backend.simulation.infrastructure import load_bridges
+
+    position = context.network.position
+    roads = [
+        tuple(sorted((position[a], position[b])))
+        for a, b, name in load_bridges()
+        if a in position and b in position and (names is None or name in names)
+    ]
+    with run.lock:
+        for road in roads:
+            if fail:
+                run.simulation.block_segment(road, source="failure:bridges")
+            else:
+                run.simulation.unblock_segment(road, source="failure:bridges")
+        stats = _reroute(run, context) if fail else None
+        if not fail:
+            run.traffic.process_events()
+            run.recorder.sync()
+    return {"status": "bridges out of use" if fail else "bridges back in use",
+            "bridges": len(roads), "rerouting": stats}
+
+
+@run_route(router, "get", "/resilience/accessibility", "/resilience/accessibility")
+def accessibility(
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
+    """How reachable the city is now against the same roads undisrupted:
+    junctions still connected, extra drive time, the worst-hit areas, and
+    the run's stations' reach (scenarios/resilience.py)."""
+
+    from backend.scenarios.resilience import live_accessibility
+    from backend.simulation.traffic_manager import car_speed
+
+    with run.lock:
+        return live_accessibility(
+            context.graph, context.network, run.traffic.demand.nodes,
+            run.simulation, car_speed(run.simulation),
+        )

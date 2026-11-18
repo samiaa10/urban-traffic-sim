@@ -40,7 +40,7 @@ DESTINATIONS = 60
 
 class ResilienceProbe:
 
-    def __init__(self, world, simulation, spec, car_speed):
+    def __init__(self, world, simulation, spec, car_speed, undisrupted_before=False):
         self.world = world
         self.simulation = simulation
         self.car_speed = car_speed
@@ -61,7 +61,7 @@ class ResilienceProbe:
             entry["speed"] = max(entry["speed"], station.speed)
         self.targets = {group.service: group.target_seconds for group in spec.emergency_groups if group.count}
 
-        self.before = self._snapshot("before")
+        self.before = self._snapshot("before", undisrupted=undisrupted_before)
         self.during = None
         self.after = None
         self._worst_level = 0
@@ -83,11 +83,13 @@ class ResilienceProbe:
 
         return factor
 
-    def _snapshot(self, label):
+    def _snapshot(self, label, undisrupted=False):
+        """undisrupted: as if no road were closed or slowed (a live run's
+        "before", measured while the disruption is already on)."""
         network = self.world.network
         simulation = self.simulation
-        blocked = set(simulation.get_blocked_segments())
-        factor = self._factor() if simulation.incident_segments() else None
+        blocked = set() if undisrupted else set(simulation.get_blocked_segments())
+        factor = self._factor() if simulation.incident_segments() and not undisrupted else None
         origins = self.origins
 
         times = {}   # destination -> {origin: seconds}
@@ -268,3 +270,33 @@ class ResilienceProbe:
             },
             "recovery_seconds": recovery,
         }
+
+
+def live_accessibility(graph, network, demand_nodes, simulation, car_speed, seed=1):
+    """For a live run: accessibility now against the same network with no
+    disruption, for ordinary traffic and from the run's stations."""
+    from types import SimpleNamespace
+
+    from backend.simulation.services import SERVICES
+
+    stations = [
+        SimpleNamespace(latitude=s.latitude, longitude=s.longitude, service=s.station_type,
+                        speed=SERVICES[s.station_type].speed)
+        for s in simulation.stations if s.station_type in SERVICES
+    ]
+    services = sorted({s.service for s in stations})
+    spec = SimpleNamespace(
+        seed=seed, stations=stations,
+        emergency_groups=[SimpleNamespace(service=x, target_seconds=SERVICES[x].target_seconds, count=1)
+                          for x in services],
+    )
+    world = SimpleNamespace(graph=graph, network=network, demand=SimpleNamespace(nodes=demand_nodes))
+    probe = ResilienceProbe(world, simulation, spec, car_speed, undisrupted_before=True)
+    now = probe._snapshot("now")
+    return {
+        "destinations_sampled": len(probe.destinations),
+        "closed_roads": now["closed_roads"],
+        "affected_roads": now["affected_roads"],
+        "accessibility": {"before": probe._accessibility(probe.before), "now": probe._accessibility(now)},
+        "emergency_access": {"before": probe._emergency(probe.before), "now": probe._emergency(now)},
+    }

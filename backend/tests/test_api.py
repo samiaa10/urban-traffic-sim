@@ -1467,3 +1467,38 @@ def test_signal_settings_are_checked(running):
         "/traffic/signals", params={"controller": "adaptive", "min_green": 30, "max_green": 10}
     )
     assert response.status_code == 422
+
+
+# ------------------------------------------------------------
+# Floods and accessibility on a live run
+# ------------------------------------------------------------
+
+def test_a_flood_closes_the_roads_in_its_area_and_recovers(running):
+    # Junction 5 (52.622, 1.283) and its four neighbours, 220-330 m away
+    body = running.post("/incident/flood", params={
+        "latitude": 52.622, "longitude": 1.283, "radius_metres": 350,
+        "severity": "closed", "duration_seconds": 60, "recovery_seconds": 60,
+    }).json()
+    flood = body["flood"]
+    assert flood["closed"] is True and flood["stage"] == "flooded" and len(flood["roads"]) >= 4
+
+    access = running.get("/resilience/accessibility").json()
+    assert access["closed_roads"] >= 4
+    before, now = access["accessibility"]["before"], access["accessibility"]["now"]
+    assert before["reachable_percent"] == 100
+    assert now["reachable_percent"] < 100 or now["mean_increase_seconds"] > 0
+
+    running.post("/simulation/step", params={"seconds": 60})
+    running.post("/simulation/step", params={"seconds": 30})
+    floods = running.get("/incident/floods").json()["floods"]
+    assert floods[0]["stage"] == "recovering" and 0 < floods[0]["recovered_percent"] < 100
+    assert running.get("/incidents").json()["incidents"] == []
+
+    assert running.post("/incident/flood/clear", params={"flood_id": flood["id"]}).status_code == 200
+    assert running.get("/incident/floods").json()["floods"] == []
+
+
+def test_a_flood_needs_roads_inside_its_circle(running):
+    response = running.post("/incident/flood", params={"latitude": 52.70, "longitude": 1.40, "radius_metres": 50})
+    assert response.status_code == 422
+    assert running.post("/incident/flood/clear", params={"flood_id": 99}).status_code == 404
