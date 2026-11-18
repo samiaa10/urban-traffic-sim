@@ -2,50 +2,130 @@
 
 [![Tests](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml)
 
-NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing and simulation, and a React/TypeScript map shows vehicles, congestion, road closures and emergency response live.
+NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing, the simulation and the optimisation, and a React/TypeScript map shows vehicles, congestion, road closures, accidents and emergency vehicles live.
 
-I built it as a computer science project to practise graph algorithms, simulation design, API design and testing on a realistic dataset. The main question it explores is: **what happens to traffic, and to ambulance response times, when roads get busy or close?**
+I built it as a computer science project to practise graph algorithms, simulation design, API design and testing on a realistic dataset. The main question it explores is: **what happens to traffic, and to emergency response times, when roads get busy or close, and where should emergency stations go?**
 
-> **Screenshots / demo video:** none yet. See the [demo guide](docs/DEMO.md) to try it yourself.
+![2,000 vehicles, a rush hour and a severe accident on Norwich's road network](docs/screenshots/live-simulation.jpg)
+
+*2,000 vehicles and a rush hour into the centre at 5x speed, with a severe accident; roads are coloured by congestion. Screenshots are taken from the running app by `frontend/e2e/screenshots.spec.ts`.*
+
+## At a glance
+
+Measured on the real Norwich network (5,058 junctions, 10,980 roads); each figure links to its full report and how to reproduce it.
+
+| What | Result |
+|---|---|
+| Routing | A\* 1.46x faster than Dijkstra with identical routes (1.42 vs 2.07 ms a search); [details](#dijkstra-vs-a) |
+| Simulation scale | 10,000 vehicles with dynamic rerouting; up to 5,000, a simulated second takes under a real second ([traffic benchmark](docs/traffic_benchmark.md)) |
+| Congestion-aware routing | journeys 13.6% quicker than shortest routes in heavy traffic ([report](docs/congestion_benchmark.md)) |
+| Dynamic rerouting | behind a severe accident, all 137 vehicles arrived with rerouting against 1 without ([traffic benchmark](docs/traffic_benchmark.md)) |
+| Rerouting after a closure | re-planning only affected vehicles is 3.9x faster than re-planning all 1,000 ([report](docs/rerouting_benchmark.md)) |
+| Station optimiser | the best 3-station set reaches 99.6% of emergencies within 4 minutes, against 84.6% for random sets; exhaustive search over up to 2 million sets ([details](#emergency-station-optimiser)) |
+| Scenarios at scale | 400 full simulations in 21.5 minutes on 4 worker processes ([report](docs/scenario_benchmark.md)) |
+| Through the API | 1,197 requests a second; a step of 2,000 vehicles in 219 ms (4.6x faster than real time); 8 visitors at once each still faster than real time ([report](docs/api_benchmark.md)) |
+| Tests | 833 backend tests (127 of them on a real PostgreSQL), 118 frontend logic tests, 92 interaction tests and 16 end-to-end tests in a real browser; 5 CI jobs on every push |
+
+## How it fits together
+
+```mermaid
+flowchart LR
+    OSM[(OpenStreetMap)] -->|downloaded once| GRAPH[("Norwich road graph<br/>5,058 junctions")]
+    subgraph Browser
+        UI["React + Leaflet<br/>map, live controls,<br/>optimiser, scenarios, history"]
+    end
+    subgraph API["FastAPI backend (one process)"]
+        RUNS["Live runs<br/>simulation + traffic manager"]
+        ROUTE["Routing<br/>A*, Dijkstra, landmarks"]
+        EMER["Emergency services"]
+        OPT["Station optimiser"]
+        SCEN["Scenario engine"]
+    end
+    WORKERS["Worker processes<br/>(scenario studies)"]
+    PG[("PostgreSQL<br/>runs, history, results")]
+    GRAPH --> API
+    UI <-->|"HTTP + JSON"| API
+    RUNS --> ROUTE
+    EMER --> RUNS
+    OPT --> ROUTE
+    SCEN --> WORKERS
+    API --> PG
+    WORKERS --> PG
+```
+
+The full diagram, the data model and every design decision are in the [architecture guide](docs/ARCHITECTURE.md); the API documents itself at `/docs`.
+
+## Screenshots
+
+| | |
+|---|---|
+| ![A fire engine dispatched across the city](docs/screenshots/emergency-response.jpg) | ![The best set of four ambulance stations](docs/screenshots/station-optimiser.jpg) |
+| **Emergency response.** The fire engine that would arrive first by road is sent; its route, ETA and progress update live. | **Station optimiser.** The best set of four stations, chosen by searching every possible set. |
+| ![A study of 20 random sets of road closures](docs/screenshots/scenario-study.png) | ![Live traffic charts](docs/screenshots/live-analytics.png) |
+| **Scenario study.** 20 random sets of closures simulated and ranked, with an explanation of why the winner won. | **Live traffic.** Vehicles driving, the share held up and average speed, as the simulation runs. |
+
+See the [demo guide](docs/DEMO.md) to try it yourself.
 
 ## Features
+
+### Road network and routing
 
 - **Real Norwich road network.** Downloaded from OpenStreetMap (drivable roads) and converted into a custom graph: 5,058 junctions and 10,980 directed roads. Every road keeps its OpenStreetMap attributes: class, speed limit (tagged on 98.2% of roads), lanes (23.8%), one-way and name (99.3%), with documented UK defaults where a tag is missing ([road network guide](docs/road_network.md)).
 - **Two traffic models.** `osm` (the default) uses those attributes: cars keep to each road's speed limit, each direction of a road is counted on its own, and congestion depends on how full the road is (lanes x length), so a long dual carriageway absorbs traffic that jams a short side street. `simple` keeps the original rules below. Movement, routing, ETAs and delay measurement all use the run's model, so planned and driven times agree (checked on 200 Norwich trips).
 - **A\* routing** with a great-circle (haversine) distance heuristic. Dijkstra is also implemented, and is used to check A\* gives the same optimal distance.
+- **Travel-time routing.** Vehicles plan the *fastest* route, not the shortest: each road costs its length divided by the speed traffic and accidents allow on it right now, using the same speed rule that moves vehicles, so the planned time matches the driven time (tested). A\* with a straight-line estimate stays exact under congestion; landmark (ALT) lower bounds are also available.
+- **Congestion-aware shortest routes.** `/route` still finds the shortest route with a 50 m penalty per vehicle on a road (unchanged); vehicles in the simulation use travel-time routing.
+- **Performance engineering.** A grid spatial index for nearest-junction lookups (31x faster, identical answers), distance searches that no longer touch every junction per call (A\* 3.26 to 1.41 ms, now faster than Dijkstra), travel-time landmark bounds that keep speed-limited A\* exact while exploring half the junctions, batched rerouting for vehicles heading to the same place (2.9x per step when trips share destinations), exhaustive station-set search where feasible, parallel candidate searches for large optimiser runs, profiling of the main workloads ([profiling](docs/profiling.md)), and runs of 10,000 vehicles ([traffic benchmark](docs/traffic_benchmark.md)).
+
+### Live traffic simulation
+
 - **Live vehicle simulation.** Vehicles drive along their routes in one-second simulation steps, covering the real OpenStreetMap length of each road (the same lengths the router and optimiser use).
 - **Congestion visualisation.** The backend counts vehicles on each road segment and reports a congestion level per segment, which the map draws.
 - **Congestion slows vehicles down.** In the `simple` model the same levels set vehicle speed: a lone vehicle drives at full speed, a road with 2 vehicles runs at 60% and a road with 3 or more at 30%; the `osm` model slows vehicles smoothly as the road fills. Journeys therefore take longer in traffic, ambulance response times and ETAs include the delay, and the status panel shows how many vehicles are held up.
-- **Travel-time routing.** Vehicles plan the *fastest* route, not the shortest: each road costs its length divided by the speed traffic and accidents allow on it right now, using the same speed rule that moves vehicles, so the planned time matches the driven time (tested). A\* with a straight-line estimate stays exact under congestion; landmark (ALT) lower bounds are also available.
 - **Dynamic rerouting.** Vehicles re-plan as traffic changes and switch only when a route is meaningfully faster (by default at least 20 s and 10%), with staggered checks every 10 s and a 60 s cooldown so they do not flip-flop. A landmark lower bound skips searches that could not save enough. On Norwich it cut mean journey time by 8 to 9% at the default settings, and by 25% for the vehicles caught by a severe accident (see [Dynamic traffic](#dynamic-traffic-fleets-rerouting-accidents)).
 - **Accidents.** Distinct from closures: the road stays open, but for a set duration traffic drives slower and the road jams with fewer vehicles. Minor, moderate and severe accidents differ in speed, capacity and default duration, and clear by themselves.
 - **Reacting to change.** An accident or closure on a vehicle's route makes it re-plan at the start of the next second, before it moves. When a road reopens or an accident clears, the vehicles that had changed route to avoid it re-plan at once (and switch only to a route that uses it); everyone else picks up the change at their next routine check.
 - **Fleets and traffic surges.** Spawn up to 2,000 vehicles per request with trips across Norwich from a simple demand model, or start a rush-hour style surge that keeps sending trips into (or out of) a zone for a while.
-- **Congestion-aware shortest routes.** `/route` still finds the shortest route with a 50 m penalty per vehicle on a road (unchanged); vehicles in the simulation use travel-time routing.
 - **Road closures.** Close or reopen a road segment. Closures apply in both directions, and every search avoids them.
 - **Automatic rerouting after closures.** When a road closes, only vehicles whose remaining route uses it get a new route, rather than recalculating every vehicle.
+- **Live controls and live charts.** While a simulation runs: pause and resume, run at 1x, 5x or 10x, add 100 to 2,000 vehicles, start a rush hour into the centre, add an accident (minor, moderate or severe; 5 to 30 minutes) or close a road by clicking it on the map, clear them again, and switch dynamic rerouting on or off. Live charts of vehicles driving, the share held up by traffic and average speed come from a summary each step returns. The website sends one update at a time, so a busy city slows the simulation down rather than piling up requests.
+
+### Emergency response
+
 - **Emergency services.** Ambulance, fire and police, each with its own stations, vehicles, speed and response target; an emergency only gets its own service. With the realistic (`osm`) rules the vehicle that would arrive first by road is sent, an emergency with every vehicle busy waits in a queue, vehicles drive back to their station, and other traffic gives way. The original rules (nearest station in a straight line, refuse when busy, instant return) stay with the `simple` model. Response time is measured in simulated seconds, and you can close a road ahead of the vehicle to watch it reroute.
 - **Emergencies where people live.** Scenarios and the optimiser can place emergencies in proportion to the 2021 Census population of Norwich's 471 output areas (143,901 people; ONS, Open Government Licence), instead of evenly over the junctions.
+
+### Optimisation
+
 - **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
-- **The optimiser tested in traffic.** Its top sites (or station sets) are run as full traffic simulations at several demand levels and seeds, all facing the same trips and emergencies, plus a run without emergencies to measure the response's effect on other traffic. The report ranks them by what really happened, with 95% intervals, the gap to the optimiser's estimate for the same emergencies, and Kendall's tau between the two orders ([results](docs/optimiser_evaluation.md)).
 - **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
-- **Performance engineering.** A grid spatial index for nearest-junction lookups (31x faster, identical answers), distance searches that no longer touch every junction per call (A\* 3.26 to 1.41 ms, now faster than Dijkstra), travel-time landmark bounds that keep speed-limited A\* exact while exploring half the junctions, batched rerouting for vehicles heading to the same place (2.9x per step when trips share destinations), exhaustive station-set search where feasible, parallel candidate searches for large optimiser runs, profiling of the main workloads ([profiling](docs/profiling.md)), and runs of 10,000 vehicles ([traffic benchmark](docs/traffic_benchmark.md)).
-- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, and dynamic traffic at increasing fleet sizes.
-- **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic tests and frontend interaction tests, plus a Docker Compose smoke test, all run on every push by GitHub Actions.
-- **Logging.** The API logs start-up and each emergency dispatch through Python's `logging` module; `LOG_LEVEL` controls how much.
-- **Several simulations at once.** Every run has an ID. The original endpoints act on the run started by `/simulation/start`, and every one of them is also available as `/simulations/{id}/...`, so runs can be driven independently (each with its own lock, at most `MAX_LIVE_RUNS` in memory). The web interface uses its run's ID.
-- **PostgreSQL persistence (optional).** With `DATABASE_URL` set, each run's history is saved as it happens: closures and accidents (and whether they expired or were cleared), stations and ambulances, emergencies from dispatch to arrival (or why nothing could be sent), fleets, surges, a timeline of events, and a metrics snapshot every simulated minute. After a restart, runs that were live come back as `interrupted` with their history intact. The data model is designed properly (13 tables for runs and optimiser results, 20 with the scenario and evaluation tables; rules the database enforces itself) and explained in [the architecture guide](docs/ARCHITECTURE.md#persistence). Saving adds no measurable time to a simulation step ([benchmark](docs/persistence_benchmark.md)).
+- **The optimiser tested in traffic.** Its top sites (or station sets) are run as full traffic simulations at several demand levels and seeds, all facing the same trips and emergencies, plus a run without emergencies to measure the response's effect on other traffic. The report ranks them by what really happened, with 95% intervals, the gap to the optimiser's estimate for the same emergencies, and Kendall's tau between the two orders ([results](docs/optimiser_evaluation.md)).
 - **Saved optimiser results.** Every optimiser answer is saved and can be listed and fetched again (`/optimiser/runs`); `reuse=true` answers an identical request from the database in about 6 ms instead of computing it again (about 750 ms).
-- **Database migrations** with Alembic; the API refuses to start on a database that is not up to date.
-- **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
-- **Network-wide impact analysis.** For any simulated situation: total delay against free-flow conditions (vehicle-hours lost to congestion, accidents and closures), average, 95th percentile and worst journey-time increases, and the roads and 500 m areas that lose the most time, all measured from full simulations (delay is exact: a lone vehicle loses exactly 0 s, and road delay adds up exactly to trip delay).
+
+### Scenarios at scale
+
 - **Scenario simulation engine.** Describe a scenario (background demand, surges, road closures and accidents with start and end times, rerouting on or off, emergency stations and emergencies, a seed) and run it as a full simulation of the real Norwich network. The same scenario always gives the same result, and scenarios with the same seed have the same trips, so a disruption can be compared with its baseline trip by trip.
+- **Network-wide impact analysis.** For any simulated situation: total delay against free-flow conditions (vehicle-hours lost to congestion, accidents and closures), average, 95th percentile and worst journey-time increases, and the roads and 500 m areas that lose the most time, all measured from full simulations (delay is exact: a lone vehicle loses exactly 0 s, and road delay adds up exactly to trip delay).
 - **Scenario comparison.** Rank scenarios by clearly defined metrics (network delay, travel time, journey-time increase, completion, emergency response) and get a plain-English explanation of why one did better: what differs, how many trips were slower or faster, and which roads lost the extra time.
 - **Large studies in the background.** Run hundreds or thousands of scenarios (one per closed road, many random closures, many seeds, station layouts) as a background job in a pool of worker processes; the API answers at once and reports progress. Measured: 400 full simulations in 21.5 minutes on 4 workers ([benchmark](docs/scenario_benchmark.md)).
 - **Scenario analysis in the web interface.** Build scenarios, pick closures and accidents by clicking the map, run them, and see the ranking, explanation, charts of delay over time, and the most affected roads drawn on the map.
+
+### Runs, persistence and history
+
+- **Several simulations at once.** Every run has an ID. The original endpoints act on the run started by `/simulation/start`, and every one of them is also available as `/simulations/{id}/...`, so runs can be driven independently (each with its own lock, at most `MAX_LIVE_RUNS` in memory). The web interface uses its run's ID.
+- **PostgreSQL persistence (optional).** With `DATABASE_URL` set, each run's history is saved as it happens: closures and accidents (and whether they expired or were cleared), stations and ambulances, emergencies from dispatch to arrival (or why nothing could be sent), fleets, surges, a timeline of events, and a metrics snapshot every simulated minute. After a restart, runs that were live come back as `interrupted` with their history intact. The data model is designed properly (13 tables for runs and optimiser results, 20 with the scenario and evaluation tables; rules the database enforces itself) and explained in [the architecture guide](docs/ARCHITECTURE.md#persistence). Saving adds no measurable time to a simulation step ([benchmark](docs/persistence_benchmark.md)).
+- **Database migrations** with Alembic; the API refuses to start on a database that is not up to date.
 - **Saved runs and studies in the web interface.** The History section lists the 20 most recent saved runs and studies, shows a run's saved history, and opens any past study in the scenario results.
 - **Restarting an ended run.** A run that ended (stopped, replaced, or interrupted by a server restart) can be started again from its saved setup: the same route, rerouting setting, stations and ambulances, the closures and accidents still in place when it ended (accidents with the time they had left), and its fleets with the same trips. Vehicles start from the beginning; the new run is linked to the old one (`POST /simulations/{id}/restart`, or **Restart** in the History section).
 - **Resuming interrupted studies.** Studies a server restart interrupts are resumed when it starts again (`RESUME_STUDIES`, on by default): completed scenarios keep their results and only the rest run again, giving the same results as an uninterrupted study. Interrupted or cancelled studies can also be resumed by hand (`POST /scenarios/studies/{id}/resume`, or **Resume** in the History section).
+
+### Engineering
+
+- **Production protections.** Rate limits on expensive requests per visitor, a 2 MB request limit, security headers, `GET /health` (the process is up) and `GET /ready` (and the database answers), runs left unused stopped after 30 minutes, and visitors who never replace each other's runs. If the database cannot be reached at start-up the API still starts and simulates, without saving, and `/ready` reports `degraded`.
+- **Logging.** The API logs start-up, each emergency dispatch and one line per request (method, path, status, time taken, run ID; as text or JSON) through Python's `logging` module; `LOG_LEVEL` controls how much. The once-a-second polling requests are logged at `DEBUG` only.
+- **Docker.** `docker compose up --build` runs PostgreSQL, the migrations, the backend and the frontend (served by nginx), checked end to end in CI.
+- **Automated tests.** Backend tests (routing, simulation, optimiser, the FastAPI endpoints, and database tests against a real PostgreSQL), frontend logic and interaction tests, end-to-end tests in a real browser (Playwright), plus a Docker Compose smoke test, all run on every push by GitHub Actions.
+- **Benchmarks.** Scripts comparing Dijkstra vs A\*, shortest-path vs congestion-aware routing, rerouting strategies, dynamic traffic at increasing fleet sizes, scenario studies, persistence, and the whole API under load (throughput, latency, several visitors, memory).
 
 ## Tech stack
 
@@ -56,7 +136,7 @@ I built it as a computer science project to practise graph algorithms, simulatio
 | Containers | Docker, Docker Compose, nginx (serves the frontend and forwards `/api`) |
 | Map data | OpenStreetMap via OSMnx (used once, to download the network) |
 | Frontend | React 19, TypeScript, Vite, Leaflet / react-leaflet |
-| Testing | pytest + FastAPI `TestClient` (backend; database tests on a real PostgreSQL); Node's built-in test runner for frontend logic, Vitest + jsdom + React Testing Library for frontend interactions; GitHub Actions CI with a PostgreSQL service and a Docker Compose smoke test |
+| Testing | pytest + FastAPI `TestClient` (backend; database tests on a real PostgreSQL); Node's built-in test runner for frontend logic, Vitest + jsdom + React Testing Library for frontend interactions, Playwright for end-to-end tests in a real browser; GitHub Actions CI with a PostgreSQL service and a Docker Compose smoke test |
 | Frontend tooling | ESLint, `tsc` |
 
 ## Getting started
@@ -119,6 +199,10 @@ The backend reads seven optional environment variables:
 | `SCENARIO_WORKERS` | `min(4, CPUs)` | Worker processes that run scenario studies (0 to 64; 0 runs them one at a time inside the API process). Each holds its own copy of the map, 80 to 100 MB |
 | `MAX_STUDY_SCENARIOS` | `1000` | The most scenarios one study may have (1 to 5,000) |
 | `TRAFFIC_MODEL` | `osm` | The traffic model for runs and scenarios that do not ask for one: `osm` (OpenStreetMap speed limits, lanes and per-direction traffic) or `simple` (the original rules). A run or scenario can choose with `traffic_model`; saved runs and studies keep the model they used |
+| `RATE_LIMIT_PER_MINUTE` | `30` | Expensive requests (starting runs, fleets and surges, the optimiser, scenario studies) each visitor may make per minute; more get `429` with `Retry-After`. Stepping, status and history are never limited. `0` turns the limit off |
+| `TRUST_PROXY` | `false` | `true` behind a proxy that sets `X-Forwarded-For` (Render, the Docker nginx), so each visitor is limited separately rather than the proxy as a whole |
+| `RUN_IDLE_MINUTES` | `30` | Runs nobody has used for this long are stopped (and saved as `stopped`) when another run starts. `0` keeps them until `MAX_LIVE_RUNS` needs the room |
+| `LOG_FORMAT` | `text` | `json` writes the one-line-per-request log as JSON (method, path, status, milliseconds, run ID) for log search tools |
 
 Run the backend as **one** process (no `--workers` above 1): live simulation runs are kept in that process's memory.
 
@@ -134,7 +218,7 @@ npm run dev
 
 Open the address Vite prints, which should be **`http://localhost:5173`**. Use `localhost`, not `127.0.0.1`: by default the backend only allows cross-origin requests from `http://localhost:5173` (change it with `CORS_ORIGINS`). The frontend calls the backend at `http://127.0.0.1:8000` unless `VITE_API_URL` is set when it is built or started (see `frontend/src/config.ts`).
 
-Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (all frontend tests: `test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run preview`.
+Other frontend scripts in `package.json`: `npm run build` (type-check and build), `npm run lint`, `npm test` (`test:unit` then `test:ui`), `npm run test:unit`, `npm run test:ui`, `npm run test:e2e` (Playwright, real browser and backend), `npm run preview`.
 
 ### 6. Optional: save runs in PostgreSQL
 
@@ -171,7 +255,7 @@ docker compose up --build
 Then open **http://localhost:8080**. The API's own documentation is at http://localhost:8000/docs. The first build takes a few minutes. Start-up order is: the database (once healthy), then a one-off `migrate` container (`alembic upgrade head`), then the backend (once the migration has succeeded), then the frontend. nginx serves the frontend and forwards `/api/...` to the backend, so the browser only talks to one address.
 
 - `Ctrl+C` or `docker compose down` stops it; saved runs stay in the `pgdata` volume. `docker compose down -v` deletes them.
-- Settings go in a `.env` file next to `docker-compose.yml` (not committed), for example `POSTGRES_PASSWORD=...`, `FRONTEND_PORT=8081`, `BACKEND_PORT=8001` (if 8080 or 8000 is already in use), `LOG_LEVEL=DEBUG`, `MAX_LIVE_RUNS=4`.
+- Settings go in a `.env` file next to `docker-compose.yml` (not committed), for example `POSTGRES_PASSWORD=...`, `FRONTEND_PORT=8081`, `BACKEND_PORT=8001` (if 8080 or 8000 is already in use), `LOG_LEVEL=DEBUG`, `MAX_LIVE_RUNS=4`, `RATE_LIMIT_PER_MINUTE=0`, `LOG_FORMAT=json`. The backend sits behind nginx, which sends the security headers and passes each visitor's address on for the rate limit (`TRUST_PROXY` is set).
 - `python scripts/compose_smoke_test.py` builds and starts the stack under its own name and volume, checks it end to end (including that saved runs survive a backend restart) and removes it again. CI runs it on every push.
 
 ## Road-network data
@@ -226,17 +310,27 @@ npm install        # once, to install the test tools
 npm test           # runs both kinds of test below
 ```
 
-There are two kinds of frontend test:
+There are three kinds of frontend test:
 
 - **Logic tests** (`frontend/tests/`, `npm run test:unit`) use Node's built-in test runner and add no dependencies. They test the logic behind the simulation screen (status messages, traffic summary, route conversion), the optimiser's requests and error handling (with `fetch` replaced by a fake), and the optimiser result tables (rendered to HTML).
-- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 67 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
+- **Interaction tests** (`frontend/ui-tests/`, `npm run test:ui`) use Vitest, jsdom and React Testing Library to render the real `App` and click through it like a person: choosing points on the map, calculating a route, watching the simulation run and finish, starting over, triggering a road closure, dispatching an ambulance and closing a road ahead of it, running the single- and multi-station optimiser (changing the number of stations and the target time), loading states, API failures, and clearing results and markers. The backend is replaced by a fake `fetch`, the one-second simulation timer is driven by the test (no waiting, no flakiness), and Leaflet is replaced by a simple stand-in that draws plain elements (real Leaflet needs a real browser layout), so the tests check what the app decides to draw, not Leaflet itself. There are 91 of them, including checks on the page structure (landmarks, navigation, empty states, metric cards) and that, with a backend that gives the run an ID, every run request goes to `/simulations/{id}/...`. The test helpers live in `frontend/ui-tests/` (`helpers.ts`, `fakeLeaflet.tsx`, `mapState.ts`, `setup.ts`), and `npm run test:ui` type-checks them with `tsconfig.ui-tests.json` before running them.
 
-The app has no pause or reset button, so those are not tested: a simulation starts when a route is calculated, stops when every vehicle has finished or the backend stops answering, and a new map click starts over (that is tested).
+- **End-to-end tests** (`frontend/e2e/`, `npm run test:e2e`) use Playwright to drive the built website in a real Chromium against the real backend on the real Norwich map: nothing is faked. Playwright starts both servers itself on ports 8002 and 5174, so servers you already have on 8000 and 5173 are left alone. The 16 tests plan a route by clicking the map and watch it run; pause, resume and run at 10x; add a 2,000-vehicle fleet and a rush hour and check the page keeps up; add an accident and a closure on roads picked on the map and clear them; close a road on the route and reroute; send an ambulance, a fire engine and a police car; check two visitors never replace each other's runs; check a destination no road reaches gets the backend's reason; run the optimiser (ranking and a station set); run a scenario study and read its ranking; list saved runs; and check `/health`, `/ready` and the API docs. With `E2E_DATABASE_URL` set to a migrated PostgreSQL database, the study and history tests run (as in CI); without it they are skipped and a test checks the site says why saving is unavailable.
+
+```bash
+cd frontend
+npx playwright install chromium     # once
+npm run test:e2e
+E2E_DATABASE_URL=postgresql://norwich:norwich@localhost:5432/norwich_sim_e2e_test npm run test:e2e
+```
+
+`SCREENSHOTS=1 npx playwright test screenshots` takes the screenshots in `docs/screenshots/` from the real site the same way.
 
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 94) and the interaction tests (`npm run test:ui`, 67), as separate steps;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 117) and the interaction tests (`npm run test:ui`, 91), as separate steps;
+- the end-to-end tests (`npm run test:e2e`) in Chromium against the backend installed from `requirements-deploy.txt`, with a PostgreSQL 16 service container;
 - a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
 ## Benchmarks
@@ -352,6 +446,25 @@ How the set is chosen (optimiser version 2): where there are up to 2 million pos
 
 With the default 8 minute target even one station reaches 99.6% of emergencies, because the model has no traffic and Norwich is compact, so coverage only separates the options at tighter targets (3 to 5 minutes). The 2 unreached emergencies can only be reached from 1 of the 38 candidates (probably because of one-way roads), and the chosen set does not include it, so they appear in every row.
 
+### Through the API: throughput, latency and memory
+
+```bash
+python -m backend.perf.api_benchmark --save
+```
+
+Starts the backend as deployed (uvicorn, one worker, the Norwich map, osm traffic) on port 8003 and measures it through HTTP, as a client sees it. Full results in [`docs/api_benchmark.md`](docs/api_benchmark.md) (2026-11-17, Python 3.9.6, macOS on Apple M1; timings depend on the machine):
+
+| Measurement | Result |
+|---|---|
+| Request overhead (`GET /health`) | 0.84 ms; 1,197 requests a second from one client, 2,293 from 8 at once |
+| `GET /route` across central Norwich | 2.6 ms mean, 5.9 ms p95 |
+| A step of a run with 502 vehicles | 47 ms at 1x (21x faster than real time), 116 ms at 5x |
+| A step of a run with 2,002 vehicles | 219 ms at 1x (4.6x real time), 777 ms at 5x (6.4x) |
+| 8 visitors with 502 vehicles each, stepping at once | 20.8 steps a second in total (about 20 for one run alone): each run gets 2.6 a second, still faster than real time |
+| Memory | 105 MB with the map loaded; about 8 MB more per 500-vehicle run |
+
+Because the backend is one process, simultaneous visitors share one core: total throughput stays the same and is divided between them.
+
 ### Persistence
 
 ```bash
@@ -453,11 +566,11 @@ Then go back to the backend's **Environment** tab and set `CORS_ORIGINS` to the 
 
 ### Check that it works
 
-1. Open `https://<your-backend>.onrender.com/` and wait (up to a minute if it was asleep). You should see `{"name":"NORWICH//SIM","status":"online"}`. `/docs` shows the API documentation.
+1. Open `https://<your-backend>.onrender.com/health` and wait (up to a minute if it was asleep). You should see `{"status":"ok"}`; `/ready` should say `"database":"ok"`. `/docs` shows the API documentation.
 2. Open the frontend address, click two points in Norwich, then **Calculate Route**. A route and moving vehicles mean it is working end to end.
 3. Try **Find best ambulance station locations**. Results mean the optimiser works too.
 
-Every push to the deployed branch redeploys both services automatically.
+Every push to the deployed branch redeploys both services, once its GitHub Actions checks have passed (`autoDeployTrigger: checksPass` in the Blueprint), so a commit that fails its tests is never deployed. Render checks the backend through `/health` and restarts it if that stops answering.
 
 ### If something goes wrong
 
@@ -476,19 +589,38 @@ With the Blueprint, Render creates the database and sets the backend's `DATABASE
 
 By hand (Option B): **New +** > **Postgres**, plan Free, then set the backend's `DATABASE_URL` to its **Internal Database URL** and use the start command in the table above.
 
-**The free database expires.** Render's free PostgreSQL stops working 30 days after it is created, and is deleted 14 days after that unless you upgrade it; it has no backups. Once it has expired the backend can no longer reach it. To carry on for free, delete the expired database, create a new free one, and set the backend's `DATABASE_URL` to its Internal Database URL (the start command creates the tables); saved runs and studies are lost. To keep the app running without any database, delete `DATABASE_URL` from the backend's environment: runs are then kept in memory only, and history and studies answer 503.
+**The free database expires.** Render's free PostgreSQL stops working 30 days after it is created and is deleted 14 days after that unless upgraded, and it has no backups. The app is built so that this costs saved history at most, never the site:
 
-*These are Render's free-database terms at the time of writing; check [render.com/docs/free](https://render.com/docs/free).*
+- **The API keeps running.** If the database cannot be reached when the backend starts, it starts anyway with saving off: simulations, the optimiser and the live controls all work, history and studies answer 503, and `GET /ready` reports `degraded`. Delete `DATABASE_URL` to make that permanent.
+- **Back it up** before it expires (see [Backups](#backups)).
+- **Move to a database that does not expire.** Neon's free plan, for example, has no expiry date (it pauses compute after 5 idle minutes and resumes on the next request) and 1 GB per project, with no card needed. Create a PostgreSQL 16 project there, restore the latest backup into it with `scripts/restore_database.sh`, then on Render set the backend's `DATABASE_URL` to the Neon connection string (keep `?sslmode=require`) and delete the Render database. The start command's `alembic upgrade head` brings the schema up to date. Or create a new free Render database every month and restore into that.
+
+*These are Render's and Neon's free-plan terms as of November 2026; check [render.com/docs/free](https://render.com/docs/free) and [neon.com/pricing](https://neon.com/pricing).*
+
+### Backups
+
+```bash
+scripts/backup_database.sh "$DATABASE_URL"                  # -> backups/norwich_sim-<date>.dump
+scripts/restore_database.sh backups/norwich_sim-<date>.dump "$DATABASE_URL" --yes
+```
+
+The backup is one compressed `pg_dump` file with every table, including the schema version, so `alembic upgrade head` after a restore brings an older backup up to date. It is written under a temporary name and checked before it gets its real name, so a failed backup never leaves a file that looks good. The restore runs in one transaction (all or nothing) and refuses without `--yes`, because it replaces the app's tables. For Render, use the database's **External Database URL**. You need `pg_dump` and `pg_restore` for PostgreSQL 16 (`brew install postgresql@16`); `backups/` is ignored by Git.
+
+**Weekly, automatically.** `.github/workflows/backup.yml` backs up the deployed database every Monday (and on demand from the Actions tab) once two repository secrets are set: `DATABASE_BACKUP_URL` (the External Database URL) and `BACKUP_PASSPHRASE`. The dump is encrypted before it is uploaded, because anyone signed in to GitHub can download a public repository's artifacts, and it is kept for 30 days. Without the secrets the job notes that it skipped. To restore one, download the artifact, then:
+
+```bash
+openssl enc -d -aes-256-cbc -pbkdf2 -iter 200000 -in norwich_sim.dump.enc -out norwich_sim.dump -pass env:BACKUP_PASSPHRASE
+```
 
 ### Limits of this deployment
 
-- **Runs are kept apart, but there is one default run.** Each visitor's simulation has its own ID and its own vehicles and closures. Starting a new route makes that run the default and replaces the previous default, so if two people start routes at the same time, the first one's run is replaced (and their next step fails). Fine for a portfolio demo where one visitor looks at a time; not a multi-user service.
-- **The optimiser is open to anyone**, and searches use the shared free CPU. There is no login or rate limiting.
-- Restarting or waking the backend ends every live run. Without a database nothing is kept; with one, their history is kept, they are marked `interrupted`, and they can be restarted from their setup in the History section. Studies that were running are resumed.
+- **Visitors are kept apart.** Each visitor's simulation has its own ID, vehicles, closures, stations and live controls, and the website never replaces somebody else's run. At most `MAX_LIVE_RUNS` (8) runs are in memory: a ninth visitor stops the run idle longest, and runs left unused for 30 minutes are stopped.
+- **Expensive requests are rate-limited** (30 a minute per visitor) and the optimiser and studies share the free service's CPU, so a busy moment makes them slower for everyone. There is no login.
+- **Restarting or waking the backend ends every live run.** Without a database nothing is kept; with one, their history is kept, they are marked `interrupted`, and they can be restarted from their setup in the History section. Studies that were running are resumed.
 
 ## Demo
 
-[`docs/DEMO.md`](docs/DEMO.md) is a short guide to route calculation, traffic simulation, road closures and ambulance rerouting, through both the web interface and the API.
+[`docs/DEMO.md`](docs/DEMO.md) walks through every feature, in the web interface and through the API. [`docs/PORTFOLIO.md`](docs/PORTFOLIO.md) has a script for a three-minute demo video and a summary of the results.
 
 ## Project structure
 
@@ -523,16 +655,16 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 - **Big events still cost one slow step.** An accident or reopening that affects a few hundred vehicles re-plans them all in the same simulated second. Batched rerouting shares searches between vehicles heading to the same junction, which helps a lot when trips share destinations (2.9x with trips into one zone) but almost never applies to ordinary Norwich traffic, whose destinations are spread over 1,500+ junctions.
 - **A vehicle rerouted part-way along a road is briefly counted on a made-up road.** Its new route starts at its current position (an existing test relies on that), so for the rest of that road it is counted on a segment from that point to the next junction rather than on the real road: it does not add to that road's congestion count, and an accident on that road does not slow it, for those few seconds.
 - **Finished vehicles stay in the vehicle list** (their position in the list is their id in the API), so every `/simulation/step` response grows as fleets and surges add vehicles. Stepping skips them cheaply, but a long surge produces a large response.
-- **Fleets and surges have no buttons in the web interface yet.** They work through the API (see the demo guide). Vehicles added that way do appear and move on the map, because the map draws every vehicle `/simulation/step` returns.
+- **Visitors share one CPU core.** Runs are isolated, but the backend is one Python process, so several busy simulations stepping at once share a core: each gets a proportional share of the steps rather than the full speed (measured in the API benchmark). Surges in the website are a fixed rush hour into the centre; other zones, directions and rates are available through the API.
 - **Dispatch realism depends on the traffic model.** With `osm` the vehicle that would arrive first by road is sent, queues form when every vehicle is busy and vehicles drive back; with `simple` the original rules apply (nearest station in a straight line, refused when busy, instant return). Fire and police response targets are illustrative (there is no single national target); crews take no time to set off.
 - **Live runs live in memory.** Runs have IDs and are kept apart, but they exist in one process's memory: the backend must run as a single worker, and a run cannot carry on after a restart from where it was (its vehicles' positions are not saved). With a database its history survives (it comes back `interrupted`) and it can be **restarted from its setup**: same route, stations, closures, accidents and fleet trips, but vehicles start again from the beginning, and surges and past emergencies are not repeated. Without a database, nothing survives. After a crash, a saved run's simulated time and vehicle counts can be up to a minute (simulated) behind; its events, incidents and emergencies are saved as they happen.
 - **Scenario results have limits worth knowing.** Each scenario keeps its 25 most delayed roads and 10 most delayed areas (totals and per-trip figures are complete). A vehicle crossing into another road during a second has that second counted on the first road. A scenario that was running when the server stopped starts again from the beginning when its study is resumed (finished scenarios are kept). Comparing scenarios from different studies is only available through the API (`/scenarios/compare`).
-- **The History section is short.** It lists the 20 most recent runs and studies (the API pages through all of them). Saved optimiser results are only available through the API (`/optimiser/runs`). The optimiser panel plans around the default run's closed roads rather than passing its own run's ID.
-- **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with `/simulation/fleet` or `/traffic/surge`.
+- **The History section is short.** It lists the 20 most recent runs and studies (the API pages through all of them). Saved optimiser results are only available through the API (`/optimiser/runs`).
+- **The API starts a small simulation.** `/simulation/start` creates two vehicles (start to destination and back, if the return route exists); add more with *Add vehicles* and the rush-hour button, or `/simulation/fleet` and `/traffic/surge`.
 - **The optimiser's fast estimate ignores traffic**, so its ranking is a screen: "Test the optimiser in traffic" (or `run_evaluation`) checks its top answers in full simulations, which take minutes rather than seconds, and Render's free plan is too small for large ones. The screen still assumes a vehicle is always free; only the simulation models busy vehicles.
-- **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser is a heuristic (greedy plus swaps) that is only checked against the true best set for 2 and 3 stations. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.
+- **The optimiser only chooses between its candidate sites** (a grid snapped to well-connected junctions), so it can miss a slightly better junction between grid points: `evaluate` finds a central junction about 3% better and a best-of-160 random junction about 5% better. The multiple-station chooser scores every possible set when there are up to 2 million (always, with the default 38 candidates and up to 5 stations); larger searches fall back to greedy picking plus swaps, which is not guaranteed to find the best set. It assumes a station never runs out of ambulances, so it measures coverage by location, not capacity. Emergencies that no chosen station can reach are counted at the slowest response seen when choosing, so a few can be left unreached if reaching them would cost more elsewhere; always check the Unreached column.
 - **Python sets the speed limit of the project.** Everything is pure Python apart from numpy in the station-set search, so with 10,000 vehicles a simulated second takes 1.3 s with rerouting (see the traffic benchmark), and the optimiser parallelises only its candidate searches, and only for 200+ candidates.
-- **Frontend tests do not use real Leaflet or a real browser.** The interaction tests run in jsdom with a stand-in for the map, so map rendering, tile loading and real mouse behaviour on the map are not covered. There are no pause or reset buttons, and no authentication.
+- **End-to-end tests use one browser.** They run in Chromium only (not Firefox or Safari) at one desktop size; phone layouts are checked by hand. There is no authentication.
 
 ## Troubleshooting
 
@@ -549,5 +681,5 @@ See [`docs/ARCHITECTURE.md`](docs/ARCHITECTURE.md) for how the pieces fit togeth
 | `docker compose up` says a port is already allocated | Something else uses 8080 or 8000. Set `FRONTEND_PORT` / `BACKEND_PORT` in a `.env` file. |
 | A scenario study answers `503 ... need a database` | Scenario studies are stored in PostgreSQL; start the backend with `DATABASE_URL`. |
 | A study stays at "0 of N scenarios" | The first scenarios are still running (500 vehicles take about 16 s each), or `SCENARIO_WORKERS` processes could not start: check the backend log. |
-| The backend on Render fails with database connection errors about a month after it was set up | Render's free database has expired. See [The database](#the-database). |
+| About a month after it was set up, History and Scenarios say the database is unavailable and `/ready` says `degraded` | Render's free database has expired (the simulation still works). See [The database](#the-database). |
 | Database tests are all skipped | Set `TEST_DATABASE_URL` to a PostgreSQL database whose name contains `test` (it is wiped). |

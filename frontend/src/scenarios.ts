@@ -306,7 +306,8 @@ export const isFinished = (study: Study) =>
 
 export function formatValue(value: number | null | undefined, unit: string): string {
   if (value === null || value === undefined) return "-"
-  if (unit === "vehicle-hours") return `${value.toFixed(1)} veh-h`
+  // Two decimals below 10: scenarios often differ by hundredths
+  if (unit === "vehicle-hours") return `${value.toFixed(Math.abs(value) < 10 ? 2 : 1)} veh-h`
   if (unit === "%") return `${value.toFixed(0)}%`
   if (unit === "s") return formatSeconds(value)
   return value.toLocaleString("en-GB", { maximumFractionDigits: 1 })
@@ -366,6 +367,13 @@ export function histogram(values: number[], bins: number) {
   }
 
   return counts
+}
+
+// "0.71-0.74": enough decimals that a bin's two ends differ
+export function binLabel(bin: { from: number; to: number }): string {
+  const width = bin.to - bin.from
+  const digits = width > 0 ? Math.min(4, Math.max(1, Math.ceil(-Math.log10(width)))) : 1
+  return `${bin.from.toFixed(digits)}-${bin.to.toFixed(digits)}`
 }
 
 export const roadLabel = (road: {

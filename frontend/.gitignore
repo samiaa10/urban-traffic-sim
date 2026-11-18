@@ -25,3 +25,7 @@ dist-ssr
 
 # Compiled frontend tests (npm test)
 .test-build
+
+# End-to-end test output (npm run test:e2e)
+test-results
+playwright-report

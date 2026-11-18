@@ -1357,3 +1357,35 @@ def test_dynamic_rerouting_can_be_switched_off(running, api):
     step(running)
 
     assert api.simulation.vehicles[0].reroutes == 0
+
+
+# ------------------------------------------------------------
+# Stage 6: several seconds per step, and the live summary
+# ------------------------------------------------------------
+
+def test_a_step_can_advance_several_seconds_and_summarises_the_traffic(running):
+    running.post("/simulation/fleet", params={"count": 6, "seed": 3})
+
+    body = running.post("/simulation/step", params={"seconds": 5}).json()
+
+    assert body["simulation_time"] == 5
+    summary = body["summary"]
+    assert summary["active_vehicles"] + summary["arrived"] <= len(body["vehicles"])
+    assert summary["active_vehicles"] > 0
+    assert 0 < summary["mean_speed_factor"] <= 1
+    assert 0 <= summary["held_up"] <= summary["active_vehicles"]
+    assert summary["closed_roads"] == 0 and summary["accidents"] == 0
+
+    assert running.post("/simulation/step", params={"seconds": 0}).status_code == 422
+    assert running.post("/simulation/step", params={"seconds": 61}).status_code == 422
+
+
+def test_five_one_second_steps_equal_one_five_second_step(client):
+    def run(seconds_per_call, calls):
+        client.post("/simulation/start", params={"start": 0, "destination": 15})
+        client.post("/simulation/fleet", params={"count": 5, "seed": 9})
+        for _ in range(calls):
+            body = client.post("/simulation/step", params={"seconds": seconds_per_call}).json()
+        return [(v["latitude"], v["longitude"]) for v in body["vehicles"]]
+
+    assert run(1, 5) == run(5, 1)

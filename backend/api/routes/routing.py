@@ -18,20 +18,65 @@ from backend.routing.a_star import a_star
 router = APIRouter()
 
 
-@router.get("/")
+@router.get("/", tags=["Service"])
 def root():
+    """The API's name and that it is online."""
+
     return {
         "name": "NORWICH//SIM",
         "status": "online"
     }
 
 
-@router.get("/nearest-node")
+@router.get("/health", tags=["Service"])
+def health():
+    """Liveness: the process answers (no database or other checks), for
+    the hosting platform's health check."""
+
+    return {"status": "ok"}
+
+
+@router.get("/ready", tags=["Service"])
+def ready(context: AppContext = Depends(get_context)):
+    """Readiness: whether saving works. 200 with the database "ok" or "not
+    configured"; 503 if a database is configured but cannot be reached
+    (the API still runs, without saving)."""
+
+    from fastapi.responses import JSONResponse
+
+    if context.database is None:
+        if context.database_error is not None:
+            return JSONResponse(status_code=503, content={
+                "status": "degraded", "database": "unreachable at start-up",
+                "detail": context.database_error,
+                "live_runs": len(context.registry),
+            })
+        return {"status": "ok", "database": "not configured", "live_runs": len(context.registry)}
+
+    try:
+        from sqlalchemy import text
+
+        with context.database.engine.connect() as connection:
+            connection.execute(text("SELECT 1"))
+    except Exception as error:   # the database went away while running
+        return JSONResponse(status_code=503, content={
+            "status": "degraded", "database": "unreachable",
+            "detail": f"{type(error).__name__}".strip(),
+            "live_runs": len(context.registry),
+        })
+
+    return {"status": "ok", "database": "ok", "live_runs": len(context.registry)}
+
+
+@router.get("/nearest-node", tags=["Routing"])
 def nearest_node(
     latitude: float,
     longitude: float,
     context: AppContext = Depends(get_context)
 ):
+    """The road junction nearest a point (how the website turns a map click
+    into a start or destination)."""
+
     graph = context.graph
     nearest = nearest_node_id(graph, latitude, longitude)
 
@@ -42,7 +87,7 @@ def nearest_node(
     }
 
 
-@router.get("/route")
+@router.get("/route", tags=["Routing"])
 def route(
     start: int,
     destination: int,

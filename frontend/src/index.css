@@ -436,6 +436,12 @@ a {
   gap: 12px;
 }
 
+/* A button beside a labelled control lines up with the control, at its
+   own height (not stretched to the label and control together) */
+.fields > .btn {
+  align-self: end;
+}
+
 .field {
   display: flex;
   flex-direction: column;
@@ -1540,6 +1546,79 @@ a {
   background: var(--surface);
 }
 
+/* Live traffic charts: in the main column */
+.live-analytics {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: var(--pad) 24px 24px;
+  scroll-margin-top: calc(var(--topbar-h) + var(--gap));
+}
+
+.kpis--compact {
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+}
+
+.live-charts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+  gap: var(--gap);
+}
+
+.live-chart {
+  margin: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+}
+
+.live-chart svg {
+  width: 100%;
+  height: auto;
+  overflow: visible;
+}
+
+.live-chart .axis {
+  stroke: var(--line, currentColor);
+  stroke-width: 1;
+  opacity: 0.5;
+}
+
+.live-chart .series {
+  fill: none;
+  stroke: var(--accent, #2a5d8f);
+  stroke-width: 2;
+  vector-effect: non-scaling-stroke;
+}
+
+/* Live controls: the incidents you added, and the rerouting switch */
+.incident-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: var(--text-xs);
+}
+
+.incident-list li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.toggle {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  font-size: var(--text-sm, 0.875rem);
+}
+
 /* The optimiser tested in traffic: in the main column too */
 .evaluation {
   grid-column: 2;
@@ -1645,6 +1724,7 @@ a {
   .map-card,
   .results,
   .scenarios,
+  .live-analytics,
   .evaluation,
   .history,
   .sidebar {

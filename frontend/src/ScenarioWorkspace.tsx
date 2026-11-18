@@ -9,6 +9,7 @@ import { useEffect, useRef, useState } from "react"
 import { Icon, KpiCard, Spinner } from "./components.tsx"
 import { BarChart } from "./OptimiserResults.tsx"
 import {
+  binLabel,
   STUDY_POLL_MS,
   delaySeries,
   formatSeconds,
@@ -756,7 +757,7 @@ function Histogram({ values }: { values: number[] }) {
     <BarChart
       title="Spread of network delay"
       bars={bins.map((bin) => ({
-        label: `${bin.from.toFixed(1)}-${bin.to.toFixed(1)}`,
+        label: binLabel(bin),
         value: bin.count,
         text: `${bin.count} scenario${bin.count === 1 ? "" : "s"}`,
       }))}

@@ -145,12 +145,15 @@ export const SCENARIOS = 500
 export type OptimiserOptions = {
   service?: "ambulance" | "fire" | "police"
   distribution?: "uniform" | "population"
+  // The visitor's own run, whose closed roads to plan around
+  simulationId?: string | null
 }
 
-export function optionQuery({ service, distribution }: OptimiserOptions = {}): string {
+export function optionQuery({ service, distribution, simulationId }: OptimiserOptions = {}): string {
   return (
     (service && service !== "ambulance" ? `&service=${service}` : "") +
-    (distribution === "population" ? "&distribution=population" : "")
+    (distribution === "population" ? "&distribution=population" : "") +
+    (simulationId ? `&simulation_id=${encodeURIComponent(simulationId)}` : "")
   )
 }
 

@@ -18,20 +18,27 @@ flowchart TB
     OSM[(OpenStreetMap)] -->|"osm_loader.py (run once)"| PKL[("Norwich road graph<br/>data/osm/norwich_graph.pkl<br/>5,058 junctions, 10,980 segments")]
 
     subgraph FE["Frontend: React + TypeScript + Vite"]
-        APP["App.tsx + OptimiserPanel<br/>controls, status panel, polling"]
+        APP["App.tsx: route, closures, emergencies,<br/>one update at a time"]
+        LIVE["Live controls + live charts<br/>pause, speed, fleets, rush hour,<br/>incidents picked on the map"]
+        PANELS["Optimiser, In traffic,<br/>Scenarios, History"]
         MAP["Leaflet map (react-leaflet)<br/>routes, vehicles, congestion, markers"]
         APP --> MAP
+        LIVE --> APP
+        PANELS --> MAP
     end
 
     subgraph BE["Backend: FastAPI (backend/api: app.py + routes/)"]
-        API["HTTP endpoints + CORS<br/>original paths + /simulations/{id}/..."]
+        PROT["protection.py<br/>rate limits, size limit,<br/>request log, headers"]
+        API["HTTP endpoints + CORS<br/>original paths + /simulations/{id}/...<br/>/health, /ready"]
+        PROT --> API
         REG["Run registry (sessions.py)<br/>live runs by ID, one lock each"]
         REC["Recorder (recorder.py)<br/>saves what happens to a run"]
         ROUTING["Routing engine<br/>Graph, A*, Dijkstra,<br/>RoadNetwork: travel-time A*, landmarks"]
         SIM["Simulation engine<br/>vehicles, congestion, accidents,<br/>closures, events"]
         TM["Traffic manager<br/>fleets, surges, demand model,<br/>dynamic rerouting"]
         EMER["Emergency response<br/>stations, dispatch,<br/>ETA, response time"]
-        OPT["Optimisation engine<br/>single + multi-station optimiser"]
+        OPT["Optimisation engine<br/>single + multi-station optimiser,<br/>tested in traffic (evaluation.py)"]
+        SCEN["Scenario engine (backend/scenarios)<br/>run, measure, compare;<br/>studies in worker processes"]
         API --> REG
         REG --> TM
         REG --> REC
@@ -44,10 +51,15 @@ flowchart TB
         SIM --> ROUTING
         EMER --> SIM
         OPT --> ROUTING
+        API --> SCEN
+        SCEN --> TM
+        OPT --> SCEN
     end
 
     PKL -->|"loaded at start-up"| API
-    PG[("PostgreSQL (optional)<br/>runs, history,<br/>optimiser results")]
+    PG[("PostgreSQL (optional)<br/>runs, history, optimiser results,<br/>scenario studies")]
+    SCEN -->|"results"| PG
+    BACKUP["backup_database.sh<br/>weekly encrypted backup (Actions)"] -.-> PG
     REC -->|"SQLAlchemy<br/>(backend/db)"| PG
     OPT -.->|"results saved<br/>via the API"| PG
     APP <-->|"HTTP + JSON<br/>127.0.0.1:8000, or /api via nginx"| API
@@ -57,7 +69,8 @@ flowchart TB
         PYT["pytest: routing, simulation,<br/>emergency, optimiser, API,<br/>database (real PostgreSQL)"]
         BEN["Benchmark scripts<br/>(three save to docs/*.md)"]
         FET["Frontend: node:test logic tests<br/>+ Vitest / React Testing Library"]
-        CI["GitHub Actions CI<br/>(+ PostgreSQL service,<br/>Docker Compose smoke test)"]
+        E2E["Playwright end-to-end:<br/>real browser, real backend,<br/>real Norwich map"]
+        CI["GitHub Actions CI: 5 jobs<br/>(+ PostgreSQL service,<br/>Docker Compose smoke test)"]
     end
 
     PYT -.-> BE
@@ -67,6 +80,9 @@ flowchart TB
     FET -.-> FE
     CI -.-> PYT
     CI -.-> FET
+    CI -.-> E2E
+    E2E -.-> FE
+    E2E -.-> BE
 ```
 
 The Norwich data is downloaded once and saved as a pickle file. The API loads it when it starts, and the benchmark and optimiser scripts load it themselves. See [Road-network data](../README.md#road-network-data).
@@ -81,7 +97,8 @@ backend/
 │   ├── context.py              AppContext: graph, RoadNetwork, optimiser candidates, run registry, database (shared, read-only)
 │   ├── sessions.py             LiveRun (a simulation + traffic manager + lock + recorder) and RunRegistry (runs by ID)
 │   ├── recorder.py             RunRecorder: saves a live run's history to the database (NullRecorder without one)
-│   ├── settings.py             Reads CORS_ORIGINS, LOG_LEVEL, MAX_LIVE_RUNS, DATABASE_URL (no FastAPI, so testable on its own)
+│   ├── settings.py             Reads CORS_ORIGINS, LOG_LEVEL, MAX_LIVE_RUNS, DATABASE_URL, the rate limit and proxy settings (no FastAPI, so testable on its own)
+│   ├── protection.py           Rate limits, request size limit, request log, security headers
 │   └── routes/                 The endpoints, one file per area:
 │       ├── common.py           Finding a request's run (default or by ID), run_route (registers both paths), junction checks
 │       ├── routing.py          /, /nearest-node, /route
@@ -159,6 +176,7 @@ frontend/
 ├── src/main.tsx                React entry point
 ├── tests/                      Logic tests (Node's test runner, `npm run test:unit`)
 ├── ui-tests/                   Interaction tests (Vitest + jsdom + React Testing Library, `npm run test:ui`)
+├── e2e/                        End-to-end tests (Playwright, real browser and backend, `npm run test:e2e`)
 │                               plus their helpers: helpers.ts, fakeLeaflet.tsx, mapState.ts, setup.ts
 ├── vitest.config.ts            Vitest settings for ui-tests/ (jsdom, setup file)
 ├── tsconfig.test.json          Compiles tests/ for Node's test runner
@@ -259,6 +277,7 @@ Each change was measured before and after, and each keeps the answers exactly as
 - **Reachability cache.** Snapping a candidate needs to know whether a junction can reach 90% of the map; that is a fixed property of the map, now found with a breadth-first search and remembered (`reach_count`) instead of a full Dijkstra every time. The optimiser's profile was 55% `shortest_distances`, mostly these.
 - **Batched rerouting** (`TrafficManager._batched_route`). When three or more vehicles due a check in the same second head to the same destination, one backward search from it (`RoadNetwork.fastest_tree_to`) gives every one of them its fastest route. It is exact in the osm model: a vehicle's own road is the only one that costs it differently, and a fastest route from the next junction never uses the road it is on (that would pass the junction twice); vehicles exactly at a junction, and the simple model (where both directions share one count), search on their own. On ordinary Norwich traffic destinations are too spread out for it to matter (98 of about 25,600 plans with 2,000 vehicles, no change in step time); with 2,000 trips into a 250 m zone it cut the time per step from 244.9 ms to 83.9 ms (2.9x) with identical journeys.
 - **Profiling.** `python -m backend.perf.profile --save` profiles dynamic traffic, route searches, the optimiser and a scenario with cProfile (`docs/profiling.md`).
+- **The API under load.** `python -m backend.perf.api_benchmark --save` starts the backend as deployed and measures request overhead, routing, step latency at 1x and 5x with up to 2,000 vehicles, eight visitors stepping at once, and memory, through HTTP (`docs/api_benchmark.md`). It measures memory before anything else runs, because Python keeps memory it has freed and later runs would reuse it.
 
 ### Accidents (`simulation/accidents.py`)
 
@@ -359,6 +378,19 @@ The report, per candidate and demand level: the simulated mean (95% interval ove
 
 `basicConfig` does nothing if logging is already set up (pytest's `caplog` relies on this), and uvicorn's own request logs keep uvicorn's format. The command-line tools (benchmarks, the optimiser CLI and `Simulation.run`'s demo) still `print`, because printing a report to the terminal is their job.
 
+### Running in public (`api/protection.py`)
+
+The deployed API is open to anyone, so one middleware, in-process like the runs themselves (no extra service), adds:
+
+- **Rate limits** on requests that cost real CPU time: starting runs, fleets and surges, the optimiser, scenario studies and evaluations. Each visitor has a token bucket of `RATE_LIMIT_PER_MINUTE` (default 30), refilled evenly; over it they get `429` with `Retry-After`. Stepping, status and history are never limited, so the once-a-second polling is unaffected. Behind a proxy (`TRUST_PROXY=true`) the visitor is the first address in `X-Forwarded-For`; the Docker nginx sets that header to the visitor's own address only, so a browser cannot choose it.
+- **A 2 MB request limit** (`413`); a 1,000-scenario study is about 0.5 MB.
+- **Security headers** (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on every answer; nginx and the Render static site send the same for the website.
+- **One log line per request** (method, path, status, milliseconds, run ID), as text or `LOG_FORMAT=json`. The polling requests are logged at `DEBUG`.
+
+**Health.** `GET /health` answers `200` while the process is up; Render and the Docker health check use it. `GET /ready` also checks the database (`SELECT 1`) and answers `503 degraded` when it cannot be reached. These are separate on purpose: a database outage should not make Render restart an API that can still simulate.
+
+**Starting without the database.** If `DATABASE_URL` is set but the database cannot be reached at start-up, the API logs the error and starts anyway with persistence off (runs show `recording: off`, history endpoints answer 503, `/ready` says why). Restarting the API once the database is back turns saving on again. A database that is reachable but has an out-of-date schema still stops start-up: that is a deployment mistake, not an outage.
+
 ## Persistence
 
 Stage 3 added two things: **simulation runs with their own IDs**, so several can run independently, and **PostgreSQL persistence**, so what happened in a run, and every optimiser result, survives a restart. Persistence is optional: with no `DATABASE_URL` the API behaves exactly as it did before Stage 3, and the history endpoints answer 503.
@@ -371,10 +403,10 @@ Before Stage 3 the API kept one `Simulation` and one `TrafficManager` in module-
 - The **`RunRegistry`** keeps the live runs by ID and knows which one is the **default run**: the one most recently started with `/simulation/start`.
 - Every endpoint that acts on a run is registered twice by `run_route` (`routes/common.py`): at its original path (`/simulation/step`, `/incident/block`, ...), where it acts on the default run, and under `/simulations/{simulation_id}/...`, where it acts on the named run. It is the same handler function either way; only the dependency that finds the run differs. So existing clients and tests keep working, and `/simulation/start` still replaces the previous default run, as the single global simulation used to be replaced. `POST /simulations` starts a run that is *not* the default and replaces nothing.
 - **Locking.** FastAPI runs these endpoints on a thread pool, so the frontend's polling and a user's action could change the same simulation at once (that was already possible before Stage 3). Every handler holds `run.lock` while it reads or changes the run. Different runs never wait for each other. The shared `RoadNetwork` is read-only, except that it builds its landmark tables the first time a traffic manager is created, by emptying and refilling them, so traffic managers are created one at a time (`AppContext.network_lock`).
-- **Memory.** Each live run can hold thousands of vehicles, so at most `MAX_LIVE_RUNS` (default 8) are kept. Starting one more stops the run that has been idle longest.
+- **Memory.** Each live run can hold thousands of vehicles, so at most `MAX_LIVE_RUNS` (default 8) are kept. Starting one more stops the run that has been idle longest, and runs nobody has used for `RUN_IDLE_MINUTES` (default 30) are stopped whenever a run starts.
 - **One process.** Live runs exist in one process's memory, so the backend must run as a single worker (`uvicorn ... --workers 1`, as in the Dockerfile and on Render). Saved history is in PostgreSQL and could be read by any number of processes.
 
-The frontend keeps the `simulation_id` that `/simulation/start` returns and sends every request about the running simulation to `/simulations/{id}/...` (`runPath` in `simulationHelpers.ts`), so its requests reach its own run even if someone else starts another. With an older backend that returns no ID it falls back to the original paths.
+The frontend starts its run with `/simulation/start?replace_default=false`, so a visitor never replaces somebody else's run (without it, the original behaviour stays: the previous default run is replaced). It keeps the `simulation_id` that `/simulation/start` returns and sends every request about the running simulation to `/simulations/{id}/...` (`runPath` in `simulationHelpers.ts`), so its requests reach its own run even if someone else starts another. With an older backend that returns no ID it falls back to the original paths.
 
 ### What is saved, and when
 
@@ -449,6 +481,10 @@ erDiagram
 With a database, `/optimiser/stations` and `/optimiser/station-set` save every answer and add `optimiser_run_id` and `reused` to it. `GET /optimiser/runs` lists saved results and `GET /optimiser/runs/{id}` returns one, with the answer exactly as it was given.
 
 The optimiser is deterministic, so an identical request gets an identical answer. `request_key` is a SHA-256 of everything the answer depends on: the map (its fingerprint), the settings, the candidates (in order, which can break ties), the closed roads (in any order) and `OPTIMISER_VERSION` (`station_optimiser.py`). With `reuse=true` (opt-in, so the default behaviour is unchanged) the newest saved answer with the same key is returned instead of computing again: about 6 ms instead of about 750 ms on Norwich. **Bump `OPTIMISER_VERSION` whenever a change to the optimiser would change its answers**, so old answers are never reused for new code.
+
+### Backups and an expiring database
+
+`scripts/backup_database.sh` writes one `pg_dump` custom-format file (every table, including `alembic_version`) under a temporary name, checks it with `pg_restore --list`, and only then renames it; `scripts/restore_database.sh` restores it in a single transaction with `--exit-on-error`, so a damaged file changes nothing. `backend/tests/db/test_backup.py` backs up a database with a saved run, wipes it, restores it and checks the run's timeline is identical (skipped where no `pg_dump` of the server's version is installed, including CI's runners). `.github/workflows/backup.yml` runs the same script weekly in a `postgres:16` container against the deployed database and uploads the dump encrypted (AES-256, PBKDF2), since public repositories' artifacts are downloadable by any GitHub user. Because the hosted free database expires, the API also treats an unreachable database as an outage to survive rather than a reason not to start (see [Running in public](#running-in-public-apiprotectionpy)).
 
 ### Migrations
 
@@ -547,18 +583,20 @@ Scenario studies run in worker processes inside the backend container (`SCENARIO
 
 ## API endpoints
 
-Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs`.
+Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs` (and `/redoc`): an overview, then every operation grouped by tag (Service, Routing, Simulation runs, Traffic, Incidents, Emergency services, Optimiser, Scenarios, History), each with a description; `backend/tests/test_api_docs.py` keeps it that way.
 
 **Which run.** The endpoints that act on a simulation exist twice (see [Runs and their IDs](#runs-and-their-ids)): at the path in the table below, acting on the **default run** (404 `No simulation is running` if there is none), and under `/simulations/{simulation_id}`, acting on that run (404 if there never was such a run, 409 if it has ended). The second column gives the per-run path; the parameters and answers are the same.
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | Health check (`{"name": "NORWICH//SIM", "status": "online"}`) |
+| GET | `/` | `{"name": "NORWICH//SIM", "status": "online"}` |
+| GET | `/health` | Liveness: `{"status": "ok"}` while the process answers (Render's and Docker's health check) |
+| GET | `/ready` | Readiness: the database `ok` or `not configured` (200), or 503 `degraded` when it cannot be reached, with the number of live runs |
 | GET | `/nearest-node?latitude&longitude` | Nearest junction to a point |
 | GET | `/route?start&destination&simulation_id` | Shortest A\* route between two junction ids (plus 50 m per vehicle on a road). Uses the traffic and closures of the run named by `simulation_id`, or of the default run, if any |
-| POST | `/simulation/start?start&destination` | Start a simulation with a vehicle from start to destination, plus one coming back if a return route exists. Also creates the traffic manager (real road lengths, dynamic rerouting). It becomes the default run (the previous default stops, recorded as `replaced`). The answer includes its `simulation_id`; 503 if a database is configured but the run could not be saved |
+| POST | `/simulation/start?start&destination&traffic_model&replace_default` | Start a simulation with a vehicle from start to destination, plus one coming back if a return route exists. Also creates the traffic manager (real road lengths, dynamic rerouting). It becomes the default run (the previous default stops, recorded as `replaced`); with `replace_default=false`, as the website sends, it replaces nothing. The answer includes its `simulation_id`; 503 if a database is configured but the run could not be saved |
 | GET | `/simulation/state` | Position and progress of vehicle 0 |
-| POST | `/simulation/step` | Run surges, advance one simulated second, react to events and re-plan. Returns all vehicles (position, `speed_factor` where 1.0 is free flowing, `journey_seconds`, `reroutes`), `simulation_time` and `rerouted_this_step` |
+| POST | `/simulation/step?seconds` | Run surges, advance `seconds` (1 to 60, default 1) simulated seconds, react to events and re-plan after each. Returns all vehicles (position, `speed_factor` where 1.0 is free flowing, `journey_seconds`, `reroutes`), `simulation_time`, `rerouted_this_step` and a `summary` for the live charts (vehicles driving and held up, average speed, arrivals, mean journey, reroutes, closed roads, accidents) |
 | GET | `/simulation/congestion` | Vehicle count and congestion level per road segment (the level includes any accident's lost capacity) |
 | POST | `/simulation/reroute?vehicle_id` | Recalculate one vehicle's route (travel time, traffic, accidents, closures) |
 | POST | `/simulation/fleet?count&seed` | Add `count` (1 to 2,000) vehicles with demand-model trips and fastest routes. Returns `spawned`, `failed`, `seconds`, `total_vehicles` |
@@ -688,15 +726,20 @@ The screen is one workspace: a fixed navy header, a controls column on the left,
 
 **Frontend logic tests.** `frontend/tests/` holds tests run by `npm run test:unit`. They use Node's built-in test runner: `tsconfig.test.json` compiles the tests and the few source files they import (`simulationHelpers.ts`, `optimiser.ts`, `OptimiserResults.tsx`) into `.test-build/`, then `node --test` runs them. Components are rendered to HTML with `react-dom/server`; `fetch` is replaced by a fake. Source files that tests import must write their relative imports with the extension (`./optimiser.ts`).
 
-**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time; other timers, such as Testing Library's own, run normally). `setup.ts` unmounts the app and undoes every fake after each test. The marker sizes the tests look for (`POINT`, `VEHICLE`, `EMERGENCY_SPOT`, ...) are read from `mapStyles.ts`, so a design change to sizes does not break them. `npm run test:ui` type-checks the tests with `tsconfig.ui-tests.json` first, because Vitest does not check types. Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures), `layout.test.tsx` (page structure and landmarks, navigation, empty states, route steps, metric cards, the busy state of Calculate Route), `scenarios.test.tsx` (nothing fetched on load, picking a road on the map without starting a route, adding and removing scenarios, running a study: the request body, progress, ranking, explanation and charts, polling stopping, details and the map overlay, cancel, the random-closure sweep, refused and no-database studies; the fake backend records request bodies), `runIds.test.tsx` (with a backend that returns a `simulation_id`, every run request goes to `/simulations/{id}/...`: `withRunIds` in `helpers.ts` removes the original paths from the fake backend, so a request to one fails the test; the other files' fake backend returns no ID, so they cover the fallback). Real Leaflet and real browser layout are not covered.
+**Frontend interaction tests.** `frontend/ui-tests/` holds tests run by `npm run test:ui` (Vitest, configured in `vitest.config.ts`, with jsdom and React Testing Library). They render the whole `App` and click through it. Three things are replaced: `fetch` (`helpers.ts` provides a fake backend where each test says what each endpoint answers, and records every request), `react-leaflet` (`fakeLeaflet.tsx` turns map objects into plain elements with `data-*` attributes, and `mapState.ts` lets a test "click the map"), and the app's one-second polling timer (`controlPolling` lets a test deliver exactly one simulation update at a time; other timers, such as Testing Library's own, run normally). `setup.ts` unmounts the app and undoes every fake after each test. The marker sizes the tests look for (`POINT`, `VEHICLE`, `EMERGENCY_SPOT`, ...) are read from `mapStyles.ts`, so a design change to sizes does not break them. `npm run test:ui` type-checks the tests with `tsconfig.ui-tests.json` first, because Vitest does not check types. Files: `simulation.test.tsx` (route, simulation, start over, failures, road closure), `emergency.test.tsx` (ambulance dispatch, progress, close road ahead, failures), `optimiser.test.tsx` (ranking, station set, loading, clearing, failures), `layout.test.tsx` (page structure and landmarks, navigation, empty states, route steps, metric cards, the busy state of Calculate Route), `scenarios.test.tsx` (nothing fetched on load, picking a road on the map without starting a route, adding and removing scenarios, running a study: the request body, progress, ranking, explanation and charts, polling stopping, details and the map overlay, cancel, the random-closure sweep, refused and no-database studies; the fake backend records request bodies), `runIds.test.tsx` (with a backend that returns a `simulation_id`, every run request goes to `/simulations/{id}/...`: `withRunIds` in `helpers.ts` removes the original paths from the fake backend, so a request to one fails the test; the other files' fake backend returns no ID, so they cover the fallback). Real Leaflet and real browser layout are covered by the end-to-end tests instead.
+
+**End-to-end tests.** `frontend/e2e/` (Playwright, configured in `playwright.config.ts`) starts the real backend (uvicorn, port 8002, rate limit off, scenario workers off) and a production build of the website (`vite preview`, port 5174), then drives Chromium through them on the real Norwich map: `simulation.spec.ts` (route, live controls, incidents picked on the map, closures, the three emergency services, two visitors at once, an unreachable destination, a 2,000-vehicle rush hour) and `analysis.spec.ts` (optimiser, a scenario study, history, the no-database message, health and API docs). Tests run one at a time because they share one backend. Map clicks are fractions of the map's size at a fixed 1440 x 1000 window, so they land in the same places every run. `screenshots.spec.ts` is not a test: with `SCREENSHOTS=1` it takes the README's screenshots.
 
 `npm test` runs both kinds (`test:unit`, then `test:ui`).
 
-GitHub Actions (`.github/workflows/tests.yml`) has four jobs:
+GitHub Actions (`.github/workflows/tests.yml`) has five jobs:
 
 - `test` and `test (Python 3.12)`: Python 3.11 and 3.12, each with a `postgres:16` service container. They run `alembic upgrade head` and `alembic check`, then `python -m pytest backend/tests -v -rs` with `REQUIRE_DATABASE_TESTS=1`, so every database test must run.
 - `frontend (lint, build and test)`: `npm run lint`, `npm run build`, `npm run test:unit` and `npm run test:ui` as separate steps.
+- `end-to-end (Playwright)`: installs the backend from `requirements-deploy.txt` (as deployed), migrates a `postgres:16` service container, installs Chromium, then `npm run test:e2e`; on failure it keeps the Playwright report with traces and screenshots.
 - `docker (build and run with Compose)`: `docker compose config`, then `scripts/compose_smoke_test.py` (see [Containers](#containers)).
+
+A separate workflow, `backup.yml`, backs up the deployed database weekly (see [Backups and an expiring database](#backups-and-an-expiring-database)).
 
 ## Known design trade-offs
 

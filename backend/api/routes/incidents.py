@@ -20,7 +20,7 @@ from backend.simulation import rerouting
 from backend.simulation.accidents import SEVERITIES
 
 
-router = APIRouter()
+router = APIRouter(tags=["Incidents"])
 
 
 @run_route(router, "post", "/incident/block", "/incidents/block")
@@ -30,6 +30,10 @@ def block_incident(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
+    """Close the road from `start` to `destination` (adjacent junctions). Only
+    the vehicles whose routes use it re-plan, at once; answers how many were
+    affected, rerouted or stranded."""
+
     graph = context.graph
 
     require_road(graph, start, destination)
@@ -65,6 +69,9 @@ def unblock_incident(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
+    """Reopen a closed road. Vehicles that might now have a quicker way re-plan
+    on the next step."""
+
     graph = context.graph
 
     require_road(graph, start, destination)
@@ -86,6 +93,8 @@ def unblock_incident(
 
 @run_route(router, "get", "/incidents", "/incidents")
 def get_incidents(run: LiveRun = Depends(default_run)):
+    """The run's closed roads, and its accidents with their severity, lost
+    capacity and time left."""
 
     with run.lock:
         simulation = run.simulation

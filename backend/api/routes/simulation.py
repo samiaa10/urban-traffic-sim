@@ -26,7 +26,7 @@ from backend.simulation.traffic_manager import TrafficManager, car_speed
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["Simulation runs"])
 
 
 TrafficModelQuery = Query(
@@ -133,16 +133,23 @@ def start_simulation(
     start: int,
     destination: int,
     traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
+    replace_default: bool = Query(
+        True,
+        description="false: start the run without making it the default, so it "
+        "replaces nobody else's (the website does this and uses the run's id)",
+    ),
     context: AppContext = Depends(get_context)
 ):
     """Start a run and make it the default (the previous default stops).
 
     The original endpoints (/simulation/step and so on) act on this run.
     The answer includes its simulation_id for the /simulations/... ones.
+    With replace_default=false the run is started on its own, like POST
+    /simulations: several visitors can then each have a run.
     """
 
     run, details = build_run(context, start, destination, traffic_model=traffic_model)
-    add_run(context, run, make_default=True)
+    add_run(context, run, make_default=replace_default)
 
     logger.info("Simulation %s started (%s -> %s)", run.id, start, destination)
 
@@ -338,7 +345,7 @@ def restart_simulation(
     if context.database is None:
         raise HTTPException(
             status_code=503,
-            detail="Restarting needs a database (DATABASE_URL is not set)"
+            detail=f"Restarting needs a database ({context.no_database_reason})"
         )
 
     run_uuid = parse_run_id(simulation_id)
@@ -461,6 +468,8 @@ def restart_simulation(
 
 @run_route(router, "get", "/simulation/state", "/state")
 def simulation_state(run: LiveRun = Depends(default_run)):
+    """Where the run's first vehicle (the one on the planned route) is, how far
+    it has gone and whether it has arrived."""
 
     with run.lock:
         vehicle = run.simulation.vehicles[0]
@@ -473,18 +482,30 @@ def simulation_state(run: LiveRun = Depends(default_run)):
 
 
 @run_route(router, "post", "/simulation/step", "/step")
-def simulation_step(run: LiveRun = Depends(default_run)):
+def simulation_step(
+    seconds: int = Query(1, ge=1, le=60, description="simulated seconds to advance (the website's speed control)"),
+    run: LiveRun = Depends(default_run),
+):
+    """Advance the run by `seconds` simulated seconds. Answers every
+    vehicle's position and state, and a summary of the traffic for live
+    charts (computed from the same pass over the vehicles)."""
 
     with run.lock:
         simulation = run.simulation
 
-        # Run surges, move all vehicles, then react to changes and re-plan
-        rerouted = run.traffic.step()
+        rerouted = 0
+        for _ in range(seconds):
+            # Run surges, move all vehicles, then react to changes and re-plan
+            rerouted += run.traffic.step()
 
-        # Save what changed (usually nothing: then no database work)
-        run.recorder.sync()
+            # Save what changed (usually nothing: then no database work)
+            run.recorder.sync()
 
         vehicles = []
+        active = held_up = arrived = 0
+        speed_sum = 0.0
+        journey_sum = 0
+        reroutes = 0
 
         for index, vehicle in enumerate(simulation.vehicles):
 
@@ -506,7 +527,30 @@ def simulation_step(run: LiveRun = Depends(default_run)):
                 "reroutes": vehicle.reroutes
             })
 
+            if vehicle.vehicle_type != "normal":
+                continue
+            reroutes += vehicle.reroutes
+            if vehicle.finished:
+                if vehicle.journey_seconds:
+                    arrived += 1
+                    journey_sum += vehicle.journey_seconds
+            else:
+                active += 1
+                speed_sum += vehicle.speed_factor
+                if vehicle.speed_factor < 1:
+                    held_up += 1
+
         simulation_time = simulation.time
+        summary = {
+            "active_vehicles": active,
+            "held_up": held_up,
+            "mean_speed_factor": speed_sum / active if active else None,
+            "arrived": arrived,
+            "mean_journey_seconds": journey_sum / arrived if arrived else None,
+            "reroutes": reroutes,
+            "closed_roads": len(simulation.get_blocked_segments()),
+            "accidents": len(simulation.accidents),
+        }
 
     # Already plain numbers, strings and booleans, so skip FastAPI's
     # general-purpose encoder: with 2,000 vehicles it took about 55 ms of
@@ -514,12 +558,16 @@ def simulation_step(run: LiveRun = Depends(default_run)):
     return JSONResponse({
         "vehicles": vehicles,
         "simulation_time": simulation_time,
-        "rerouted_this_step": rerouted
+        "rerouted_this_step": rerouted,
+        "summary": summary,
     })
 
 
 @run_route(router, "get", "/simulation/congestion", "/congestion")
 def simulation_congestion(run: LiveRun = Depends(default_run)):
+    """Every road with vehicles on it: how many, and its congestion level
+    (light, moderate or heavy), including capacity lost to accidents. The
+    website draws this as the live congestion layer."""
 
     with run.lock:
         congestion = run.simulation.get_congestion()
@@ -555,6 +603,8 @@ def reroute_vehicle(
     run: LiveRun = Depends(default_run),
     context: AppContext = Depends(get_context)
 ):
+    """Plan a new route for one vehicle from where it is now, around closed
+    roads and with current congestion."""
 
     with run.lock:
         simulation = run.simulation

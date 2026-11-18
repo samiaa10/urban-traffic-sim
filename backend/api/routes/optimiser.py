@@ -22,7 +22,7 @@ from backend.optimiser.station_optimiser import (
 
 logger = logging.getLogger(__name__)
 
-router = APIRouter()
+router = APIRouter(tags=["Optimiser"])
 
 KINDS = ("ranking", "station_set")
 
@@ -288,7 +288,7 @@ def require_database(context):
     if context.database is None:
         raise HTTPException(
             status_code=503,
-            detail="Saved optimiser results need a database (DATABASE_URL is not set)"
+            detail=f"Saved optimiser results need a database ({context.no_database_reason})"
         )
 
 
@@ -473,6 +473,8 @@ def delete_optimiser_run(
     optimiser_run_id: str,
     context: AppContext = Depends(get_context)
 ):
+    """Delete a saved optimiser result and its candidates (needs the database)."""
+
     require_database(context)
 
     from backend.db.repository import OptimiserRepository

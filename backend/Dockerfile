@@ -43,9 +43,9 @@ EXPOSE 8000
 
 # Loading the map takes a few seconds, hence the start period
 HEALTHCHECK --interval=10s --timeout=3s --start-period=30s --retries=3 \
-    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/', timeout=2)"
+    CMD python -c "import urllib.request; urllib.request.urlopen('http://127.0.0.1:8000/health', timeout=2)"
 
 # One worker on purpose: live simulation runs are kept in this process's
 # memory, so every request for a run must reach the same process. Saved
 # history is in PostgreSQL and is shared by any number of processes.
-CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1"]
+CMD ["uvicorn", "backend.api.main:app", "--host", "0.0.0.0", "--port", "8000", "--workers", "1", "--no-access-log"]

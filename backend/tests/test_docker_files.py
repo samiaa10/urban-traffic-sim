@@ -324,6 +324,21 @@ def test_ci_job_names_are_unchanged(workflow):
     assert jobs["frontend"]["name"] == "frontend (lint, build and test)"
 
 
+def test_ci_runs_the_end_to_end_tests_in_a_real_browser(workflow):
+    job = workflow["jobs"]["e2e"]
+    commands = steps_text(job)
+
+    # The real backend (as deployed) on a real, migrated PostgreSQL
+    assert job["services"]["postgres"]["image"].startswith("postgres:16")
+    assert "pip install -r requirements-deploy.txt" in commands
+    assert "alembic upgrade head" in commands
+    assert "E2E_DATABASE_URL" in job["env"]
+
+    assert "npx playwright install --with-deps chromium" in commands
+    assert "npm run test:e2e" in commands
+    assert (ROOT / "frontend" / "playwright.config.ts").is_file()
+
+
 def test_scenario_workers_are_set_in_compose(compose):
     """Scenario studies run in worker processes inside the backend
     container; Compose sets how many (and Docker must allow them)."""
@@ -342,3 +357,63 @@ def test_the_traffic_model_is_set_in_compose(compose):
 
     assert environment["TRAFFIC_MODEL"] == "${TRAFFIC_MODEL:-osm}"
     assert "TRAFFIC_MODEL" in text("backend/api/main.py")
+
+
+def test_the_backend_container_is_checked_through_its_health_endpoint():
+    dockerfile = (ROOT / "backend" / "Dockerfile").read_text()
+
+    assert "http://127.0.0.1:8000/health" in dockerfile
+
+
+def test_nginx_passes_only_the_visitors_own_address(compose):
+    conf = (ROOT / "frontend" / "nginx.conf").read_text()
+
+    # Not $proxy_add_x_forwarded_for, which keeps what the browser sent
+    assert "proxy_set_header X-Forwarded-For $remote_addr;" in conf
+    assert compose["services"]["backend"]["environment"]["TRUST_PROXY"] == "true"
+
+
+def test_nginx_sends_security_headers_in_every_location():
+    conf = (ROOT / "frontend" / "nginx.conf").read_text()
+    blocks = conf.split("location ")
+
+    # nginx drops server-level add_header in a location with its own
+    for block in blocks[1:]:
+        if "add_header" in block:
+            assert 'X-Content-Type-Options "nosniff" always' in block
+            assert 'X-Frame-Options "DENY" always' in block
+
+
+# ------------------------------------------------------------
+# Database backups (.github/workflows/backup.yml)
+# ------------------------------------------------------------
+
+def test_the_backup_workflow_encrypts_and_skips_without_secrets():
+    yaml = pytest.importorskip("yaml")
+    backup = yaml.safe_load(text(".github/workflows/backup.yml"))
+    job = backup["jobs"]["backup"]
+    commands = steps_text(job)
+
+    # PyYAML reads the "on" key as True
+    triggers = backup.get("on", backup.get(True))
+    assert "schedule" in triggers and "workflow_dispatch" in triggers
+    assert backup["permissions"] == {"contents": "read"}
+
+    # Secrets only, never a committed address
+    assert job["env"]["DATABASE_URL"] == "${{ secrets.DATABASE_BACKUP_URL }}"
+    assert 'if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]' in commands
+
+    # pg_dump of the database's major version, then encrypted; only the
+    # encrypted file is uploaded
+    assert "postgres:16 " in commands and "scripts/backup_database.sh" in commands
+    assert "openssl enc -aes-256-cbc -pbkdf2" in commands
+    assert "rm backups/norwich_sim.dump" in commands
+    upload = next(s for s in job["steps"] if "upload-artifact" in s.get("uses", ""))
+    assert upload["with"]["path"].endswith(".enc")
+    assert 1 <= upload["with"]["retention-days"] <= 90
+
+
+def test_backups_are_never_committed():
+    assert "backups/" in text(".gitignore").splitlines()
+    for script in ("backup_database.sh", "restore_database.sh"):
+        assert (ROOT / "scripts" / script).stat().st_mode & 0o111, script

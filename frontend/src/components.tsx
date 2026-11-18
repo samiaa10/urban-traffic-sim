@@ -37,6 +37,8 @@ const ICONS = {
   ),
   close: <path d="M18 6 6 18M6 6l12 12" />,
   plus: <path d="M12 5v14M5 12h14" />,
+  play: <path d="M7 5v14l11-7z" />,
+  pause: <path d="M7 5h4v14H7zM13 5h4v14h-4z" />,
   check: <path d="M20 6 9 17l-5-5" />,
   alert: (
     <>

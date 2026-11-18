@@ -10,6 +10,7 @@ import {
   draftToSpec,
   formatSeconds,
   formatValue,
+  binLabel,
   histogram,
   isFinished,
   linePoints,
@@ -110,6 +111,8 @@ describe("randomClosureRequest", () => {
 describe("formatting", () => {
   it("formats each unit", () => {
     assert.equal(formatValue(12.345, "vehicle-hours"), "12.3 veh-h")
+    // Below 10, hundredths: 0.71 and 0.74 must not both read 0.7
+    assert.equal(formatValue(0.714, "vehicle-hours"), "0.71 veh-h")
     assert.equal(formatValue(87.4, "%"), "87%")
     assert.equal(formatValue(95, "s"), "1 min 35 s")
     assert.equal(formatValue(null, "s"), "-")
@@ -146,6 +149,12 @@ describe("charts", () => {
     assert.equal(bins[2].to, 10)
     assert.deepEqual(histogram([5, 5], 4).map((bin) => bin.count), [2, 0, 0, 0])
     assert.deepEqual(histogram([], 4), [])
+  })
+
+  it("labels bins with enough decimals that their ends differ", () => {
+    assert.equal(binLabel({ from: 1, to: 4 }), "1.0-4.0")
+    assert.equal(binLabel({ from: 0.7125, to: 0.725 }), "0.71-0.72")
+    assert.equal(binLabel({ from: 0.7, to: 0.7 }), "0.7-0.7")
   })
 })
 

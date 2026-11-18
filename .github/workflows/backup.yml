@@ -1,0 +1,73 @@
+name: Database backup
+
+# Weekly backup of the deployed database (Render's free PostgreSQL has no
+# backups of its own), kept for 30 days as an encrypted workflow artifact.
+#
+# Needs two repository secrets (Settings > Secrets and variables > Actions):
+#   DATABASE_BACKUP_URL  the database's External Database URL
+#   BACKUP_PASSPHRASE    a long random passphrase; keep a copy elsewhere,
+#                        without it the backups cannot be read
+# Without them the job reports that it skipped and succeeds.
+#
+# Artifacts of a public repository can be downloaded by any signed-in
+# GitHub user, which is why the dump is encrypted before upload. To
+# restore one, see "Backups" in the README.
+
+on:
+  schedule:
+    - cron: "17 3 * * 1"     # Mondays 03:17 UTC
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+jobs:
+  backup:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    env:
+      DATABASE_URL: ${{ secrets.DATABASE_BACKUP_URL }}
+      BACKUP_PASSPHRASE: ${{ secrets.BACKUP_PASSPHRASE }}
+
+    steps:
+      - name: Check the secrets are set
+        id: check
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$BACKUP_PASSPHRASE" ]; then
+            echo "::notice::DATABASE_BACKUP_URL or BACKUP_PASSPHRASE is not set: no backup made"
+            echo "run=false" >> "$GITHUB_OUTPUT"
+          else
+            echo "run=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Get the code
+        if: steps.check.outputs.run == 'true'
+        uses: actions/checkout@v4
+
+      # pg_dump from the same PostgreSQL major version as the database
+      # (16), so the backup restores with the same tools anywhere
+      - name: Back up
+        if: steps.check.outputs.run == 'true'
+        run: |
+          docker run --rm -e DATABASE_URL -v "$PWD:/work" -w /work \
+            --user "$(id -u):$(id -g)" postgres:16 \
+            bash scripts/backup_database.sh "" backups/norwich_sim.dump
+
+      - name: Encrypt
+        if: steps.check.outputs.run == 'true'
+        run: |
+          openssl enc -aes-256-cbc -pbkdf2 -iter 200000 -salt \
+            -in backups/norwich_sim.dump -out backups/norwich_sim.dump.enc \
+            -pass env:BACKUP_PASSPHRASE
+          rm backups/norwich_sim.dump
+          echo "STAMP=$(date -u +%Y%m%dT%H%M%SZ)" >> "$GITHUB_ENV"
+
+      - name: Keep it for 30 days
+        if: steps.check.outputs.run == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: norwich-sim-database-${{ env.STAMP }}
+          path: backups/norwich_sim.dump.enc
+          retention-days: 30
+          if-no-files-found: error

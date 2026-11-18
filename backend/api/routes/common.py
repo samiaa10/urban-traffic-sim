@@ -91,7 +91,15 @@ def run_route(router, method, legacy_path, run_path, **options):
     """
 
     def register(func):
-        getattr(router, method)(legacy_path, **options)(func)
+        # The API docs say which run each path acts on
+        doc = inspect.getdoc(func) or ""
+        legacy_options = dict(options)
+        legacy_options.setdefault("description", (
+            f"{doc}\n\nActs on the default run (the one most recently started "
+            f"with `POST /simulation/start`). The same for any run: "
+            f"`{method.upper()} {RUN_PREFIX}{run_path}`."
+        ).strip())
+        getattr(router, method)(legacy_path, **legacy_options)(func)
 
         signature = inspect.signature(func)
         parameters = [

@@ -19,7 +19,7 @@ def known_service(name, what):
         raise HTTPException(status_code=400, detail=f"{what}: {error}") from None
 
 
-router = APIRouter()
+router = APIRouter(tags=["Emergency services"])
 
 
 @run_route(router, "post", "/station/create", "/stations")

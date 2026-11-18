@@ -7,6 +7,8 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from backend.api.context import AppContext, load_graph
+from backend.api.protection import install as install_protection
+from backend.db.database import SchemaOutOfDate
 from backend.api.recorder import METRICS_INTERVAL
 from backend.api.routes import (
     emergencies,
@@ -61,6 +63,45 @@ def open_database(url):
     return database
 
 
+API_DESCRIPTION = """
+Traffic simulation, routing and emergency-response planning on the real road
+network of Norwich (OpenStreetMap, 5,058 junctions and 10,980 road segments).
+
+**Runs.** `POST /simulation/start` plans a route and starts a simulation run
+with its own ID. Every endpoint that acts on a run exists twice: at its
+original path (`/simulation/step`), acting on the *default* run, and at
+`/simulations/{simulation_id}/...`, acting on the named run. Several runs
+can go at once, each with its own vehicles, closures and stations.
+
+**Typical use.** Start a run, then `POST .../step` once a second (with
+`seconds` to go faster); add a fleet or a rush hour, close roads or add
+accidents, add stations and vehicles, and raise emergencies. Read the live
+congestion, the emergency status and, with a database, the saved history.
+
+**Planning.** The optimiser ranks station locations or chooses a set of
+stations; `/optimiser/evaluations` tests its best answers in full traffic
+simulations. `/scenarios` runs and compares whole scenarios, and studies of
+hundreds of them in the background.
+
+**Limits.** Expensive requests are rate-limited per client (429 with
+`Retry-After`). Saving, history, studies and evaluations need PostgreSQL
+(`DATABASE_URL`); without it they answer 503 and everything else works.
+`GET /ready` says whether the database is reachable.
+"""
+
+API_TAGS = [
+    {"name": "Service", "description": "Health and readiness."},
+    {"name": "Routing", "description": "Junctions and A* routes on the road network."},
+    {"name": "Simulation runs", "description": "Start, step, list, stop and restart runs; fleets and live congestion."},
+    {"name": "Traffic", "description": "Rush-hour surges and dynamic rerouting."},
+    {"name": "Incidents", "description": "Road closures and accidents, with rerouting of the vehicles they affect."},
+    {"name": "Emergency services", "description": "Stations, ambulances, fire engines and police cars, dispatch and response times."},
+    {"name": "Optimiser", "description": "Where emergency stations should go, and those answers tested in traffic."},
+    {"name": "Scenarios", "description": "Whole scenarios simulated, compared and ranked; large studies in the background."},
+    {"name": "History", "description": "What a run did, as saved in PostgreSQL."},
+]
+
+
 def create_app(
     graph_file,
     cors_origins=None,
@@ -71,6 +112,10 @@ def create_app(
     max_study_scenarios=DEFAULT_MAX_STUDY_SCENARIOS,
     resume_studies=False,
     traffic_model="simple",
+    rate_limit_per_minute=0,
+    trust_proxy=False,
+    log_format="text",
+    run_idle_minutes=0,
 ):
     """A new app with its own road graph and (empty) set of live runs.
 
@@ -87,7 +132,21 @@ def create_app(
     if cors_origins is None:
         cors_origins = allowed_origins(None)
 
-    database = open_database(database_url) if database_url else None
+    database, database_error = None, None
+    if database_url:
+        try:
+            database = open_database(database_url)
+        except SchemaOutOfDate:
+            # A deployment mistake (migrations not run): refuse to start
+            raise
+        except Exception as error:   # unreachable, expired, wrong password
+            # Keep the site up without saving rather than not at all; the
+            # error is logged and /ready reports it
+            database_error = f"{type(error).__name__}: {error}".splitlines()[0][:300]
+            logger.error(
+                "The database could not be opened, so runs will not be saved: %s",
+                database_error,
+            )
 
     @asynccontextmanager
     async def lifespan(app):
@@ -102,8 +161,9 @@ def create_app(
 
     app = FastAPI(
         title="NORWICH//SIM API",
-        description="Urban Traffic Simulation and routing API",
-        version="0.3.0",
+        description=API_DESCRIPTION,
+        version="1.0.0",
+        openapi_tags=API_TAGS,
         lifespan=lifespan,
     )
 
@@ -123,6 +183,15 @@ def create_app(
         metrics_interval=metrics_interval,
         max_study_scenarios=max_study_scenarios,
         traffic_model=traffic_model,
+        run_idle_seconds=run_idle_minutes * 60 or None,
+    )
+    # /ready is public: only the kind of error (the message can name the
+    # database host and user); the full message is in the log
+    app.state.context.database_error = database_error and database_error.split(":")[0]
+
+    install_protection(
+        app, rate_limit_per_minute=rate_limit_per_minute,
+        trust_proxy=trust_proxy, log_format=log_format,
     )
 
     if database is not None:

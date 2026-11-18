@@ -30,9 +30,13 @@ class AppContext:
     def __init__(
         self, graph, max_live_runs=8, graph_file=None, database=None,
         metrics_interval=METRICS_INTERVAL, max_study_scenarios=1000,
-        traffic_model="simple",
+        traffic_model="simple", run_idle_seconds=None,
     ):
         self.graph = graph
+
+        # Why the database could not be opened at start-up (the API then
+        # runs without saving; /ready reports it), or None
+        self.database_error = None
 
         # The traffic model (simulation/road_model.py) new runs and
         # scenarios use when they do not ask for one
@@ -63,13 +67,21 @@ class AppContext:
         # 40 well-connected junctions spread over the map)
         self.default_station_candidates = dense_candidates(graph)
 
-        self.registry = RunRegistry(max_live=max_live_runs)
+        self.registry = RunRegistry(max_live=max_live_runs, idle_seconds=run_idle_seconds)
 
         # The network builds its landmark tables the first time a traffic
         # manager is made, by emptying and refilling them. Making traffic
         # managers one at a time means no other run can plan a route with
         # half-built tables.
         self.network_lock = threading.Lock()
+
+    @property
+    def no_database_reason(self):
+        """Why nothing can be saved, for 503 answers."""
+
+        if self.database_error is not None:
+            return "the database could not be reached when the server started"
+        return "DATABASE_URL is not set"
 
     def scenario_world(self):
         """The scenario engine's World for this map (built on first use:

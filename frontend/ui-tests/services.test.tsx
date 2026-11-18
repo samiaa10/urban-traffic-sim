@@ -61,6 +61,20 @@ describe("emergency services", () => {
     expect(fake.last("POST /station/add-vehicle")?.query.get("station_id")).toBe("1")
   })
 
+  it("names the service sent in the map key and status, even after the choice changes", async () => {
+    const { user } = await calculateRoute()
+    const service = screen.getByRole("combobox", { name: "Emergency service" })
+
+    await user.selectOptions(service, "fire")
+    await user.click(screen.getByRole("button", { name: /Trigger Fire Emergency/ }))
+    await screen.findByText(/Fire engine 1 dispatched/)
+
+    // Choosing another service for the next emergency does not rename this one
+    await user.selectOptions(service, "police")
+    expect(screen.getByText("Fire engine route")).toBeTruthy()
+    expect(screen.queryByText("Ambulance route")).toBeNull()
+  })
+
   it("says when an emergency is queued because every vehicle is busy", async () => {
     const backend = workingBackend()
     backend["POST /emergency/create"] = {

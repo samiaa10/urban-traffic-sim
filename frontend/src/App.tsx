@@ -32,6 +32,9 @@ import { ScenarioWorkspace, type ScenarioOverlay } from "./ScenarioWorkspace.tsx
 import { HistoryPanel } from "./HistoryPanel.tsx"
 import type { RestartedRun } from "./history.ts"
 import { EvaluationSection } from "./EvaluationSection.tsx"
+import { LiveAnalytics } from "./LiveAnalytics.tsx"
+import { LiveControls } from "./LiveControls.tsx"
+import { appendSample, stepQuery, type Sample, type Speed } from "./live.ts"
 import {
   SERVICES,
   TRAFFIC_MODELS,
@@ -181,9 +184,19 @@ function App() {
   // emergency service the emergency button raises
   const [trafficModel, setTrafficModel] = useState<TrafficModel>("osm")
   const [emergencyService, setEmergencyService] = useState<ServiceName>("ambulance")
+  // The service of the emergency on the map (the selector may have moved
+  // on since): names its route, vehicle and status
+  const [dispatchedService, setDispatchedService] = useState<ServiceName>("ambulance")
 
   // Stations created in the current run (the next one's index)
   const stationsCreated = useRef(0)
+
+  // Live controls: paused, and simulated seconds per tick (a ref too, so
+  // the polling timer reads the current speed); the live charts' samples
+  const [paused, setPaused] = useState(false)
+  const [speed, setSpeed] = useState<Speed>(1)
+  const speedRef = useRef<Speed>(1)
+  const [history, setHistory] = useState<Sample[]>([])
 
   // Full URL of an endpoint that acts on the running simulation
   const runUrl = (original: string, perRun: string) =>
@@ -201,6 +214,15 @@ function App() {
   // ------------------------------------------------
   // MAP CLICKING
   // ------------------------------------------------
+
+  // The next map click picks a road (for a scenario or a live incident).
+  // The map is brought into view, since the button may be far below it.
+  const pickRoad = (label: string | null, handler: ((lat: number, lon: number) => void) | null) => {
+    setRoadPick(label !== null && handler !== null ? { label, handler } : null)
+    if (label !== null) {
+      document.getElementById("map")?.scrollIntoView?.({ behavior: "smooth", block: "nearest" })
+    }
+  }
 
   const handleMapClick = (location: Coordinate) => {
     // Picking a road for a scenario: this click is for that only
@@ -269,14 +291,25 @@ function App() {
     }
 
     setRunning(true)
+    setPaused(false)
     setConnectionLost(false)
+
+    // One update at a time: a busy run (thousands of vehicles at 10x) can
+    // take longer than a tick to step, and sending more steps while one is
+    // still being answered would only queue them behind the run's lock, so
+    // the page fell further and further behind. Ticks that come while an
+    // update is in flight are skipped: the page goes as fast as the
+    // backend can answer, and no faster.
+    let inFlight = false
 
     simulationInterval.current =
       window.setInterval(
         async () => {
+          if (inFlight) return
+          inFlight = true
           try {
             const response = await fetch(
-              runUrl("/simulation/step", "/step"),
+              runUrl("/simulation/step", "/step") + stepQuery(speedRef.current),
               {
                 method: "POST",
               }
@@ -289,6 +322,16 @@ function App() {
             const stepData = await response.json()
 
             setVehicles(stepData.vehicles)
+            if (typeof stepData.simulation_time === "number") {
+              setSimulationTime(stepData.simulation_time)
+            }
+
+            // The live charts' next sample
+            if (stepData.summary) {
+              setHistory((current) =>
+                appendSample(current, { time: stepData.simulation_time, ...stepData.summary })
+              )
+            }
 
             // Fetch live congestion data
             try {
@@ -319,9 +362,11 @@ function App() {
                 const statusData = await statusResponse.json()
                 const emergencies = statusData.emergencies ?? []
 
-                setSimulationTime(
-                  statusData.simulation_time ?? null
-                )
+                // The step's own time is newer; this only fills in for
+                // a backend whose steps do not report it
+                if (typeof stepData.simulation_time !== "number") {
+                  setSimulationTime(statusData.simulation_time ?? null)
+                }
 
                 setEmergencyStatus(
                   emergencies.length > 0
@@ -339,6 +384,8 @@ function App() {
           } catch {
             stopSimulationPolling()
             setConnectionLost(true)
+          } finally {
+            inFlight = false
           }
         },
         1000
@@ -369,6 +416,7 @@ function App() {
     setCongestion([])
     setSimulationTime(null)
     setScenarioOverlay(null)
+    setHistory([])
 
     simulationId.current = restarted.simulation_id
     setVehicles([
@@ -421,7 +469,7 @@ function App() {
       const data = await routeResponse.json()
 
       if (!routeResponse.ok) {
-        throw new Error("Could not calculate route")
+        throw new Error(`Could not calculate route: ${data.detail ?? "no route between these points"}`)
       }
 
       // Convert backend coordinates into Leaflet coordinates
@@ -448,7 +496,8 @@ function App() {
 
       const simulationResponse = await fetch(
         `${API_URL}/simulation/start?start=${startNode.node}&destination=${destinationNode.node}` +
-          `&traffic_model=${trafficModel}`,
+          // Its own run, replacing nobody else's (every later request names it)
+          `&traffic_model=${trafficModel}&replace_default=false`,
         {
           method: "POST",
         }
@@ -458,7 +507,7 @@ function App() {
         await simulationResponse.json()
 
       if (!simulationResponse.ok) {
-        throw new Error("Could not start simulation")
+        throw new Error(`Could not start the simulation: ${simulationData.detail ?? "the backend refused"}`)
       }
 
       // Later requests name this run, so they reach it even if another
@@ -491,8 +540,14 @@ function App() {
         nodesExplored: data.nodes_explored,
       })
       setResult("")
-    } catch {
-      setResult("Could not calculate route. Is the backend running?")
+    } catch (caught) {
+      // The backend answered with a reason (no route, too many runs, ...):
+      // show it. No answer at all (fetch failed): it may not be running.
+      setResult(
+        caught instanceof Error && caught.message.startsWith("Could not ")
+          ? caught.message
+          : "Could not calculate route. Is the backend running?"
+      )
     }
   }
 
@@ -606,6 +661,7 @@ function App() {
 
   const triggerEmergency = async () => {
     const service = serviceOf(emergencyService)
+    setDispatchedService(service.name)
     try {
       setResult(`Setting up ${service.label.toLowerCase()} response...`)
 
@@ -844,7 +900,7 @@ function App() {
       symbol: "line",
     },
     emergencyActive && emergencyRoute.length > 0 && {
-      label: "Ambulance route",
+      label: `${serviceOf(dispatchedService).label} route`,
       colour: COLOURS.emergency,
       symbol: "dash",
     },
@@ -859,7 +915,7 @@ function App() {
       symbol: "dot",
     },
     ambulanceOnMap && {
-      label: "Ambulance",
+      label: serviceOf(dispatchedService).label,
       colour: COLOURS.emergency,
       symbol: "dot",
     },
@@ -1125,7 +1181,7 @@ function App() {
             {emergencyStatus && (
               <>
                 <div className="emergency-head">
-                  <span className="eyebrow">{serviceOf(emergencyService).label} status</span>
+                  <span className="eyebrow">{serviceOf(dispatchedService).label} status</span>
                   <span
                     className={`badge ${emergencyBadge[emergencyStatus.state].tone}`}
                   >
@@ -1193,10 +1249,39 @@ function App() {
                   ) : (
                     <Icon name="barrier" size={16} />
                   )}
-                  Close Road Ahead of Ambulance
+                  Close Road Ahead of {serviceOf(dispatchedService).label}
                 </button>
               )}
           </Panel>
+
+          {/* LIVE CONTROLS */}
+          <LiveControls
+            active={routeInfo !== null}
+            paused={paused}
+            onPauseToggle={() => {
+              if (paused) {
+                startSimulationPolling()
+              } else {
+                stopSimulationPolling()
+                setPaused(true)
+              }
+            }}
+            speed={speed}
+            onSpeed={(value) => {
+              setSpeed(value)
+              speedRef.current = value
+            }}
+            send={async ([original, perRun]) => {
+              const response = await fetch(runUrl(original, perRun), { method: "POST" })
+              const body = await response.json().catch(() => ({}))
+              if (!response.ok) {
+                throw new Error(typeof body.detail === "string" ? body.detail : "The backend refused that")
+              }
+              return body
+            }}
+            onPickRoad={pickRoad}
+            onMessage={setResult}
+          />
 
           {/* EMERGENCY STATION OPTIMISER */}
           <OptimiserPanel
@@ -1205,6 +1290,7 @@ function App() {
             setData={stationSet}
             onSetResults={setStationSet}
             onLoadingChange={setOptimiserLoading}
+            simulationId={() => simulationId.current}
           />
         </aside>
 
@@ -1504,10 +1590,11 @@ function App() {
         />
 
         {/* ---------------- SCENARIO ANALYSIS ---------------- */}
+        {/* ---------------- LIVE TRAFFIC CHARTS ---------------- */}
+        {routeInfo && <LiveAnalytics history={history} />}
+
         <ScenarioWorkspace
-          onPickRoad={(label, handler) =>
-            setRoadPick(label !== null && handler !== null ? { label, handler } : null)
-          }
+          onPickRoad={pickRoad}
           onShowOnMap={setScenarioOverlay}
           openStudy={studyToOpen}
         />

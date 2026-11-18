@@ -22,9 +22,16 @@ services:
     # Bring the database up to date, then start. Render tells the app
     # which port to use through $PORT. (Free services cannot have a
     # separate pre-deploy step, so the migration runs here; it does
-    # nothing when the database is already up to date.)
-    startCommand: alembic upgrade head && uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT
-    healthCheckPath: /
+    # nothing when the database is already up to date.) The API logs each
+    # request itself (backend/api/protection.py), so uvicorn's own access
+    # log is off.
+    startCommand: alembic upgrade head && uvicorn backend.api.main:app --host 0.0.0.0 --port $PORT --no-access-log
+    # Answers 200 as long as the process is up (/ready also checks the
+    # database, but a database outage should not restart the API: it keeps
+    # simulating, just without saving)
+    healthCheckPath: /health
+    # Deploy a new commit only once its GitHub Actions checks have passed
+    autoDeployTrigger: checksPass
     envVars:
       - key: PYTHON_VERSION
         value: 3.12.3
@@ -41,6 +48,19 @@ services:
       # Render asks for this when the Blueprint is created.
       - key: CORS_ORIGINS
         sync: false
+      # Requests reach the API through Render's proxy: the visitor's
+      # address is the first in X-Forwarded-For (used for rate limits)
+      - key: TRUST_PROXY
+        value: "true"
+      # Expensive requests (starting runs, fleets, the optimiser, studies)
+      # per visitor per minute; cheap ones (stepping, status) are unlimited
+      - key: RATE_LIMIT_PER_MINUTE
+        value: "30"
+      # Runs nobody has touched for this long are stopped
+      - key: RUN_IDLE_MINUTES
+        value: "30"
+      - key: LOG_FORMAT
+        value: json
 
   # ---- Frontend: React + Vite, built to static files ----
   - type: web
@@ -49,6 +69,21 @@ services:
     rootDir: frontend
     buildCommand: npm ci && npm run build
     staticPublishPath: dist
+    autoDeployTrigger: checksPass
+    # The same security headers the Docker nginx sends
+    headers:
+      - path: /*
+        name: X-Content-Type-Options
+        value: nosniff
+      - path: /*
+        name: X-Frame-Options
+        value: DENY
+      - path: /*
+        name: Referrer-Policy
+        value: no-referrer
+      - path: /assets/*
+        name: Cache-Control
+        value: public, max-age=31536000, immutable
     envVars:
       - key: NODE_VERSION
         value: "22"
