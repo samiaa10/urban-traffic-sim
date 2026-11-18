@@ -1502,3 +1502,24 @@ def test_a_flood_needs_roads_inside_its_circle(running):
     response = running.post("/incident/flood", params={"latitude": 52.70, "longitude": 1.40, "radius_metres": 50})
     assert response.status_code == 422
     assert running.post("/incident/flood/clear", params={"flood_id": 99}).status_code == 404
+
+
+# ------------------------------------------------------------
+# Drawing vehicles and congestion on the roads' real shapes
+# ------------------------------------------------------------
+
+def test_vehicles_report_which_way_they_face(running):
+    body = running.post("/simulation/step", params={"seconds": 5}).json()
+    vehicle = body["vehicles"][0]
+    assert 0 <= vehicle["heading"] < 360
+    # On this map roads have no recorded shape: drawn on the straight line
+    assert vehicle["road_latitude"] == pytest.approx(vehicle["latitude"])
+    assert vehicle["road_longitude"] == pytest.approx(vehicle["longitude"])
+
+
+def test_congestion_can_include_each_roads_shape(running):
+    running.post("/simulation/step")
+    plain = running.get("/simulation/congestion").json()["congestion"][0]
+    shaped = running.get("/simulation/congestion", params={"geometry": True}).json()["congestion"][0]
+    assert "path" not in plain
+    assert shaped["path"][0] == [shaped["start"]["latitude"], shaped["start"]["longitude"]]

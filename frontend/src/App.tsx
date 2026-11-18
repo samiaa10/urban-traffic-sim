@@ -27,7 +27,7 @@ import {
   Spinner,
   type LegendEntry,
 } from "./components.tsx"
-import { BUILDINGS, COLOURS, LINE, MARKER, SIGNAL_LIGHTS } from "./mapStyles.ts"
+import { BUILDINGS, COLOURS, LINE, MARKER, SIGNAL_LIGHTS, VEHICLE_3D } from "./mapStyles.ts"
 import {
   SERVICE_MARKERS,
   closureFeatures,
@@ -48,6 +48,7 @@ import { EvaluationSection } from "./EvaluationSection.tsx"
 import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
 import { ResiliencePanel } from "./ResiliencePanel.tsx"
+import { EmergencyMonitor, IncidentMonitor, SimulationTimeline } from "./Operations.tsx"
 import {
   DEFAULT_SIGNALS,
   appendSample,
@@ -94,6 +95,8 @@ type CongestionSegment = {
   // the road's cells taken
   stopped?: number
   occupancy?: number
+  // The road's real shape, [lat, lon] points (geometry=true)
+  path?: [number, number][]
 }
 
 // The 3D map (MapLibre) is only downloaded when someone switches to it
@@ -412,7 +415,8 @@ function App() {
             // Fetch live congestion data
             try {
               const congestionResponse = await fetch(
-                runUrl("/simulation/congestion", "/congestion")
+                // With each road's real shape, so congestion follows the road
+                runUrl("/simulation/congestion?geometry=true", "/congestion?geometry=true")
               )
 
               if (congestionResponse.ok) {
@@ -985,6 +989,21 @@ function App() {
     }
   }
 
+  // Pause and speed: from the live controls and the timeline alike
+  function togglePause() {
+    if (paused) {
+      startSimulationPolling()
+    } else {
+      stopSimulationPolling()
+      setPaused(true)
+    }
+  }
+
+  function changeSpeed(value: Speed) {
+    setSpeed(value)
+    speedRef.current = value
+  }
+
   // Short description of a point on the map, for the route steps
   const formatPoint = (point: Coordinate) =>
     `${point[0].toFixed(4)}, ${point[1].toFixed(4)}`
@@ -1477,19 +1496,9 @@ function App() {
           <LiveControls
             active={routeInfo !== null}
             paused={paused}
-            onPauseToggle={() => {
-              if (paused) {
-                startSimulationPolling()
-              } else {
-                stopSimulationPolling()
-                setPaused(true)
-              }
-            }}
+            onPauseToggle={togglePause}
             speed={speed}
-            onSpeed={(value) => {
-              setSpeed(value)
-              speedRef.current = value
-            }}
+            onSpeed={changeSpeed}
             send={async ([original, perRun]) => {
               const response = await fetch(runUrl(original, perRun), { method: "POST" })
               const body = await response.json().catch(() => ({}))
@@ -1695,10 +1704,14 @@ function App() {
               {congestion.map((segment, index) => (
                 <Polyline
                   key={`congestion-${index}`}
-                  positions={[
-                    [segment.start.latitude, segment.start.longitude],
-                    [segment.end.latitude, segment.end.longitude],
-                  ]}
+                  positions={
+                    segment.path && segment.path.length > 1
+                      ? segment.path
+                      : [
+                          [segment.start.latitude, segment.start.longitude],
+                          [segment.end.latitude, segment.end.longitude],
+                        ]
+                  }
                   pathOptions={{
                     color: congestionColour(segment.level),
                     weight: LINE.congestion,
@@ -1844,15 +1857,16 @@ function App() {
                   vehicle.vehicle_type === "ambulance" || vehicle.on_emergency
 
                 return (
+                  // Ordinary traffic understated; emergency vehicles bold
                   <CircleMarker
                     key={vehicle.vehicle_id}
                     center={[vehicle.latitude, vehicle.longitude]}
                     radius={isAmbulance ? MARKER.ambulance : MARKER.vehicle}
                     pathOptions={{
-                      color: MARKER.outline,
-                      weight: MARKER.outlineWeight,
-                      fillColor: isAmbulance ? COLOURS.emergency : COLOURS.route,
-                      fillOpacity: 1,
+                      color: isAmbulance ? MARKER.outline : "#0e151d",
+                      weight: isAmbulance ? MARKER.outlineWeight : 0.8,
+                      fillColor: isAmbulance ? COLOURS.emergency : VEHICLE_3D,
+                      fillOpacity: isAmbulance ? 1 : 0.85,
                     }}
                   />
                 )
@@ -1869,7 +1883,40 @@ function App() {
               ]}
             />
           </div>
+
+          {/* TIMELINE: simulated time, playback and incidents as they happened */}
+          <SimulationTimeline
+            history={history}
+            simulationTime={simulationTime}
+            paused={paused}
+            onPauseToggle={togglePause}
+            speed={speed}
+            onSpeed={changeSpeed}
+            active={routeInfo !== null}
+          />
         </section>
+
+        {/* ---------------- MONITORING (right of the map) ---------------- */}
+        <aside className="monitor" aria-label="Monitoring">
+          {routeInfo ? (
+            <LiveAnalytics history={history} />
+          ) : (
+            <section className="monitor-card">
+              <h3>Live traffic</h3>
+              <p className="monitor-empty">Plan a route to start the simulation and its live figures.</p>
+            </section>
+          )}
+          <EmergencyMonitor
+            status={emergencyActive ? emergencyStatus : null}
+            service={serviceOf(dispatchedService).label}
+          />
+          <IncidentMonitor
+            latest={history[history.length - 1]}
+            floods={floods}
+            signals={signalJunctions}
+            simulationTime={simulationTime}
+          />
+        </aside>
 
         {/* ---------------- OPTIMISER RESULTS ---------------- */}
         <OptimiserOutput
@@ -1880,7 +1927,6 @@ function App() {
 
         {/* ---------------- SCENARIO ANALYSIS ---------------- */}
         {/* ---------------- LIVE TRAFFIC CHARTS ---------------- */}
-        {routeInfo && <LiveAnalytics history={history} />}
         {routeInfo && (
           <ResiliencePanel
             measure={async () => {

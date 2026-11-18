@@ -14,7 +14,9 @@ import maplibregl, {
 } from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 
-import { BUILDINGS, COLOURS, LINE, MARKER } from "./mapStyles.ts"
+import { BUILDINGS, COLOURS, LINE, MARKER, VEHICLE_3D } from "./mapStyles.ts"
+import { OPS_STYLE } from "./mapTheme.ts"
+import { VehicleGlide } from "./vehicles3d.ts"
 import {
   SOURCES,
   describeBuilding,
@@ -30,7 +32,10 @@ import { request } from "./scenarios.ts"
 import type { Coordinate } from "./simulationHelpers.ts"
 
 // A clean, light basemap; the simulation layers carry the colour
-const STYLE = "https://tiles.openfreemap.org/styles/positron"
+// Our own dark operations style from OpenFreeMap's vector tiles (mapTheme.ts)
+const STYLE = OPS_STYLE
+
+
 
 // Looking north-west over the city centre, the castle and the cathedral
 const NORWICH_VIEW = {
@@ -44,14 +49,14 @@ const FONT = ["Noto Sans Bold"]
 // A few buildings come with no height at all; treat them as flat
 const HEIGHT: ExpressionSpecification = ["coalesce", ["get", "render_height"], 0]
 const STATION_LAYERS = ["stations-circle", "stations-label"]
-const VEHICLE_LAYERS = ["emergency-vehicles", "vehicles"]
+const VEHICLE_LAYERS = ["emergency-vehicles", "vehicle-bodies", "vehicles"]
 const ROAD_LAYERS = ["congestion", "routes", "routes-emergency", "closures", "hotspots"]
 
 // What the Layers menu can switch off, and the map layers behind each
 const LAYER_GROUPS = [
   { key: "buildings", label: "3D buildings", layers: ["buildings-3d"] },
   { key: "traffic", label: "Live congestion", layers: ["congestion"] },
-  { key: "vehicles", label: "Vehicles", layers: ["vehicles", "emergency-vehicles", "emergency-vehicles-label"] },
+  { key: "vehicles", label: "Vehicles", layers: ["vehicles", "vehicle-bodies", "emergency-vehicles", "emergency-vehicles-label"] },
   { key: "routes", label: "Routes and closures", layers: ["routes", "routes-emergency", "closures"] },
   { key: "signals", label: "Traffic signals", layers: ["signals", "signals-label"] },
   { key: "floods", label: "Floods", layers: ["floods"] },
@@ -122,9 +127,27 @@ function addLayers(map: MapLibreMap) {
     layout: { "line-cap": "round" },
     paint: { "line-color": COLOURS.delayHotspot, "line-width": LINE.delayHotspot, "line-opacity": 0.55 },
   }, firstLabel)
+  // Congestion along each road's real shape: a soft glow under a firm line,
+  // wider as you zoom in
+  map.addLayer({
+    id: "congestion-glow", type: "line", source: "congestion",
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "colour"],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4, 15, 12, 18, 30],
+      // Only congestion glows: free-flowing traffic stays quiet
+      "line-opacity": ["match", ["get", "level"], "light", 0, 0.28],
+      "line-blur": 4,
+    },
+  }, firstLabel)
   map.addLayer({
     id: "congestion", type: "line", source: "congestion",
-    paint: { "line-color": ["get", "colour"], "line-width": LINE.congestion, "line-opacity": 0.6 },
+    layout: { "line-cap": "round", "line-join": "round" },
+    paint: {
+      "line-color": ["get", "colour"],
+      "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.5, 15, 4, 18, 10],
+      "line-opacity": ["match", ["get", "level"], "light", 0.35, 0.95],
+    },
   }, firstLabel)
   map.addLayer({
     id: "closures", type: "line", source: "closures",
@@ -176,7 +199,23 @@ function addLayers(map: MapLibreMap) {
       ] as ExpressionSpecification,
       "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 13, 0, 14.5, HEIGHT],
       "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-      "fill-extrusion-opacity": 0.82,
+      "fill-extrusion-opacity": 0.92,
+      "fill-extrusion-vertical-gradient": true,
+    },
+  }, firstLabel)
+
+  // Vehicles as 3D bodies from zoom 15 (vehicles3d.ts), extruded in one
+  // batched layer: understated grey for ordinary traffic, the service's
+  // colour for emergency vehicles
+  map.addSource("vehicle-bodies", { type: "geojson", data: { type: "FeatureCollection", features: [] } })
+  map.addLayer({
+    id: "vehicle-bodies", type: "fill-extrusion", source: "vehicle-bodies",
+    minzoom: 15,
+    paint: {
+      "fill-extrusion-color": ["case", ["get", "emergency"], ["get", "colour"], VEHICLE_3D],
+      "fill-extrusion-height": ["get", "height"],
+      "fill-extrusion-base": 0.2,
+      "fill-extrusion-opacity": 1,
     },
   }, firstLabel)
 
@@ -192,15 +231,16 @@ function addLayers(map: MapLibreMap) {
       "circle-pitch-alignment": "viewport",
     },
   })
+  // The overview: a small dot per vehicle until the bodies take over
   map.addLayer({
     id: "vehicles", type: "circle", source: "vehicles",
     filter: ["!", ["get", "emergency"]],
+    maxzoom: 15.5,
     paint: {
-      "circle-color": ["get", "colour"],
+      "circle-color": VEHICLE_3D,
       // Small when zoomed out, where thousands of vehicles share the screen
-      "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 1.8, 14.5, 3, 17, MARKER.vehicle],
-      "circle-stroke-color": MARKER.outline,
-      "circle-stroke-width": ["interpolate", ["linear"], ["zoom"], 12, 0.5, 15, 1.5],
+      "circle-radius": ["interpolate", ["linear"], ["zoom"], 12, 1.4, 14.5, 2.4, 15.5, 3],
+      "circle-opacity": ["interpolate", ["linear"], ["zoom"], 15, 0.9, 15.5, 0],
     },
   })
   map.addLayer({
@@ -335,13 +375,17 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
     return element
   })
 
+  // Vehicles glide from where they are drawn to their new positions
+  const glide = useRef(new VehicleGlide())
+
   function push() {
     const map = mapRef.current
     if (!map || !ready.current) return
     for (const id of SOURCES) {
       const collection = latest.current.data[id]
       if (sent.current.get(id) === collection) continue
-      ;(map.getSource(id) as GeoJSONSource | undefined)?.setData(collection)
+      if (id === "vehicles") glide.current.set(map, collection)
+      else (map.getSource(id) as GeoJSONSource | undefined)?.setData(collection)
       sent.current.set(id, collection)
     }
     moveCamera(map, latest.current.data, focused.current)
@@ -369,6 +413,15 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
     map.addControl(new maplibregl.NavigationControl({ visualizePitch: true }), "top-left")
     map.addControl({ onAdd: () => toolsHost, onRemove: () => toolsHost.remove() }, "top-left")
     map.addControl(new maplibregl.ScaleControl({ unit: "metric" }), "bottom-right")
+    // Fullscreen takes the map with its legend and messages
+    map.addControl(
+      new maplibregl.FullscreenControl({ container: container.current.parentElement ?? undefined }),
+      "top-left",
+    )
+    // Bodies are sized for the zoom (bodyScale): redraw when it changes
+    map.on("zoomend", () => {
+      if (ready.current) glide.current.draw(map, performance.now())
+    })
 
     const idleCursor = () => (latest.current.inspecting ? "help" : "crosshair")
     map.getCanvas().style.cursor = idleCursor()
@@ -439,9 +492,9 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
       // it: the nearest junction is then its own end, and the road through
       // the point is the segment itself, not a side road near the click.
       const segment = simulatedRoad.find((feature) => feature.layer.id === "congestion")
-      const ends = segment?.geometry.type === "LineString" && segment.geometry.coordinates.length === 2
-        ? (segment.geometry.coordinates as Position[])
-        : null
+      // Its two junctions: the ends of the line (drawn along the road's shape)
+      const coordinates = segment?.geometry.type === "LineString" ? (segment.geometry.coordinates as Position[]) : []
+      const ends = coordinates.length >= 2 ? [coordinates[0], coordinates[coordinates.length - 1]] : null
       const [longitude, latitude] = ends
         ? [ends[0][0] + (ends[1][0] - ends[0][0]) * 0.1, ends[0][1] + (ends[1][1] - ends[0][1]) * 0.1]
         : [event.lngLat.lng, event.lngLat.lat]
@@ -489,7 +542,9 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
 
     const sentSources = sent.current
     const focusedTargets = focused.current
+    const vehicles = glide.current
     return () => {
+      vehicles.stop()
       ready.current = false
       sentSources.clear()
       focusedTargets.clear()

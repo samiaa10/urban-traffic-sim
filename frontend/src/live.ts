@@ -264,3 +264,18 @@ export type ResilienceReport = {
   accessibility: { before: Accessibility; now: Accessibility }
   emergency_access: { before: EmergencyAccess; now: EmergencyAccess }
 }
+
+// When the number of closed roads or accidents went up: the incidents on the
+// timeline
+export function incidentMarks(history: Sample[]): { time: number; label: string }[] {
+  const marks: { time: number; label: string }[] = []
+  for (let i = 1; i < history.length; i += 1) {
+    const before = history[i - 1], now = history[i]
+    if (now.closed_roads > before.closed_roads) {
+      marks.push({ time: now.time, label: `${now.closed_roads - before.closed_roads} road(s) closed` })
+    }
+    if (now.accidents > before.accidents) marks.push({ time: now.time, label: "Accident" })
+  }
+  return marks
+}
+

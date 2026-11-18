@@ -267,6 +267,36 @@ describe("traffic signals", () => {
   })
 })
 
+describe("operations view", () => {
+  it("shows simulated time on the timeline and the network's incidents beside the map", async () => {
+    const { polling } = await startRun()
+    await polling.tick()
+    await polling.tick()
+
+    const timeline = screen.getByRole("group", { name: "Simulation timeline" })
+    expect(within(timeline).getByLabelText("Simulated time").textContent).toMatch(/^T\+0:0\d$/)
+    expect(within(timeline).getByRole("img", { name: /Vehicles driving over/ })).toBeTruthy()
+
+    const monitor = screen.getByRole("complementary", { name: "Monitoring" })
+    const incidents = within(monitor).getByRole("region", { name: "Incidents and disruptions" })
+    // The step summary says one accident: the monitor shows it, flagged
+    const accidents = within(incidents).getByText("Accidents").nextElementSibling
+    expect(accidents?.textContent).toBe("1")
+    expect(accidents?.className).toContain("monitor-alert")
+    expect(within(monitor).getByText("Nothing under way")).toBeTruthy()
+  })
+
+  it("pauses and changes speed from the timeline too", async () => {
+    const { polling, user } = await startRun()
+    const timeline = screen.getByRole("group", { name: "Simulation timeline" })
+    await user.click(within(timeline).getByRole("button", { name: "5x" }))
+    expect(within(timeline).getByRole("button", { name: "5x" }).getAttribute("aria-pressed")).toBe("true")
+    await user.click(within(timeline).getByRole("button", { name: "Pause playback" }))
+    expect(polling.running()).toBe(0)
+    expect(within(timeline).getByRole("button", { name: "Play" })).toBeTruthy()
+  })
+})
+
 describe("live charts", () => {
   it("draw each step's summary", async () => {
     const { polling } = await startRun()
