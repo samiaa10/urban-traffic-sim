@@ -39,7 +39,7 @@ A signalised junction has **approaches** (roads arriving) and **exits** (roads l
 - a right turn and the oncoming straight-ahead do;
 - two straight-aheads at right angles do.
 
-**Phases** group approaches whose movements are all compatible with each other. Only one phase is ever green, so two conflicting movements are never allowed at once; the tests check every phase of all 121 Norwich junctions. Because most junctions allow right turns, most end up with one approach per phase.
+**Phases** group approaches whose movements are all compatible with each other. Only one phase is ever green, so two conflicting movements are never allowed at once; the tests check every phase of all 108 signalised Norwich junctions. Because most junctions allow right turns, most end up with one approach per phase.
 
 **Sequence.** Each phase change goes green → amber (3 s) → all-red (2 s) → next green, never straight from one green to another. UK red-and-amber is treated as red. Amber is a stop signal here: no new vehicle enters on amber.
 
