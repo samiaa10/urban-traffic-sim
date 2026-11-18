@@ -29,7 +29,7 @@ function LineChart({
         {title}
         {last && <strong> {Math.round(last.y)}{unit}</strong>}
       </figcaption>
-      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} role="img"
+      <svg viewBox={`0 0 ${WIDTH} ${HEIGHT}`} preserveAspectRatio="none" role="img"
         aria-label={`${title} over ${Math.round(maxX)} simulated seconds`}>
         <line x1="0" y1={HEIGHT} x2={WIDTH} y2={HEIGHT} className="axis" />
         <polyline points={linePoints(points, WIDTH, HEIGHT, maxX, maxY)} className="series" />

@@ -42,7 +42,8 @@ export const MARKER = {
   outline: "#ffffff",
   outlineWeight: 2,
   point: 7,
-  vehicle: 6,
+  // Ordinary vehicles: small, so they don't drown congestion and incidents
+  vehicle: 3,
   ambulance: 8,
   incident: 13,
   candidate: 11,

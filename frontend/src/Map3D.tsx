@@ -135,7 +135,8 @@ function addLayers(map: MapLibreMap) {
     paint: {
       "line-color": ["get", "colour"],
       "line-width": ["interpolate", ["linear"], ["zoom"], 11, 4, 15, 12, 18, 30],
-      "line-opacity": 0.22,
+      // Only congestion glows: free-flowing traffic stays quiet
+      "line-opacity": ["match", ["get", "level"], "light", 0, 0.28],
       "line-blur": 4,
     },
   }, firstLabel)
@@ -145,7 +146,7 @@ function addLayers(map: MapLibreMap) {
     paint: {
       "line-color": ["get", "colour"],
       "line-width": ["interpolate", ["linear"], ["zoom"], 11, 1.5, 15, 4, 18, 10],
-      "line-opacity": 0.9,
+      "line-opacity": ["match", ["get", "level"], "light", 0.35, 0.95],
     },
   }, firstLabel)
   map.addLayer({

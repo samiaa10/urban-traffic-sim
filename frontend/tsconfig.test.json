@@ -24,6 +24,7 @@
     "src/services.ts",
     "src/live.ts",
     "src/mapData.ts",
+    "src/vehicles3d.ts",
     "src/scenarios.ts",
     "src/simulationHelpers.ts"
   ]
