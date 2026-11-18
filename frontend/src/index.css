@@ -1028,6 +1028,39 @@ a {
 }
 
 /* What the next click on the map will do */
+/* 2D / 3D switch: a small segmented control */
+.map-view {
+  display: inline-flex;
+  flex: none;
+  margin-left: auto;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+}
+.map-view-option {
+  min-width: 40px;
+  height: calc(var(--control-h-sm) - 4px);
+  padding: 0 10px;
+  border: 0;
+  border-radius: calc(var(--radius-sm) - 2px);
+  background: transparent;
+  color: var(--ink-2);
+  font: inherit;
+  font-size: var(--text-xs);
+  font-weight: 600;
+  letter-spacing: 0.04em;
+  cursor: pointer;
+}
+.map-view-option[aria-pressed="true"] {
+  background: var(--surface);
+  color: var(--ink);
+  box-shadow: 0 1px 2px rgb(23 40 58 / 0.14);
+}
+.map-view-option:focus-visible {
+  outline: 2px solid var(--ink-2);
+  outline-offset: 1px;
+}
+
 .map-mode {
   display: inline-flex;
   align-items: center;
@@ -1083,6 +1116,24 @@ a {
   background: #e4e8ec;
   cursor: crosshair;
   font-family: var(--font);
+}
+
+.map-loading {
+  display: grid;
+  place-items: center;
+  color: var(--ink-3);
+  font-size: var(--text-sm);
+  cursor: progress;
+}
+
+/* MapLibre popups in the app's type */
+.map-3d .maplibregl-popup-content {
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  font-family: var(--font);
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink);
 }
 
 /* A quiet basemap so the simulation layers carry the colour */
