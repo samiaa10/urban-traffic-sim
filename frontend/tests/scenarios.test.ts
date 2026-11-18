@@ -51,6 +51,11 @@ describe("draftToSpec", () => {
     })
   })
 
+  it("names a traffic model only when one was chosen (otherwise the server's default)", () => {
+    assert.equal("traffic_model" in draftToSpec(draft()), false)
+    assert.equal(draftToSpec(draft({ trafficModel: "ca" })).traffic_model, "ca")
+  })
+
   it("keeps only the road of each closure and adds accident timing", () => {
     const spec = draftToSpec(draft({
       closures: [{ start: 1, destination: 2, label: "1-2" }],

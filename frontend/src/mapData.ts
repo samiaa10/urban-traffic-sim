@@ -27,7 +27,15 @@ export type MapState = {
   start: Coordinate | null
   destination: Coordinate | null
   route: Coordinate[]
-  congestion: { start: ApiPoint; end: ApiPoint; vehicle_count: number; level: string }[]
+  congestion: {
+    start: ApiPoint
+    end: ApiPoint
+    vehicle_count: number
+    level: string
+    // Cellular-automaton runs only
+    stopped?: number
+    occupancy?: number
+  }[]
   emergencyRoute: Coordinate[]
   blockedAhead: Coordinate[]
   incidentRoute: Coordinate[]
@@ -194,6 +202,8 @@ export function congestionFeatures(congestion: MapState["congestion"]): FeatureC
         level: segment.level,
         colour: congestionColour(segment.level),
         vehicles: segment.vehicle_count,
+        ...(segment.stopped === undefined ? {} : { stopped: segment.stopped }),
+        ...(segment.occupancy === undefined ? {} : { occupancy: segment.occupancy }),
       }),
     ),
   )
@@ -292,6 +302,15 @@ function liveTraffic(segments: Feature[]): string {
     : "Now: no vehicles on it"
 }
 
+// The cellular automaton's queue on these segments (null: not a CA run)
+function queueLine(segments: Feature[]): string | null {
+  const measured = segments.filter((feature) => typeof feature.properties.stopped === "number")
+  if (measured.length === 0) return null
+  const stopped = measured.reduce((total, feature) => total + Number(feature.properties.stopped), 0)
+  const full = Math.max(...measured.map((feature) => Number(feature.properties.occupancy ?? 0)))
+  return `Queue: ${stopped} stopped, road ${Math.round(full * 100)}% full`
+}
+
 // The road's live traffic comes from the congestion layer: the same road
 // segment (by its two junctions' positions), in either direction
 export function describeRoad(road: InspectedRoad, congestion: FeatureCollection): string[] {
@@ -299,14 +318,17 @@ export function describeRoad(road: InspectedRoad, congestion: FeatureCollection)
   const live = congestion.features.filter((feature) =>
     sameSegment(feature.geometry.coordinates as Position[], ends, 1e-9),
   )
+  const queue = queueLine(live)
   return [
     road.name || "Unnamed road",
     `${Math.round(metresBetween(road.start_point, road.end_point))} m, junction to junction`,
     liveTraffic(live),
+    ...(queue ? [queue] : []),
   ]
 }
 
 // A congestion segment the road lookup could not name
 export function describeSegment(segment: Feature): string[] {
-  return ["Road", liveTraffic([segment])]
+  const queue = queueLine([segment])
+  return ["Road", liveTraffic([segment]), ...(queue ? [queue] : [])]
 }

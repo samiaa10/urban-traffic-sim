@@ -205,6 +205,22 @@ describe("building scenarios", () => {
 })
 
 describe("running a study", () => {
+  it("can run the same scenario under two traffic models to compare them", async () => {
+    const backend = mockBackend(scenarioBackend())
+    controlPolling()
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Baseline traffic model" }), "osm")
+    await user.selectOptions(screen.getByRole("combobox", { name: "Road closure traffic model" }), "ca")
+    await user.click(screen.getByRole("button", { name: "Run 2 scenarios" }))
+
+    const sent = backend.last("POST /scenarios/studies")?.body as {
+      scenarios: { traffic_model?: string }[]
+    }
+    expect(sent.scenarios.map((s) => s.traffic_model)).toEqual(["osm", "ca"])
+  })
+
   it("sends the scenarios, shows progress, then the ranking and why", async () => {
     const backend = mockBackend(scenarioBackend())
     const polling = controlPolling()

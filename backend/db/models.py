@@ -238,7 +238,7 @@ class SimulationRun(Base):
         ),
         CheckConstraint("sim_time >= 0", name="sim_time_not_negative"),
         CheckConstraint(
-            "traffic_model IN ('simple', 'osm')", name="known_traffic_model"
+            "traffic_model IN ('simple', 'osm', 'ca')", name="known_traffic_model"
         ),
         CheckConstraint(
             "vehicles_finished >= 0 AND vehicles_finished <= vehicles_total",

@@ -75,6 +75,10 @@ type CongestionSegment = {
   end: { latitude: number; longitude: number }
   vehicle_count: number
   level: string
+  // Cellular-automaton runs only: cars standing still, and the share of
+  // the road's cells taken
+  stopped?: number
+  occupancy?: number
 }
 
 // The 3D map (MapLibre) is only downloaded when someone switches to it

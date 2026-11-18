@@ -100,4 +100,4 @@ REALISTIC_RULES = EmergencyRules(
 def rules_for(road_model):
     """The emergency rules that go with a traffic model."""
 
-    return REALISTIC_RULES if road_model.name == "osm" else ORIGINAL_RULES
+    return REALISTIC_RULES if road_model.name in ("osm", "ca") else ORIGINAL_RULES

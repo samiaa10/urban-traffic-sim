@@ -20,6 +20,8 @@ export type StepSummary = {
   reroutes: number
   closed_roads: number
   accidents: number
+  // Only from the cellular-automaton traffic model: cars standing still
+  stopped?: number
 }
 
 export type Sample = StepSummary & { time: number }
@@ -45,6 +47,11 @@ export function series(history: Sample[], value: (sample: Sample) => number | nu
 
 export const heldUpPercent = (sample: Sample) =>
   sample.active_vehicles > 0 ? (100 * sample.held_up) / sample.active_vehicles : null
+
+export const stoppedPercent = (sample: Sample) =>
+  sample.stopped === undefined || sample.active_vehicles === 0
+    ? null
+    : (100 * sample.stopped) / sample.active_vehicles
 
 export const speedPercent = (sample: Sample) =>
   sample.mean_speed_factor === null ? null : 100 * sample.mean_speed_factor

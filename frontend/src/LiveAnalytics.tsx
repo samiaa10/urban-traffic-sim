@@ -1,9 +1,10 @@
 // Live charts of the running simulation, drawn from the summary every
 // step returns (no extra requests): vehicles driving and held up, and
-// the average speed as a share of free flow.
+// the average speed as a share of free flow, and (cellular-automaton runs
+// only) the share of cars standing still in queues.
 
 import { KpiCard } from "./components.tsx"
-import { describeSample, heldUpPercent, series, speedPercent, type Sample } from "./live.ts"
+import { describeSample, heldUpPercent, series, speedPercent, stoppedPercent, type Sample } from "./live.ts"
 import { linePoints } from "./scenarios.ts"
 
 const WIDTH = 520
@@ -41,6 +42,7 @@ export function LiveAnalytics({ history }: { history: Sample[] }) {
   const latest = history[history.length - 1]
   const active = series(history, (s) => s.active_vehicles)
   const peak = Math.max(10, ...active.map((p) => p.y))
+  const stopped = series(history, stoppedPercent)
 
   return (
     <section className="card live-analytics" id="analytics" aria-labelledby="analytics-title">
@@ -61,6 +63,9 @@ export function LiveAnalytics({ history }: { history: Sample[] }) {
             <LineChart title="Vehicles driving" points={active} maxY={peak} unit="" />
             <LineChart title="Held up by traffic" points={series(history, heldUpPercent)} maxY={100} unit="%" />
             <LineChart title="Average speed (of free flow)" points={series(history, speedPercent)} maxY={100} unit="%" />
+            {stopped.length > 0 && (
+              <LineChart title="Stopped in queues" points={stopped} maxY={100} unit="%" />
+            )}
           </div>
         </>
       )}

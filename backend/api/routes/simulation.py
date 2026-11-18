@@ -31,8 +31,10 @@ router = APIRouter(tags=["Simulation runs"])
 
 TrafficModelQuery = Query(
     None,
-    description="simple (original rules) or osm (OpenStreetMap speed limits, "
-    "lanes and per-direction traffic); default: the server's TRAFFIC_MODEL",
+    description="simple (original rules), osm (OpenStreetMap speed limits, "
+    "lanes and per-direction traffic) or ca (experimental: the osm roads with "
+    "cars moved by a Nagel-Schreckenberg cellular automaton); default: the "
+    "server's TRAFFIC_MODEL",
 )
 
 
@@ -41,8 +43,8 @@ def build_run(context, start, destination, restarted_from=None, traffic_model=No
 
     Returns the run and the details /simulation/start reports.
     restarted_from (a UUID) links it to the ended run it restarts.
-    traffic_model: "simple" or "osm" (simulation/road_model.py); None uses
-    the server's default.
+    traffic_model: "simple", "osm" or "ca" (simulation/road_model.py); None
+    uses the server's default.
     """
 
     graph = context.graph
@@ -132,7 +134,7 @@ def add_run(context, run, make_default):
 def start_simulation(
     start: int,
     destination: int,
-    traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
+    traffic_model: Optional[Literal["simple", "osm", "ca"]] = TrafficModelQuery,
     replace_default: bool = Query(
         True,
         description="false: start the run without making it the default, so it "
@@ -164,7 +166,7 @@ def start_simulation(
 def create_simulation(
     start: int,
     destination: int,
-    traffic_model: Optional[Literal["simple", "osm"]] = TrafficModelQuery,
+    traffic_model: Optional[Literal["simple", "osm", "ca"]] = TrafficModelQuery,
     context: AppContext = Depends(get_context)
 ):
     """Start an independent run. It does not replace the default run."""
@@ -502,7 +504,7 @@ def simulation_step(
             run.recorder.sync()
 
         vehicles = []
-        active = held_up = arrived = 0
+        active = held_up = arrived = stopped = 0
         speed_sum = 0.0
         journey_sum = 0
         reroutes = 0
@@ -539,6 +541,8 @@ def simulation_step(
                 speed_sum += vehicle.speed_factor
                 if vehicle.speed_factor < 1:
                     held_up += 1
+                if vehicle.speed_factor == 0:
+                    stopped += 1
 
         simulation_time = simulation.time
         summary = {
@@ -551,6 +555,10 @@ def simulation_step(
             "closed_roads": len(simulation.get_blocked_segments()),
             "accidents": len(simulation.accidents),
         }
+        # The cellular automaton has cars standing still in queues (the
+        # other models keep every car creeping, so it is only reported here)
+        if simulation.road_model.cellular:
+            summary["stopped"] = stopped
 
     # Already plain numbers, strings and booleans, so skip FastAPI's
     # general-purpose encoder: with 2,000 vehicles it took about 55 ms of
@@ -571,6 +579,8 @@ def simulation_congestion(run: LiveRun = Depends(default_run)):
 
     with run.lock:
         congestion = run.simulation.get_congestion()
+        model = run.simulation.road_model
+        lattice = model.road_state() if model.cellular else None
 
     congestion_segments = []
 
@@ -591,6 +601,21 @@ def simulation_congestion(run: LiveRun = Depends(default_run)):
             # Includes any accident's lost capacity (see /incidents)
             "level": data["level"]
         })
+
+        if lattice is not None:
+            # The cellular automaton's own state, both directions together:
+            # cars standing still, the share of the road's cells taken (the
+            # fuller direction) and the mean speed (the slower direction)
+            directions = [
+                lattice[key] for key in ((start_point, end_point), (end_point, start_point))
+                if key in lattice
+            ]
+            if directions:
+                congestion_segments[-1].update({
+                    "stopped": sum(d["stopped"] for d in directions),
+                    "occupancy": max(d["occupancy"] for d in directions),
+                    "speed_factor": min(d["speed_factor"] for d in directions),
+                })
 
     return {
         "congestion": congestion_segments

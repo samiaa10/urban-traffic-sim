@@ -41,7 +41,10 @@ from backend.routing.road_attributes import MPH, default_speed_limit
 
 SIMPLE = "simple"
 OSM = "osm"
-TRAFFIC_MODELS = (SIMPLE, OSM)
+# Experimental: the osm model's roads with cars moved by a cellular
+# automaton (cellular.py)
+CA = "ca"
+TRAFFIC_MODELS = (SIMPLE, OSM, CA)
 
 # Metres of road one car occupies in a standing queue (car plus gap)
 JAM_SPACING = 7.5
@@ -80,6 +83,7 @@ class SimpleRoads:
     name = SIMPLE
     directed = False
     has_limits = False
+    cellular = False
 
     def key(self, point_a, point_b):
         return undirected((point(point_a), point(point_b)))
@@ -112,15 +116,17 @@ class OsmRoads:
     name = OSM
     directed = True
     has_limits = True
+    cellular = False
 
     def __init__(self, network, min_road_length=MIN_ROAD_LENGTH):
         self.min_road_length = min_road_length
         # The road network (emergency dispatch plans with it)
         self.network = network
 
-        # Directed key -> speed limit (m/s) and capacity (vehicles)
+        # Directed key -> speed limit (m/s), capacity (vehicles) and lanes
         self.limits = {}
         self.capacity = {}
+        self.lanes = {}
 
         graph = network.graph
 
@@ -133,6 +139,7 @@ class OsmRoads:
                 info.speed_limit if info is not None else UNKNOWN_ROAD_LIMIT
             )
             self.capacity[key] = self._capacity(length, lanes)
+            self.lanes[key] = lanes
 
     def _capacity(self, length, lanes):
         return lanes * max(length, self.min_road_length) / JAM_SPACING
@@ -195,8 +202,10 @@ class OsmRoads:
 SIMPLE_ROADS = SimpleRoads()
 
 
-def make_road_model(name, network=None):
-    """The model called `name` (osm needs the RoadNetwork)."""
+def make_road_model(name, network=None, seed=0):
+    """The model called `name` (osm and ca need the RoadNetwork). seed
+    fixes the ca model's random braking; the others are not random. A ca
+    model is new each call: it holds one simulation's cars."""
 
     if name == SIMPLE:
         return SIMPLE_ROADS
@@ -205,5 +214,12 @@ def make_road_model(name, network=None):
         if network is None:
             raise ValueError("the osm traffic model needs the road network")
         return network.osm_roads()
+
+    if name == CA:
+        if network is None:
+            raise ValueError("the ca traffic model needs the road network")
+        from backend.simulation.cellular import make_ca_roads
+
+        return make_ca_roads(network, seed=seed)
 
     raise ValueError(f"traffic model must be one of {', '.join(TRAFFIC_MODELS)}")

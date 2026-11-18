@@ -21,11 +21,12 @@ export const SERVICES: Service[] = [
 export const serviceOf = (name: ServiceName): Service =>
   SERVICES.find((service) => service.name === name) ?? SERVICES[0]
 
-export type TrafficModel = "osm" | "simple"
+export type TrafficModel = "osm" | "simple" | "ca"
 
 export const TRAFFIC_MODELS: { value: TrafficModel; label: string }[] = [
   { value: "osm", label: "Realistic (OpenStreetMap)" },
   { value: "simple", label: "Simple (original rules)" },
+  { value: "ca", label: "Cellular automaton (experimental)" },
 ]
 
 export type Distribution = "uniform" | "population"

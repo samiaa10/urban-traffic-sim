@@ -71,7 +71,7 @@ def test_downgrade_removes_everything_and_upgrade_works_again(engine):
 
 def test_the_database_is_at_the_latest_revision(engine):
     with engine.connect() as connection:
-        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0006"
+        assert connection.scalar(text("SELECT version_num FROM alembic_version")) == "0007"
 
 
 def test_the_station_evaluation_migration_can_be_undone_on_its_own(engine):
@@ -146,6 +146,32 @@ def test_only_known_traffic_models_can_be_saved(engine):
                 "INSERT INTO simulation_runs (id, start_node, destination_node, graph_sha256, traffic_model) "
                 "VALUES (:id, 1, 2, 'x', 'fast')"
             ), {"id": uuid.uuid4()})
+
+
+def test_the_cellular_automaton_can_be_saved_and_its_migration_undone(engine):
+    """0007 lets a run record the experimental ca model; 0006 does not."""
+
+    import uuid
+
+    import pytest
+    from sqlalchemy.exc import IntegrityError
+
+    insert = text(
+        "INSERT INTO simulation_runs (id, start_node, destination_node, graph_sha256, traffic_model) "
+        "VALUES (:id, 1, 2, 'x', 'ca')"
+    )
+    run_id = uuid.uuid4()
+    with engine.begin() as connection:
+        connection.execute(insert, {"id": run_id})
+        connection.execute(text("DELETE FROM simulation_runs WHERE id = :id"), {"id": run_id})
+
+    downgrade(engine, "0006")
+    try:
+        with pytest.raises(IntegrityError, match="known_traffic_model"):
+            with engine.begin() as connection:
+                connection.execute(insert, {"id": uuid.uuid4()})
+    finally:
+        migrate(engine, "head")
 
 
 def test_the_restart_link_migration_can_be_undone_on_its_own(engine):

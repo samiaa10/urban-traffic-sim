@@ -177,6 +177,19 @@ describe("inspect mode", () => {
     assert.equal(describeRoad({ start_point: a, end_point: b }, congestionFeatures([]))[0], "Unnamed road")
   })
 
+  it("adds the queue on a road from a cellular-automaton run", () => {
+    const congestion = congestionFeatures([
+      { ...segment(4, "heavy"), stopped: 3, occupancy: 0.62 },
+      { ...segment(1, "light", b, a), stopped: 0, occupancy: 0.1 },
+    ])
+    assert.deepEqual(describeRoad({ name: "Colegate", start_point: a, end_point: b }, congestion).slice(2), [
+      "Now: 5 vehicles, heavy traffic",
+      "Queue: 3 stopped, road 62% full",
+    ])
+    const [feature] = congestion.features
+    assert.deepEqual(describeSegment(feature), ["Road", "Now: 4 vehicles, heavy traffic", "Queue: 3 stopped, road 62% full"])
+  })
+
   it("describes a traffic segment the road lookup could not name", () => {
     const [feature] = congestionFeatures([segment(1, "moderate")]).features
     assert.deepEqual(describeSegment(feature), ["Road", "Now: 1 vehicle, moderate traffic"])
