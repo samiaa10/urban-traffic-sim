@@ -3,7 +3,7 @@
 
 import { expect, test } from "@playwright/test"
 
-import { clickMap, kpi, mapNotice, planRoute, simulationTime } from "./helpers.ts"
+import { clickMap, clickMapAt, kpi, mapNotice, planRoute, simulationTime } from "./helpers.ts"
 
 test("plans a route across Norwich and simulates it live", async ({ page }) => {
   await planRoute(page)
@@ -124,9 +124,9 @@ test("visitors never replace each other's runs", async ({ browser }) => {
 
 test("says why when no route reaches the chosen destination", async ({ page }) => {
   await page.goto("/")
-  await clickMap(page, 0.3, 0.4)
+  await clickMapAt(page, 52.6355, 1.268)
   // By the river east of the city: its nearest junction cannot be reached
-  await clickMap(page, 0.7, 0.6)
+  await clickMapAt(page, 52.6263, 1.3268)
   await page.getByRole("button", { name: "Calculate Route" }).click()
 
   await expect(mapNotice(page)).toContainText("Could not calculate route: No route available")
