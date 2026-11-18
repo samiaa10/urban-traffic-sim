@@ -1,10 +1,13 @@
-"""Demand surges, traffic status and the dynamic rerouting switch."""
+"""Demand surges, traffic status, the dynamic rerouting switch and traffic
+signals."""
 
 import math
+from typing import List, Literal, Optional
 
-from fastapi import APIRouter, Depends, HTTPException
+from fastapi import APIRouter, Depends, HTTPException, Query
 
-from backend.api.routes.common import default_run, run_route
+from backend.api.context import AppContext
+from backend.api.routes.common import default_run, get_context, run_route
 from backend.api.sessions import LiveRun
 from backend.simulation.demand import Zone
 
@@ -84,4 +87,66 @@ def configure_rerouting(
         return {
             "status": "rerouting " + ("enabled" if enabled else "disabled"),
             "policy": run.traffic.policy.describe()
+        }
+
+
+# ------------------------------------------------------------
+# Traffic signals (simulation/signals.py)
+# ------------------------------------------------------------
+
+@run_route(router, "post", "/traffic/signals", "/traffic/signals")
+def configure_signals(
+    controller: Literal["none", "fixed", "adaptive"],
+    emergency_priority: bool = False,
+    junctions: Optional[List[int]] = Query(
+        None, description="junction ids; default: those OpenStreetMap shows with traffic lights"
+    ),
+    green: float = Query(20, ge=5, le=120, description="fixed time: seconds of green per phase"),
+    min_green: float = Query(7, ge=3, le=60, description="adaptive: shortest green"),
+    max_green: float = Query(45, ge=5, le=180, description="adaptive: longest green"),
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
+    """Switch the run's traffic signals: none, fixed time or adaptive, with
+    or without emergency vehicle priority. The signals take effect from the
+    next simulated second and start from the first phase."""
+
+    from backend.simulation.signal_sites import load_signal_junctions
+    from backend.simulation.signals import SignalTiming, make_signals
+
+    if min_green > max_green:
+        raise HTTPException(status_code=422, detail="min_green must be at most max_green")
+
+    nodes = junctions if junctions is not None else load_signal_junctions()
+    timing = SignalTiming(
+        green=green, min_green=min_green, max_green=max_green, max_wait=max(120.0, max_green)
+    )
+    with context.network_lock:
+        signals = make_signals(run.traffic.network, nodes, controller, emergency_priority, timing)
+
+    with run.lock:
+        run.simulation.signals = signals
+
+    return {
+        "status": f"signals {controller}",
+        "controller": controller,
+        "emergency_priority": emergency_priority if signals else False,
+        "junctions": len(signals.junctions) if signals else 0,
+    }
+
+
+@run_route(router, "get", "/traffic/signals", "/traffic/signals")
+def signal_states(run: LiveRun = Depends(default_run)):
+    """Every signalised junction now: its phase, the light each approach
+    sees and the vehicles queued on it, from the simulation's state."""
+
+    with run.lock:
+        signals = run.simulation.signals
+        if signals is None:
+            return {"controller": "none", "emergency_priority": False, "junctions": []}
+        return {
+            "controller": signals.controller,
+            "emergency_priority": signals.priority,
+            "junctions": signals.describe(),
+            "summary": signals.summary(),
         }

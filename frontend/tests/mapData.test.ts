@@ -16,6 +16,7 @@ import {
   metresBetween,
   pointFeatures,
   sameSegment,
+  signalFeatures,
   routeFeatures,
   stationFeatures,
   vehicleFeatures,
@@ -32,7 +33,7 @@ const car = (overrides: Partial<Vehicle> = {}): Vehicle => ({
 const empty: MapState = {
   start: null, destination: null, route: [], congestion: [], emergencyRoute: [],
   blockedAhead: [], incidentRoute: [], emergencyLocation: null, candidates: [],
-  stations: [], hotspots: [], scenarioClosures: [], vehicles: [],
+  stations: [], hotspots: [], scenarioClosures: [], vehicles: [], signals: [],
 }
 
 describe("coordinates", () => {
@@ -203,5 +204,27 @@ describe("inspect mode", () => {
 
   it("measures metres between two points", () => {
     assert.equal(Math.round(metresBetween(a, b)), 111)
+  })
+})
+
+describe("traffic signals", () => {
+  it("draws each approach's light up its road, in the colour its drivers see, with its queue", () => {
+    const features = signalFeatures([{
+      node: 7, latitude: 52.63, longitude: 1.29, phase: 0, stage: "green",
+      approaches: [
+        { bearing: 0, light: "green", queue: 0 },
+        { bearing: 180, light: "red", queue: 4 },
+      ],
+    }]).features
+    assert.equal(features.length, 2)
+    const [north, south] = features
+    const [lonN, latN] = north.geometry.coordinates as [number, number]
+    const [, latS] = south.geometry.coordinates as [number, number]
+    // About 22 m north and south of the junction
+    assert.ok(latN > 52.63 && latS < 52.63)
+    assert.ok(Math.abs(lonN - 1.29) < 1e-9)
+    assert.equal(north.properties.label, "")
+    assert.equal(south.properties.label, "4")
+    assert.notEqual(north.properties.colour, south.properties.colour)
   })
 })

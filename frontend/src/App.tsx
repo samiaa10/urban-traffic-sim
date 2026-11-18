@@ -27,7 +27,7 @@ import {
   Spinner,
   type LegendEntry,
 } from "./components.tsx"
-import { BUILDINGS, COLOURS, LINE, MARKER } from "./mapStyles.ts"
+import { BUILDINGS, COLOURS, LINE, MARKER, SIGNAL_LIGHTS } from "./mapStyles.ts"
 import {
   SERVICE_MARKERS,
   closureFeatures,
@@ -35,6 +35,7 @@ import {
   hotspotFeatures,
   pointFeatures,
   routeFeatures,
+  signalFeatures,
   stationFeatures,
   vehicleFeatures,
 } from "./mapData.ts"
@@ -45,7 +46,17 @@ import type { RestartedRun } from "./history.ts"
 import { EvaluationSection } from "./EvaluationSection.tsx"
 import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
-import { appendSample, stepQuery, type Sample, type Speed } from "./live.ts"
+import {
+  DEFAULT_SIGNALS,
+  appendSample,
+  approachPoint,
+  signalsRequest,
+  stepQuery,
+  type Sample,
+  type SignalJunction,
+  type SignalSettings,
+  type Speed,
+} from "./live.ts"
 import {
   SERVICES,
   TRAFFIC_MODELS,
@@ -125,6 +136,12 @@ function App() {
     useState<Coordinate | null>(null)
 
   const [route, setRoute] = useState<Coordinate[]>([])
+
+  // Traffic signals: the settings asked for, and every signalised
+  // junction's state from the backend (GET /traffic/signals)
+  const [signalSettings, setSignalSettings] = useState<SignalSettings>(DEFAULT_SIGNALS)
+  const signalsRef = useRef<SignalSettings>(DEFAULT_SIGNALS)
+  const [signalJunctions, setSignalJunctions] = useState<SignalJunction[]>([])
 
   const [congestion, setCongestion] =
     useState<CongestionSegment[]>([])
@@ -286,6 +303,7 @@ function App() {
       setRoute([])
       setVehicles([])
       setCongestion([])
+      setSignalJunctions([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
@@ -313,6 +331,7 @@ function App() {
       setRoute([])
       setVehicles([])
       setCongestion([])
+      setSignalJunctions([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
@@ -399,6 +418,19 @@ function App() {
               // data is temporarily unavailable.
             }
 
+            // Traffic signals' state, while they are on
+            if (signalsRef.current.controller !== "none") {
+              try {
+                const signalResponse = await fetch(runUrl("/traffic/signals", "/traffic/signals"))
+                if (signalResponse.ok) {
+                  const signalData = await signalResponse.json()
+                  setSignalJunctions(signalData.junctions ?? [])
+                }
+              } catch {
+                // Keep the simulation running without the signal layer
+              }
+            }
+
             // Fetch the emergency response status (ETA, response time)
             try {
               const statusResponse = await fetch(
@@ -461,11 +493,13 @@ function App() {
     setEmergencyStatus(null)
     setBlockedAhead([])
     setCongestion([])
+    setSignalJunctions([])
     setSimulationTime(null)
     setScenarioOverlay(null)
     setHistory([])
 
     simulationId.current = restarted.simulation_id
+    void reapplySignals()
     setVehicles([
       {
         vehicle_id: 0,
@@ -534,6 +568,7 @@ function App() {
       setEmergencyStatus(null)
       setBlockedAhead([])
       setCongestion([])
+      setSignalJunctions([])
       setRouteInfo(null)
       setSimulationTime(null)
 
@@ -560,6 +595,9 @@ function App() {
       // Later requests name this run, so they reach it even if another
       // run is started elsewhere
       simulationId.current = simulationIdFrom(simulationData)
+
+      // A new run starts without signals: give it the ones chosen
+      await reapplySignals()
 
       // Put first vehicle at starting position
       if (simulationData.vehicle_position) {
@@ -897,6 +935,29 @@ function App() {
   // UI
   // ------------------------------------------------
 
+  // Switch the run's traffic signals (from the live controls)
+  async function applySignals(settings: SignalSettings) {
+    const [original, perRun] = signalsRequest(settings)
+    const response = await fetch(runUrl(original, perRun), { method: "POST" })
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(typeof body.detail === "string" ? body.detail : "The backend refused those signal settings")
+    }
+    signalsRef.current = settings
+    setSignalSettings(settings)
+    if (settings.controller === "none") setSignalJunctions([])
+    return body as { junctions: number }
+  }
+
+  async function reapplySignals() {
+    if (signalsRef.current.controller === "none") return
+    try {
+      await applySignals(signalsRef.current)
+    } catch {
+      // The run goes on without signals; the controls show the error next time
+    }
+  }
+
   // Short description of a point on the map, for the route steps
   const formatPoint = (point: Coordinate) =>
     `${point[0].toFixed(4)}, ${point[1].toFixed(4)}`
@@ -930,6 +991,7 @@ function App() {
   const congestionData = useMemo(() => congestionFeatures(congestion), [congestion])
   const hotspotsData = useMemo(() => hotspotFeatures(scenarioOverlay?.hotspots ?? []), [scenarioOverlay])
   const vehiclesData = useMemo(() => vehicleFeatures(vehicles), [vehicles])
+  const signalsData = useMemo(() => signalFeatures(signalJunctions), [signalJunctions])
   const mapData = useMemo(
     () => ({
       congestion: congestionData,
@@ -939,8 +1001,9 @@ function App() {
       points: pointsData,
       stations: stationsData,
       vehicles: vehiclesData,
+      signals: signalsData,
     }),
-    [congestionData, hotspotsData, closuresData, routesData, pointsData, stationsData, vehiclesData],
+    [congestionData, hotspotsData, closuresData, routesData, pointsData, stationsData, vehiclesData, signalsData],
   )
 
   // The state of the three route-planning steps
@@ -1063,6 +1126,14 @@ function App() {
       colour: COLOURS.closure,
       symbol: "dash",
     },
+    // Each signal approach is drawn in the colour its drivers see
+    ...(signalJunctions.length > 0
+      ? (["green", "amber", "red"] as const).map((light) => ({
+          label: `Signal ${light}`,
+          colour: SIGNAL_LIGHTS[light],
+          symbol: "dot" as const,
+        }))
+      : []),
     ] as (LegendEntry | false)[]
   ).filter((entry): entry is LegendEntry => entry !== false)
 
@@ -1395,6 +1466,8 @@ function App() {
             }}
             onPickRoad={pickRoad}
             onMessage={setResult}
+            signals={signalSettings}
+            onApplySignals={applySignals}
           />
 
           {/* EMERGENCY STATION OPTIMISER */}
@@ -1691,6 +1764,23 @@ function App() {
                   }}
                 />
               ))}
+
+              {/* TRAFFIC SIGNALS: each approach's light, bigger with a queue */}
+              {signalJunctions.flatMap((junction) =>
+                junction.approaches.map((approach, index) => (
+                  <CircleMarker
+                    key={`signal-${junction.node}-${index}`}
+                    center={approachPoint(junction, approach.bearing)}
+                    radius={4 + Math.min(6, approach.queue * 0.6)}
+                    pathOptions={{
+                      color: MARKER.outline,
+                      weight: 1.5,
+                      fillColor: SIGNAL_LIGHTS[approach.light],
+                      fillOpacity: 1,
+                    }}
+                  />
+                )),
+              )}
 
               {/* ALL VEHICLES */}
               {vehicles.map((vehicle) => {

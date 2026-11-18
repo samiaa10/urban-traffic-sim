@@ -205,6 +205,22 @@ describe("building scenarios", () => {
 })
 
 describe("running a study", () => {
+  it("can compare a scenario with and without traffic signals", async () => {
+    const backend = mockBackend(scenarioBackend())
+    controlPolling()
+    const user = userEvent.setup()
+    render(<App />)
+
+    await user.selectOptions(screen.getByRole("combobox", { name: "Road closure traffic signals" }), "priority")
+    await user.click(screen.getByRole("button", { name: "Run 2 scenarios" }))
+
+    const sent = backend.last("POST /scenarios/studies")?.body as {
+      scenarios: { signals?: { controller: string; emergency_priority: boolean } }[]
+    }
+    expect(sent.scenarios[0].signals).toBeUndefined()
+    expect(sent.scenarios[1].signals).toEqual({ controller: "adaptive", emergency_priority: true })
+  })
+
   it("can run the same scenario under two traffic models to compare them", async () => {
     const backend = mockBackend(scenarioBackend())
     controlPolling()

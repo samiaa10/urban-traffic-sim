@@ -26,12 +26,14 @@ import {
   roadLabel,
   studyRequest,
   METRIC_OPTIONS,
+  STUDY_SIGNALS,
   type Draft,
   type NearestRoad,
   type Road,
   type RoadImpact,
   type ScenarioDetail,
   type Study,
+  type StudySignals,
 } from "./scenarios.ts"
 
 // What the map draws for a scenario (see App.tsx)
@@ -379,6 +381,21 @@ export function ScenarioWorkspace({
                       <option value="">Server default</option>
                       {TRAFFIC_MODELS.map((model) => (
                         <option key={model.value} value={model.value}>{model.label}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Traffic signals
+                    <select
+                      aria-label={`${draft.name || "Scenario"} traffic signals`}
+                      value={draft.signals ?? ""}
+                      onChange={(e) =>
+                        update(draft.key, { signals: (e.target.value || undefined) as StudySignals | undefined })
+                      }
+                    >
+                      <option value="">None</option>
+                      {STUDY_SIGNALS.map((option) => (
+                        <option key={option.value} value={option.value}>{option.label}</option>
                       ))}
                     </select>
                   </label>

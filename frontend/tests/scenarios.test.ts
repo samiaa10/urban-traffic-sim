@@ -51,6 +51,12 @@ describe("draftToSpec", () => {
     })
   })
 
+  it("adds traffic signals only when chosen", () => {
+    assert.equal("signals" in draftToSpec(draft()), false)
+    assert.deepEqual(draftToSpec(draft({ signals: "fixed" })).signals, { controller: "fixed", emergency_priority: false })
+    assert.deepEqual(draftToSpec(draft({ signals: "priority" })).signals, { controller: "adaptive", emergency_priority: true })
+  })
+
   it("names a traffic model only when one was chosen (otherwise the server's default)", () => {
     assert.equal("traffic_model" in draftToSpec(draft()), false)
     assert.equal(draftToSpec(draft({ trafficModel: "ca" })).traffic_model, "ca")

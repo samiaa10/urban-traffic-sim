@@ -6,7 +6,8 @@
 // wants [longitude, latitude], so every coordinate is flipped here.
 
 import { congestionColour, type Coordinate, type Vehicle } from "./simulationHelpers.ts"
-import { COLOURS } from "./mapStyles.ts"
+import { COLOURS, SIGNAL_LIGHTS } from "./mapStyles.ts"
+import { approachPoint, type SignalJunction } from "./live.ts"
 import { minutes, percent } from "./optimiser.ts"
 
 type ApiPoint = { latitude: number; longitude: number }
@@ -58,6 +59,7 @@ export type MapState = {
   hotspots: { rank: number; start: ApiPoint; end: ApiPoint }[]
   scenarioClosures: { start: Coordinate; end: Coordinate }[]
   vehicles: Vehicle[]
+  signals: SignalJunction[]
 }
 
 // One GeoJSON source per kind of thing, so a vehicle update only re-sends
@@ -70,6 +72,7 @@ export const SOURCES = [
   "points",
   "stations",
   "vehicles",
+  "signals",
 ] as const
 
 export type SourceId = (typeof SOURCES)[number]
@@ -215,6 +218,25 @@ export function hotspotFeatures(hotspots: MapState["hotspots"]): FeatureCollecti
   )
 }
 
+// One light per approach of every signalised junction, a little way up the
+// approach, in the colour its drivers see; bigger, and numbered, with a queue
+export function signalFeatures(junctions: SignalJunction[]): FeatureCollection {
+  return collection(
+    junctions.flatMap((junction) =>
+      junction.approaches.map((approach) => {
+        const [latitude, longitude] = approachPoint(junction, approach.bearing)
+        return point([longitude, latitude], {
+          node: junction.node,
+          light: approach.light,
+          colour: SIGNAL_LIGHTS[approach.light],
+          queue: approach.queue,
+          label: approach.queue > 0 ? String(approach.queue) : "",
+        })
+      }),
+    ),
+  )
+}
+
 export function buildMapData(state: MapState): Record<SourceId, FeatureCollection> {
   return {
     congestion: congestionFeatures(state.congestion),
@@ -224,6 +246,7 @@ export function buildMapData(state: MapState): Record<SourceId, FeatureCollectio
     points: pointFeatures(state),
     stations: stationFeatures(state),
     vehicles: vehicleFeatures(state.vehicles),
+    signals: signalFeatures(state.signals),
   }
 }
 

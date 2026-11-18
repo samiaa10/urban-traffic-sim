@@ -27,6 +27,13 @@ export const COLOURS = {
   delayHotspot: "#a86d17",
 } as const
 
+// Traffic signals: what each approach's driver sees
+export const SIGNAL_LIGHTS = {
+  green: "#1e8e4f",
+  amber: "#d99a06",
+  red: "#c0392b",
+} as const
+
 // Point markers share one language: a solid fill with a white keyline,
 // sized by importance.
 export const MARKER = {
