@@ -3,6 +3,11 @@ import math
 
 EARTH_RADIUS_M = 6371000
 
+# How far before the end of its road a vehicle waits at a stop line
+# (metres). Not exactly at the junction: rerouting then starts the new route
+# from where the vehicle is, which must be a point other than the junction.
+STOP_LINE_GAP = 0.1
+
 
 def straight_line_metres(point1, point2):
     """Straight-line distance between two (lat, lon) points (the same
@@ -222,10 +227,11 @@ class Vehicle:
 
                 # A red light (or a full junction): drive to the stop line
                 # and wait there
-                time_left -= remaining_segment / road_speed
-                free_flow_seconds += remaining_segment / free_speed
-                self.distance_travelled += remaining_segment
-                self.distance_on_segment = segment_distance
+                to_line = max(0.0, segment_distance - STOP_LINE_GAP - self.distance_on_segment)
+                time_left -= to_line / road_speed
+                free_flow_seconds += to_line / free_speed
+                self.distance_travelled += to_line
+                self.distance_on_segment += to_line
                 self.held_at_signal = True
                 break
 

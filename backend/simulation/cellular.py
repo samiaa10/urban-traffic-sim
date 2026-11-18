@@ -92,7 +92,7 @@ from backend.simulation.road_model import (
     point,
     undirected,
 )
-from backend.simulation.vehicle import straight_line_metres
+from backend.simulation.vehicle import STOP_LINE_GAP, straight_line_metres
 
 
 CA = "ca"
@@ -400,7 +400,9 @@ class CellularTraffic:
         route = car.route
         segment = vehicle.segment_distance(route[car.index], route[car.index + 1])
         remaining = road.length - (car.front + 1) * road.cell_length
-        vehicle.distance_on_segment = max(0.0, min(segment, segment - remaining))
+        # A car in the last cell waits just before the junction, not on it
+        # (see STOP_LINE_GAP)
+        vehicle.distance_on_segment = max(0.0, min(segment - STOP_LINE_GAP, segment - remaining))
 
     def _place(self, simulation, car):
         """Put a car that is not on the lattice (new, or moved to a

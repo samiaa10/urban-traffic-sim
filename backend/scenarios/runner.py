@@ -147,6 +147,23 @@ def run_scenario(world, spec, progress=None, measure=True):
     simulation.vehicles[0].finished = True
     trip_speed = car_speed(simulation)
 
+    if spec.signals is not None and spec.signals.controller != "none":
+        from backend.simulation.signal_sites import load_signal_junctions
+        from backend.simulation.signals import SignalSystem, SignalTiming
+
+        settings = spec.signals
+        simulation.signals = SignalSystem(
+            network,
+            load_signal_junctions() if settings.junctions == "osm" else settings.junctions,
+            settings.controller,
+            settings.emergency_priority,
+            SignalTiming(
+                green=settings.green, min_green=settings.min_green,
+                max_green=max(settings.max_green, settings.min_green),
+                max_wait=max(120.0, settings.max_green),
+            ),
+        )
+
     traffic = TrafficManager(
         network,
         simulation,
@@ -524,6 +541,11 @@ def _result(spec, world, simulation, traffic, tracker, trips, surges,
             "delay_seconds": delay,
             "status": status,
         },
+        # Traffic signal totals (None without signals)
+        "signals": (
+            simulation.signals.summary([t.vehicle for t in all_trips if t.vehicle is not None])
+            if simulation.signals is not None else None
+        ),
         "roads": tracker.top_roads(),
         "areas": tracker.top_areas(),
         "timeseries": tracker.timeseries,

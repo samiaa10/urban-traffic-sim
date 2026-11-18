@@ -117,6 +117,28 @@ class Emergencies(Strict):
     distribution: Literal["uniform", "population"] = "uniform"
 
 
+class Signals(Strict):
+    """Traffic signals (simulation/signals.py). junctions: "osm" for the
+    junctions OpenStreetMap shows with traffic lights (signal_sites.py), or
+    a list of junction ids. The timings are experimental defaults, not
+    Norwich's real ones."""
+
+    controller: Literal["none", "fixed", "adaptive"] = "fixed"
+    emergency_priority: bool = False
+    junctions: Union[Literal["osm"], List[int]] = "osm"
+    green: float = Field(20, ge=5, le=120)
+    min_green: float = Field(7, ge=3, le=60)
+    max_green: float = Field(45, ge=5, le=180)
+
+    @model_validator(mode="after")
+    def _greens_in_order(self):
+        if self.min_green > self.max_green:
+            raise ValueError("min_green must be at most max_green")
+        if isinstance(self.junctions, list) and len(self.junctions) > 500:
+            raise ValueError("at most 500 signalised junctions")
+        return self
+
+
 class ScenarioSpec(Strict):
     name: str = Field("Scenario", min_length=1, max_length=120)
     seed: int = Field(1, ge=0, le=2**31 - 1)
@@ -133,6 +155,8 @@ class ScenarioSpec(Strict):
     # the simple model it always ran. "ca" is the experimental cellular
     # automaton (simulation/cellular.py).
     traffic_model: Optional[Literal["osm", "simple", "ca"]] = None
+    # Traffic signals at junctions; None: no signals (as before)
+    signals: Optional[Signals] = None
     stations: List[Station] = Field(default_factory=list, max_length=20)
     # One group of emergencies, or several (for example ambulance and
     # fire calls at once, each with its own count, timing and target)
@@ -171,6 +195,9 @@ class ScenarioSpec(Strict):
         exclude = {"name"}
         if self.effective_traffic_model == "simple":
             exclude.add("traffic_model")
+        # Specs without signals keep the fingerprint they had before signals
+        if self.signals is None:
+            exclude.add("signals")
 
         body = self.model_dump(mode="json", exclude=exclude)
 
@@ -227,5 +254,10 @@ def validate_against_graph(spec, graph):
 
     for index, accident in enumerate(spec.accidents):
         check_road("accidents", index, accident)
+
+    if spec.signals is not None and isinstance(spec.signals.junctions, list):
+        for node in spec.signals.junctions:
+            if node not in graph.nodes:
+                problems.append(f"signals.junctions: junction {node} is not on the map")
 
     return problems
