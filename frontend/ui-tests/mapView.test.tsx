@@ -18,6 +18,8 @@ type Props = {
   data: Record<SourceId, FeatureCollection>
   onClick: (location: Coordinate) => void
   onFailed: (reason: string) => void
+  inspecting: boolean
+  onInspectingChange: (inspecting: boolean) => void
 }
 const latest: { props: Props | null } = { props: null }
 
@@ -28,6 +30,7 @@ vi.mock("../src/Map3D.tsx", () => ({
       <div
         data-testid="map-3d"
         data-points={props.data.points.features.length}
+        data-inspecting={String(props.inspecting)}
       />
     )
   },
@@ -100,5 +103,32 @@ describe("map view", () => {
       screen.getByText(/3D map could not start \(WebGL is not available\)/).closest(".notice--error"),
     ).toBeTruthy()
     expect(localStorage.getItem("norwich-sim-map-view")).toBe("2d")
+  })
+
+  it("labels the next click as Inspect while the 3D map inspects, without placing points", async () => {
+    localStorage.setItem("norwich-sim-map-view", "3d")
+    mockBackend(workingBackend())
+    render(<App />)
+    const map = await screen.findByTestId("map-3d")
+    expect(map.getAttribute("data-inspecting")).toBe("false")
+
+    act(() => latest.props!.onInspectingChange(true))
+    expect(map.getAttribute("data-inspecting")).toBe("true")
+    expect(screen.getByText(/Next click/).textContent).toMatch(/Inspect/)
+
+    // Back in 2D the next click places a point again
+    await userEvent.click(view("2D"))
+    expect(screen.getByText(/Next click/).textContent).toMatch(/Start point/)
+  })
+
+  it("adds the building heights to the legend in 3D only", async () => {
+    mockBackend(workingBackend())
+    render(<App />)
+    expect(screen.queryByText("Building height")).toBeNull()
+
+    await userEvent.click(view("3D"))
+    await screen.findByTestId("map-3d")
+    expect(screen.getByText("Building height")).toBeTruthy()
+    expect(screen.getByText("Over 40 m")).toBeTruthy()
   })
 })

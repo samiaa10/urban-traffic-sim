@@ -8,7 +8,14 @@ import {
   SOURCES,
   buildMapData,
   closureFeatures,
+  congestionFeatures,
+  describeBuilding,
+  describeRoad,
+  describeSegment,
+  describeVehicle,
+  metresBetween,
   pointFeatures,
+  sameSegment,
   routeFeatures,
   stationFeatures,
   vehicleFeatures,
@@ -118,5 +125,70 @@ describe("all sources", () => {
     const data = buildMapData(empty)
     assert.deepEqual(Object.keys(data).sort(), [...SOURCES].sort())
     for (const collection of Object.values(data)) assert.equal(collection.features.length, 0)
+  })
+})
+
+describe("inspect mode", () => {
+  it("describes a vehicle from what the backend sent", () => {
+    const [car1, ambulance] = vehicleFeatures([
+      car({ vehicle_id: 7, speed_factor: 0.4, journey_seconds: 90 }),
+      car({ vehicle_id: 8, vehicle_type: "ambulance", on_emergency: true }),
+    ]).features.map((feature) => feature.properties)
+    assert.deepEqual(describeVehicle(car1), [
+      "Vehicle 7",
+      "Held up: 40% of its free-flow speed",
+      "Journey so far: 1.5 min",
+    ])
+    assert.deepEqual(describeVehicle(ambulance), ["Ambulance 8", "Answering an emergency", "Driving freely"])
+  })
+
+  it("says when a building's height is probably the default", () => {
+    assert.deepEqual(describeBuilding(41, 0), ["Building", "Height: 41 m"])
+    assert.deepEqual(describeBuilding(5, undefined), [
+      "Building",
+      "Height: 5 m",
+      "Probably estimated: the height used when none is mapped",
+    ])
+    assert.deepEqual(describeBuilding(12, 4), ["Building", "Height: 12 m", "Starts 4 m above the ground"])
+    assert.deepEqual(describeBuilding(undefined, undefined), ["Building", "No height data"])
+  })
+
+  const a = { latitude: 52.63, longitude: 1.29 }
+  const b = { latitude: 52.631, longitude: 1.29 }
+  const segment = (vehicles: number, level: string, start = a, end = b) => ({
+    start, end, vehicle_count: vehicles, level,
+  })
+
+  it("gives a road its length and the live traffic on it, in both directions", () => {
+    const congestion = congestionFeatures([
+      segment(2, "light"),
+      segment(3, "heavy", b, a),
+      segment(9, "heavy", a, { latitude: 52.64, longitude: 1.3 }),
+    ])
+    assert.deepEqual(describeRoad({ name: "Colegate", start_point: a, end_point: b }, congestion), [
+      "Colegate",
+      "111 m, junction to junction",
+      "Now: 5 vehicles, heavy traffic",
+    ])
+    assert.equal(
+      describeRoad({ name: null, start_point: a, end_point: b }, congestionFeatures([]))[2],
+      "Now: no vehicles on it",
+    )
+    assert.equal(describeRoad({ start_point: a, end_point: b }, congestionFeatures([]))[0], "Unnamed road")
+  })
+
+  it("describes a traffic segment the road lookup could not name", () => {
+    const [feature] = congestionFeatures([segment(1, "moderate")]).features
+    assert.deepEqual(describeSegment(feature), ["Road", "Now: 1 vehicle, moderate traffic"])
+  })
+
+  it("matches a segment either way round, allowing for the map's rounding", () => {
+    const one: [number, number][] = [[1.29, 52.63], [1.29, 52.631]]
+    assert.ok(sameSegment(one, [[1.29001, 52.631], [1.29, 52.63001]]))
+    assert.ok(!sameSegment(one, [[1.29, 52.63], [1.291, 52.631]]))
+  })
+
+  it("measures metres between two points", () => {
+    assert.equal(Math.round(metresBetween(a, b)), 111)
   })
 })
