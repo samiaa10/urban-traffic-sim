@@ -34,7 +34,8 @@ right turns, so most end up with one approach per phase ("split" phasing).
 Queues leave at the saturation flow: in the simple and osm models (where a
 vehicle is a point and the queue stands at the stop line) at most one
 vehicle per lane every SATURATION_HEADWAY seconds crosses on green, the
-first at once. In the ca model the cars accelerate away one after another
+first SATURATION_HEADWAY seconds after the green starts (the usual
+start-up lost time of about 2 s). In the ca model the cars accelerate away one after another
 by the automaton's own rules, so no limit is added.
 
 Each phase change goes green -> amber -> all-red -> next green, the UK
