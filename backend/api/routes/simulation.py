@@ -487,6 +487,7 @@ def simulation_state(run: LiveRun = Depends(default_run)):
 def simulation_step(
     seconds: int = Query(1, ge=1, le=60, description="simulated seconds to advance (the website's speed control)"),
     run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
 ):
     """Advance the run by `seconds` simulated seconds. Answers every
     vehicle's position and state, and a summary of the traffic for live
@@ -509,9 +510,27 @@ def simulation_step(
         journey_sum = 0
         reroutes = 0
 
+        geometry = context.road_geometry
+
         for index, vehicle in enumerate(simulation.vehicles):
 
             location = vehicle.get_current_location()
+
+            # Where it is on the road's real shape, and which way it faces
+            # (drawing only: the simulation measures distance along the
+            # road, and the shape has the same length)
+            route = vehicle.route
+            position = vehicle.position
+            if position < len(route) - 1:
+                a, b = route[position], route[position + 1]
+                a, b = (a["latitude"], a["longitude"]), (b["latitude"], b["longitude"])
+                length = vehicle.segment_distance(route[position], route[position + 1])
+                fraction = vehicle.distance_on_segment / length if length > 0 else 0.0
+                road_lat, road_lon, heading = geometry.point_at(a, b, fraction)
+            else:
+                road_lat, road_lon = location["latitude"], location["longitude"]
+                heading = getattr(vehicle, "_last_heading", 0.0)
+            vehicle._last_heading = heading
 
             vehicles.append({
                 "vehicle_id": index,
@@ -526,7 +545,11 @@ def simulation_step(
                 "journey_seconds": vehicle.journey_seconds,
                 # Times this trip's route was changed (closures, accidents,
                 # or a meaningfully faster route appearing)
-                "reroutes": vehicle.reroutes
+                "reroutes": vehicle.reroutes,
+                # Drawing: on the road's real shape, facing the way it drives
+                "road_latitude": road_lat,
+                "road_longitude": road_lon,
+                "heading": round(heading, 1),
             })
 
             if vehicle.vehicle_type != "normal":
@@ -572,7 +595,11 @@ def simulation_step(
 
 
 @run_route(router, "get", "/simulation/congestion", "/congestion")
-def simulation_congestion(run: LiveRun = Depends(default_run)):
+def simulation_congestion(
+    geometry: bool = Query(False, description="add each road's real shape (path) for drawing"),
+    run: LiveRun = Depends(default_run),
+    context: AppContext = Depends(get_context),
+):
     """Every road with vehicles on it: how many, and its congestion level
     (light, moderate or heavy), including capacity lost to accidents. The
     website draws this as the live congestion layer."""
@@ -601,6 +628,12 @@ def simulation_congestion(run: LiveRun = Depends(default_run)):
             # Includes any accident's lost capacity (see /incidents)
             "level": data["level"]
         })
+
+        if geometry:
+            shape = context.road_geometry.shape(start_point, end_point)
+            congestion_segments[-1]["path"] = (
+                [list(p) for p in shape] if shape else [list(start_point), list(end_point)]
+            )
 
         if lattice is not None:
             # The cellular automaton's own state, both directions together:

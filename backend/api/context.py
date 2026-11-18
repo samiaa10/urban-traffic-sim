@@ -63,6 +63,13 @@ class AppContext:
         # Road lengths, segment keys and the fastest-route search
         self.network = RoadNetwork(graph)
 
+        # The real shape of each road, for drawing vehicles and congestion
+        # on the road (routing/road_geometry.py); roads it does not know are
+        # drawn straight
+        from backend.routing.road_geometry import RoadGeometry, load
+
+        self.road_geometry = load() or RoadGeometry([])
+
         # Candidate stations the optimiser uses when none are given (about
         # 40 well-connected junctions spread over the map)
         self.default_station_candidates = dense_candidates(graph)
