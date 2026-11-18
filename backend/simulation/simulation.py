@@ -126,6 +126,9 @@ class Simulation:
         # (see use_road_lengths).
         self.road_lengths = None
 
+        # Traffic signals at chosen junctions (signals.py), or None
+        self.signals = None
+
         # Create the first vehicle
         self.add_vehicle(route)
 
@@ -517,6 +520,11 @@ class Simulation:
         def emergency_speed_factor(point_a, point_b):
             return rules.emergency_factor(speed_factor(point_a, point_b))
 
+        # Signals see where everyone is, then change for this second
+        signals = self.signals
+        if signals is not None:
+            signals.step(self, traffic)
+
         # The ca model moves ordinary cars itself (cellular.py); everything
         # else moves below, as in the other models
         handled = ()
@@ -550,7 +558,11 @@ class Simulation:
                     if rules.right_of_way and self.on_call(vehicle)
                     else speed_factor
                 ),
-                limit_factor=self.limit_factor_for(vehicle)
+                limit_factor=self.limit_factor_for(vehicle),
+                may_cross=(
+                    None if signals is None
+                    else lambda a, j, b, vehicle=vehicle: signals.may_cross(vehicle, a, j, b)
+                ),
             )
 
         self.time += 1

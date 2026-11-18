@@ -1277,6 +1277,27 @@ a {
   color: var(--ink-2);
 }
 
+/* Traffic signal settings in the live controls */
+.live-signals {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  margin: 4px 0 12px;
+  padding: 0;
+  border: 0;
+}
+
+.live-signals legend {
+  margin-bottom: 4px;
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--navy-800);
+}
+
+.live-signals .fields {
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+}
+
 /* Map legend: always shows congestion, and lists the other layers only
    while they are on the map */
 .legend {

@@ -12,6 +12,7 @@ data/*
 !data/population/
 data/osm/*
 !data/osm/norwich_graph.pkl
+!data/osm/norwich_signals.json
 !data/osm/README.md
 !data/osm/source/
 cache/

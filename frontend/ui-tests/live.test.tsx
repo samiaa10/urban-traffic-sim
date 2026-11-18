@@ -45,6 +45,16 @@ function liveBackend(): Backend {
     "POST /simulation/fleet": { body: { status: "fleet added", spawned: 500 } },
     "POST /traffic/surge": { body: { status: "surge started" } },
     "POST /traffic/rerouting": { body: { status: "rerouting disabled" } },
+    "POST /traffic/signals": { body: { status: "signals adaptive", controller: "adaptive", junctions: 121 } },
+    "GET /traffic/signals": {
+      body: {
+        controller: "adaptive", emergency_priority: true,
+        junctions: [{
+          node: 9, latitude: 52.63, longitude: 1.29, phase: 0, stage: "green",
+          approaches: [{ bearing: 0, light: "green", queue: 0 }, { bearing: 180, light: "red", queue: 5 }],
+        }],
+      },
+    },
     "GET /scenarios/nearest-road": { body: ROAD },
     "POST /incident/accident": { body: { status: "accident created" } },
     "POST /incident/accident/clear": { body: { status: "accident cleared" } },
@@ -144,6 +154,36 @@ describe("live controls", () => {
     const { backend, user, panel } = await startRun()
     await user.click(within(panel).getByRole("checkbox", { name: "Dynamic rerouting" }))
     expect(backend.last("POST /traffic/rerouting")?.query.get("enabled")).toBe("false")
+  })
+})
+
+describe("traffic signals", () => {
+  it("switch on with the chosen controller and draw each approach's real light", async () => {
+    const { backend, polling, user, panel } = await startRun()
+    await user.selectOptions(within(panel).getByRole("combobox", { name: "Signal control" }), "adaptive")
+    await user.click(within(panel).getByRole("checkbox", { name: "Emergency vehicle priority" }))
+    await user.click(within(panel).getByRole("button", { name: "Apply signals" }))
+
+    const query = backend.last("POST /traffic/signals")?.query
+    expect(query?.get("controller")).toBe("adaptive")
+    expect(query?.get("emergency_priority")).toBe("true")
+    expect(await screen.findByText("Adaptive signals at 121 junctions, with emergency priority")).toBeTruthy()
+
+    await polling.tick()
+    const lights = (await screen.findAllByTestId("circle-marker")).filter((m) =>
+      ["#1e8e4f", "#c0392b"].includes(m.getAttribute("data-fill") ?? ""),
+    )
+    expect(lights.map((m) => m.getAttribute("data-fill")).sort()).toEqual(["#1e8e4f", "#c0392b"])
+    // The red approach has a queue behind it, so its light is drawn bigger
+    const red = lights.find((m) => m.getAttribute("data-fill") === "#c0392b")
+    expect(Number(red?.getAttribute("data-radius"))).toBeGreaterThan(4)
+    expect(screen.getByText("Signal red")).toBeTruthy()
+  })
+
+  it("are off until switched on, and asks nothing about them", async () => {
+    const { backend, polling } = await startRun()
+    await polling.tick()
+    expect(backend.last("GET /traffic/signals")).toBeUndefined()
   })
 })
 

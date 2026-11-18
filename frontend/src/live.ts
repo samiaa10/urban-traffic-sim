@@ -112,3 +112,68 @@ export function describeSample(sample: Sample | undefined): string {
     `${sample.arrived} arrived`
   )
 }
+
+// ------------------------------------------------
+// Traffic signals (backend: simulation/signals.py)
+// ------------------------------------------------
+
+export type SignalController = "none" | "fixed" | "adaptive"
+
+export type SignalSettings = {
+  controller: SignalController
+  priority: boolean
+  green: number
+  minGreen: number
+  maxGreen: number
+}
+
+// The backend's experimental defaults (not Norwich's real timings)
+export const DEFAULT_SIGNALS: SignalSettings = {
+  controller: "none", priority: false, green: 20, minGreen: 7, maxGreen: 45,
+}
+
+export const SIGNAL_CONTROLLERS: { value: SignalController; label: string }[] = [
+  { value: "none", label: "Off" },
+  { value: "fixed", label: "Fixed time" },
+  { value: "adaptive", label: "Adaptive" },
+]
+
+export function signalsRequest(settings: SignalSettings): [string, string] {
+  const query =
+    `controller=${settings.controller}&emergency_priority=${settings.priority}` +
+    `&green=${settings.green}&min_green=${settings.minGreen}&max_green=${settings.maxGreen}`
+  return [`/traffic/signals?${query}`, `/traffic/signals?${query}`]
+}
+
+export type SignalLight = "green" | "amber" | "red"
+
+// One junction as GET /traffic/signals describes it
+export type SignalJunction = {
+  node: number
+  latitude: number
+  longitude: number
+  phase: number
+  stage: "green" | "amber" | "all_red"
+  approaches: { bearing: number; light: SignalLight; queue: number }[]
+}
+
+// Where to draw an approach's light: a little way up its road from the
+// junction, so the approaches of one junction can be told apart
+export function approachPoint(junction: SignalJunction, bearing: number, metres = 22): [number, number] {
+  const radians = (bearing * Math.PI) / 180
+  const north = (metres * Math.cos(radians)) / 111_320
+  const east = (metres * Math.sin(radians)) / (111_320 * Math.cos((junction.latitude * Math.PI) / 180))
+  return [junction.latitude + north, junction.longitude + east]
+}
+
+// Vehicles queued at all signals, and how many junctions have any
+export function signalQueues(junctions: SignalJunction[]) {
+  let queued = 0
+  let busy = 0
+  for (const junction of junctions) {
+    const here = junction.approaches.reduce((total, approach) => total + approach.queue, 0)
+    queued += here
+    if (here > 0) busy += 1
+  }
+  return { queued, busy }
+}

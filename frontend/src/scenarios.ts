@@ -21,6 +21,8 @@ export type ScenarioSpec = {
   rerouting: boolean
   // Not given: the server's default model
   traffic_model?: TrafficModel
+  // Not given: no traffic signals
+  signals?: { controller: "fixed" | "adaptive"; emergency_priority: boolean }
   closures: Road[]
   accidents: (Road & {
     severity: "minor" | "moderate" | "severe"
@@ -233,12 +235,22 @@ export type Draft = {
   rerouting: boolean
   // undefined: the server's default
   trafficModel?: TrafficModel
+  // undefined: no signals
+  signals?: StudySignals
   surge: boolean
   closures: (Road & { label: string })[]
   accidents: (Road & { label: string; severity: "minor" | "moderate" | "severe"; start_at: number })[]
 }
 
 export const CITY_CENTRE = { latitude: 52.6286, longitude: 1.2927 }
+
+// Traffic signals for a scenario, at the junctions OpenStreetMap shows with lights
+export type StudySignals = "fixed" | "adaptive" | "priority"
+export const STUDY_SIGNALS: { value: StudySignals; label: string }[] = [
+  { value: "fixed", label: "Fixed time" },
+  { value: "adaptive", label: "Adaptive" },
+  { value: "priority", label: "Adaptive + emergency priority" },
+]
 
 export function draftToSpec(draft: Draft): ScenarioSpec {
   return {
@@ -247,6 +259,14 @@ export function draftToSpec(draft: Draft): ScenarioSpec {
     demand: { vehicles: draft.vehicles, spread_seconds: 300 },
     rerouting: draft.rerouting,
     ...(draft.trafficModel ? { traffic_model: draft.trafficModel } : {}),
+    ...(draft.signals
+      ? {
+          signals: {
+            controller: draft.signals === "fixed" ? "fixed" : "adaptive",
+            emergency_priority: draft.signals === "priority",
+          },
+        }
+      : {}),
     closures: draft.closures.map(({ start, destination }) => ({ start, destination })),
     accidents: draft.accidents.map(({ start, destination, severity, start_at }) => ({
       start,

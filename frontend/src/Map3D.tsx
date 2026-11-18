@@ -53,6 +53,7 @@ const LAYER_GROUPS = [
   { key: "traffic", label: "Live congestion", layers: ["congestion"] },
   { key: "vehicles", label: "Vehicles", layers: ["vehicles", "emergency-vehicles", "emergency-vehicles-label"] },
   { key: "routes", label: "Routes and closures", layers: ["routes", "routes-emergency", "closures"] },
+  { key: "signals", label: "Traffic signals", layers: ["signals", "signals-label"] },
   { key: "analysis", label: "Stations and scenario results", layers: [...STATION_LAYERS, "hotspots"] },
 ] as const
 
@@ -211,6 +212,24 @@ function addLayers(map: MapLibreMap) {
     filter: ["get", "emergency"],
     layout: {
       "text-field": ["get", "letter"], "text-font": FONT, "text-size": 11,
+      "text-allow-overlap": true, "text-ignore-placement": true,
+    },
+    paint: { "text-color": "#ffffff" },
+  })
+  // Traffic signals: each approach's light, bigger with a queue behind it
+  map.addLayer({
+    id: "signals", type: "circle", source: "signals",
+    paint: {
+      "circle-color": ["get", "colour"],
+      "circle-radius": ["+", 4, ["min", 6, ["*", 0.6, ["get", "queue"]]]],
+      "circle-stroke-color": MARKER.outline,
+      "circle-stroke-width": 1.5,
+    },
+  })
+  map.addLayer({
+    id: "signals-label", type: "symbol", source: "signals",
+    layout: {
+      "text-field": ["get", "label"], "text-font": FONT, "text-size": 10,
       "text-allow-overlap": true, "text-ignore-placement": true,
     },
     paint: { "text-color": "#ffffff" },

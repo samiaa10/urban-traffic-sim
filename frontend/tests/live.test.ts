@@ -14,6 +14,10 @@ import {
   speedPercent,
   stepQuery,
   stoppedPercent,
+  approachPoint,
+  signalQueues,
+  signalsRequest,
+  DEFAULT_SIGNALS,
   surgeRequest,
   type Sample,
 } from "../src/live.ts"
@@ -70,5 +74,32 @@ describe("the live controls' requests", () => {
     assert.deepEqual(accidentRequest(11, 12, "severe", 15)[1], "/incidents/accident?start=11&destination=12&severity=severe&duration_seconds=900")
     assert.equal(closureRequest(1, 2, false)[1], "/incidents/block?start=1&destination=2")
     assert.equal(closureRequest(1, 2, true)[1], "/incidents/unblock?start=1&destination=2")
+  })
+})
+
+describe("traffic signals", () => {
+  it("asks the run for the chosen controller and timings", () => {
+    const [original, perRun] = signalsRequest({ ...DEFAULT_SIGNALS, controller: "adaptive", priority: true })
+    assert.equal(original, perRun)
+    assert.equal(
+      original,
+      "/traffic/signals?controller=adaptive&emergency_priority=true&green=20&min_green=7&max_green=45",
+    )
+  })
+
+  it("draws an approach's light a little way up its road", () => {
+    const junction = { node: 1, latitude: 52.63, longitude: 1.29, phase: 0, stage: "green" as const, approaches: [] }
+    const [north] = approachPoint(junction, 0)
+    const [lat, east] = approachPoint(junction, 90)
+    assert.ok(Math.abs((north - 52.63) * 111_320 - 22) < 0.01)
+    assert.ok(Math.abs(lat - 52.63) < 1e-9 && east > 1.29)
+  })
+
+  it("adds up the queues at every signal", () => {
+    const at = (queues: number[]) => ({
+      node: 1, latitude: 0, longitude: 0, phase: 0, stage: "green" as const,
+      approaches: queues.map((queue) => ({ bearing: 0, light: "red" as const, queue })),
+    })
+    assert.deepEqual(signalQueues([at([2, 0]), at([0, 0]), at([1])]), { queued: 3, busy: 2 })
   })
 })

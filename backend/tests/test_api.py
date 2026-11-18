@@ -1426,3 +1426,44 @@ def test_the_other_models_report_what_they_always_did(running):
     assert "stopped" not in body["summary"]
     segment = running.get("/simulation/congestion").json()["congestion"][0]
     assert set(segment) == {"start", "end", "vehicle_count", "level"}
+
+
+# ------------------------------------------------------------
+# Traffic signals on a live run
+# ------------------------------------------------------------
+
+def test_signals_can_be_switched_on_a_running_simulation(running):
+    assert running.get("/traffic/signals").json() == {
+        "controller": "none", "emergency_priority": False, "junctions": [],
+    }
+
+    body = running.post(
+        "/traffic/signals",
+        params={"controller": "adaptive", "emergency_priority": True, "junctions": [5, 6, 9, 10]},
+    ).json()
+    assert body["controller"] == "adaptive" and body["junctions"] == 4
+
+    running.post("/simulation/fleet", params={"count": 30, "seed": 2})
+    for _ in range(3):
+        running.post("/simulation/step", params={"seconds": 10})
+
+    state = running.get("/traffic/signals").json()
+    assert state["controller"] == "adaptive" and state["emergency_priority"] is True
+    junction = state["junctions"][0]
+    assert {"node", "latitude", "longitude", "phase", "stage", "approaches"} <= set(junction)
+    for approach in junction["approaches"]:
+        assert approach["light"] in ("green", "amber", "red")
+        assert approach["queue"] >= 0
+    # Exactly the approaches of the current phase see green or amber
+    assert any(a["light"] != "red" for a in junction["approaches"]) or junction["stage"] == "all_red"
+
+    assert running.post("/traffic/signals", params={"controller": "none"}).json()["junctions"] == 0
+    assert running.get("/traffic/signals").json()["junctions"] == []
+
+
+def test_signal_settings_are_checked(running):
+    assert running.post("/traffic/signals", params={"controller": "sometimes"}).status_code == 422
+    response = running.post(
+        "/traffic/signals", params={"controller": "adaptive", "min_green": 30, "max_green": 10}
+    )
+    assert response.status_code == 422
