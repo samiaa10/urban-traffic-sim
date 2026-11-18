@@ -36,6 +36,7 @@ import {
   pointFeatures,
   routeFeatures,
   signalFeatures,
+  floodFeatures,
   stationFeatures,
   vehicleFeatures,
 } from "./mapData.ts"
@@ -46,9 +47,12 @@ import type { RestartedRun } from "./history.ts"
 import { EvaluationSection } from "./EvaluationSection.tsx"
 import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
+import { ResiliencePanel } from "./ResiliencePanel.tsx"
 import {
   DEFAULT_SIGNALS,
   appendSample,
+  type FloodInfo,
+  type ResilienceReport,
   approachPoint,
   signalsRequest,
   stepQuery,
@@ -142,6 +146,10 @@ function App() {
   const [signalSettings, setSignalSettings] = useState<SignalSettings>(DEFAULT_SIGNALS)
   const signalsRef = useRef<SignalSettings>(DEFAULT_SIGNALS)
   const [signalJunctions, setSignalJunctions] = useState<SignalJunction[]>([])
+
+  // Floods on the live run (GET /incident/floods), fetched while any exist
+  const [floods, setFloods] = useState<FloodInfo[]>([])
+  const floodsActive = useRef(false)
 
   const [congestion, setCongestion] =
     useState<CongestionSegment[]>([])
@@ -304,6 +312,7 @@ function App() {
       setVehicles([])
       setCongestion([])
       setSignalJunctions([])
+      setFloods([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
@@ -332,6 +341,7 @@ function App() {
       setVehicles([])
       setCongestion([])
       setSignalJunctions([])
+      setFloods([])
       setEmergencyLocation(null)
       setEmergencyRoute([])
       setEmergencyActive(false)
@@ -418,6 +428,21 @@ function App() {
               // data is temporarily unavailable.
             }
 
+            // Floods and their recovery, while there are any
+            if (floodsActive.current) {
+              try {
+                const floodResponse = await fetch(runUrl("/incident/floods", "/incidents/floods"))
+                if (floodResponse.ok) {
+                  const floodData = await floodResponse.json()
+                  const current: FloodInfo[] = floodData.floods ?? []
+                  setFloods(current)
+                  floodsActive.current = current.length > 0
+                }
+              } catch {
+                // Keep the simulation running without the flood layer
+              }
+            }
+
             // Traffic signals' state, while they are on
             if (signalsRef.current.controller !== "none") {
               try {
@@ -494,6 +519,7 @@ function App() {
     setBlockedAhead([])
     setCongestion([])
     setSignalJunctions([])
+    setFloods([])
     setSimulationTime(null)
     setScenarioOverlay(null)
     setHistory([])
@@ -569,6 +595,7 @@ function App() {
       setBlockedAhead([])
       setCongestion([])
       setSignalJunctions([])
+      setFloods([])
       setRouteInfo(null)
       setSimulationTime(null)
 
@@ -992,6 +1019,7 @@ function App() {
   const hotspotsData = useMemo(() => hotspotFeatures(scenarioOverlay?.hotspots ?? []), [scenarioOverlay])
   const vehiclesData = useMemo(() => vehicleFeatures(vehicles), [vehicles])
   const signalsData = useMemo(() => signalFeatures(signalJunctions), [signalJunctions])
+  const floodsData = useMemo(() => floodFeatures(floods), [floods])
   const mapData = useMemo(
     () => ({
       congestion: congestionData,
@@ -1002,8 +1030,9 @@ function App() {
       stations: stationsData,
       vehicles: vehiclesData,
       signals: signalsData,
+      floods: floodsData,
     }),
-    [congestionData, hotspotsData, closuresData, routesData, pointsData, stationsData, vehiclesData, signalsData],
+    [congestionData, hotspotsData, closuresData, routesData, pointsData, stationsData, vehiclesData, signalsData, floodsData],
   )
 
   // The state of the three route-planning steps
@@ -1125,6 +1154,11 @@ function App() {
       label: "Scenario closure",
       colour: COLOURS.closure,
       symbol: "dash",
+    },
+    floods.length > 0 && {
+      label: "Flooded road (fades as it recovers)",
+      colour: COLOURS.flood,
+      symbol: "wide",
     },
     // Each signal approach is drawn in the colour its drivers see
     ...(signalJunctions.length > 0
@@ -1468,6 +1502,12 @@ function App() {
             onMessage={setResult}
             signals={signalSettings}
             onApplySignals={applySignals}
+            floods={floods}
+            simulationTime={simulationTime}
+            onFloodsChanged={(next) => {
+              setFloods(next)
+              floodsActive.current = next.length > 0
+            }}
           />
 
           {/* EMERGENCY STATION OPTIMISER */}
@@ -1765,6 +1805,22 @@ function App() {
                 />
               ))}
 
+              {/* FLOODED ROADS: strongest under water, fading as they recover */}
+              {floodsData.features.map((feature, index) => (
+                <Polyline
+                  key={`flood-${feature.properties.flood}-${index}`}
+                  positions={(feature.geometry.coordinates as [number, number][]).map(
+                    ([lng, lat]) => [lat, lng] as [number, number],
+                  )}
+                  pathOptions={{
+                    color: COLOURS.flood,
+                    weight: LINE.closure + 2,
+                    opacity: Number(feature.properties.opacity),
+                    lineCap: "round",
+                  }}
+                />
+              ))}
+
               {/* TRAFFIC SIGNALS: each approach's light, bigger with a queue */}
               {signalJunctions.flatMap((junction) =>
                 junction.approaches.map((approach, index) => (
@@ -1825,6 +1881,18 @@ function App() {
         {/* ---------------- SCENARIO ANALYSIS ---------------- */}
         {/* ---------------- LIVE TRAFFIC CHARTS ---------------- */}
         {routeInfo && <LiveAnalytics history={history} />}
+        {routeInfo && (
+          <ResiliencePanel
+            measure={async () => {
+              const response = await fetch(runUrl("/resilience/accessibility", "/resilience/accessibility"))
+              const body = await response.json().catch(() => ({}))
+              if (!response.ok) {
+                throw new Error(typeof body.detail === "string" ? body.detail : "Could not measure accessibility")
+              }
+              return body as ResilienceReport
+            }}
+          />
+        )}
 
         <ScenarioWorkspace
           onPickRoad={pickRoad}

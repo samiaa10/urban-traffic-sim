@@ -205,6 +205,22 @@ describe("building scenarios", () => {
 })
 
 describe("running a study", () => {
+  it("can compare a scenario with and without a flood", async () => {
+    const backend = mockBackend(scenarioBackend())
+    controlPolling()
+    const user = userEvent.setup()
+    render(<App />)
+    const cards = screen.getAllByRole("checkbox", { name: "Flood by the river" })
+    await user.click(cards[1])
+    await user.click(screen.getByRole("button", { name: "Run 2 scenarios" }))
+    const sent = backend.last("POST /scenarios/studies")?.body as {
+      scenarios: { floods?: unknown[]; resilience?: boolean }[]
+    }
+    expect(sent.scenarios[0].floods).toBeUndefined()
+    expect(sent.scenarios[1].floods).toHaveLength(1)
+    expect(sent.scenarios[1].resilience).toBe(true)
+  })
+
   it("can compare a scenario with and without traffic signals", async () => {
     const backend = mockBackend(scenarioBackend())
     controlPolling()

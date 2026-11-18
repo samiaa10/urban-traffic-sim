@@ -7,7 +7,7 @@
 
 import { congestionColour, type Coordinate, type Vehicle } from "./simulationHelpers.ts"
 import { COLOURS, SIGNAL_LIGHTS } from "./mapStyles.ts"
-import { approachPoint, type SignalJunction } from "./live.ts"
+import { approachPoint, type FloodInfo, type SignalJunction } from "./live.ts"
 import { minutes, percent } from "./optimiser.ts"
 
 type ApiPoint = { latitude: number; longitude: number }
@@ -60,6 +60,7 @@ export type MapState = {
   scenarioClosures: { start: Coordinate; end: Coordinate }[]
   vehicles: Vehicle[]
   signals: SignalJunction[]
+  floods: FloodInfo[]
 }
 
 // One GeoJSON source per kind of thing, so a vehicle update only re-sends
@@ -73,6 +74,7 @@ export const SOURCES = [
   "stations",
   "vehicles",
   "signals",
+  "floods",
 ] as const
 
 export type SourceId = (typeof SOURCES)[number]
@@ -237,6 +239,22 @@ export function signalFeatures(junctions: SignalJunction[]): FeatureCollection {
   )
 }
 
+// Flooded roads, strongest while under water and fading as they recover
+export function floodFeatures(floods: FloodInfo[]): FeatureCollection {
+  return collection(
+    floods.flatMap((flood) =>
+      flood.roads.map((road) =>
+        line([fromApi(road.start), fromApi(road.end)], {
+          flood: flood.id,
+          stage: flood.stage,
+          closed: flood.closed,
+          opacity: flood.stage === "flooded" ? 0.9 : 0.25 + 0.6 * (1 - flood.recovered_percent / 100),
+        }),
+      ),
+    ),
+  )
+}
+
 export function buildMapData(state: MapState): Record<SourceId, FeatureCollection> {
   return {
     congestion: congestionFeatures(state.congestion),
@@ -247,6 +265,7 @@ export function buildMapData(state: MapState): Record<SourceId, FeatureCollectio
     stations: stationFeatures(state),
     vehicles: vehicleFeatures(state.vehicles),
     signals: signalFeatures(state.signals),
+    floods: floodFeatures(state.floods),
   }
 }
 

@@ -17,6 +17,7 @@ import {
   pointFeatures,
   sameSegment,
   signalFeatures,
+  floodFeatures,
   routeFeatures,
   stationFeatures,
   vehicleFeatures,
@@ -33,7 +34,7 @@ const car = (overrides: Partial<Vehicle> = {}): Vehicle => ({
 const empty: MapState = {
   start: null, destination: null, route: [], congestion: [], emergencyRoute: [],
   blockedAhead: [], incidentRoute: [], emergencyLocation: null, candidates: [],
-  stations: [], hotspots: [], scenarioClosures: [], vehicles: [], signals: [],
+  stations: [], hotspots: [], scenarioClosures: [], vehicles: [], signals: [], floods: [],
 }
 
 describe("coordinates", () => {
@@ -226,5 +227,20 @@ describe("traffic signals", () => {
     assert.equal(north.properties.label, "")
     assert.equal(south.properties.label, "4")
     assert.notEqual(north.properties.colour, south.properties.colour)
+  })
+})
+
+describe("floods", () => {
+  it("draws every flooded road, fading as it recovers", () => {
+    const road = { start: { latitude: 52.63, longitude: 1.29 }, end: { latitude: 52.631, longitude: 1.29 } }
+    const base = { severity: "closed" as const, closed: true, speed_factor: null, ends_at: 600, recovered_at: 900 }
+    const [under, recovering, done] = floodFeatures([
+      { ...base, id: 1, stage: "flooded", recovered_percent: 0, roads: [road] },
+      { ...base, id: 2, stage: "recovering", closed: false, recovered_percent: 50, roads: [road] },
+      { ...base, id: 3, stage: "recovering", closed: false, recovered_percent: 100, roads: [road] },
+    ]).features
+    assert.deepEqual(under.geometry.coordinates, [[1.29, 52.63], [1.29, 52.631]])
+    assert.ok(Number(under.properties.opacity) > Number(recovering.properties.opacity))
+    assert.ok(Number(recovering.properties.opacity) > Number(done.properties.opacity))
   })
 })

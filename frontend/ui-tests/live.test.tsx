@@ -28,6 +28,30 @@ const ROAD = {
   distance_metres: 3,
 }
 
+const FLOOD = {
+  id: 1, severity: "closed", stage: "flooded", closed: true, recovered_percent: 0, speed_factor: null,
+  ends_at: 1200, recovered_at: 1800,
+  roads: [
+    { start: { latitude: 52.63, longitude: 1.30 }, end: { latitude: 52.631, longitude: 1.30 } },
+    { start: { latitude: 52.631, longitude: 1.30 }, end: { latitude: 52.632, longitude: 1.301 } },
+  ],
+}
+
+const ACCESSIBILITY = {
+  destinations_sampled: 60, closed_roads: 55, affected_roads: 55,
+  accessibility: {
+    before: { reachable_percent: 100, unreachable_pairs: 0, mean_seconds: 321, worst_seconds: 871,
+              mean_increase_seconds: 0, worst_increase_seconds: 0, areas: [] },
+    now: { reachable_percent: 93.7, unreachable_pairs: 15667, mean_seconds: 325, worst_seconds: 871,
+           mean_increase_seconds: 2.6, worst_increase_seconds: 189,
+           areas: [{ bounds: [52.6276, 1.3024, 52.6321, 1.3098], junctions: 40, mean_increase_seconds: 36, cut_off_pairs: 2245 }] },
+  },
+  emergency_access: {
+    before: { ambulance: { reachable_percent: 100, mean_seconds: 149, worst_seconds: 276, within_target_percent: 100 } },
+    now: { ambulance: { reachable_percent: 95, mean_seconds: 154, worst_seconds: 276, within_target_percent: 95 } },
+  },
+}
+
 function liveBackend(): Backend {
   let time = 0
   return {
@@ -45,6 +69,16 @@ function liveBackend(): Backend {
     "POST /simulation/fleet": { body: { status: "fleet added", spawned: 500 } },
     "POST /traffic/surge": { body: { status: "surge started" } },
     "POST /traffic/rerouting": { body: { status: "rerouting disabled" } },
+    "POST /incident/flood": ({ query }) => ({
+      body: {
+        status: "flood created",
+        flood: { ...FLOOD, severity: query.get("severity") },
+      },
+    }),
+    "GET /incident/floods": { body: { floods: [{ ...FLOOD, stage: "recovering", closed: false, recovered_percent: 40 }] } },
+    "POST /incident/flood/clear": { body: { status: "flood cleared" } },
+    "POST /incident/bridges": { body: { status: "bridges out of use", bridges: 21 } },
+    "GET /resilience/accessibility": { body: ACCESSIBILITY },
     "POST /traffic/signals": { body: { status: "signals adaptive", controller: "adaptive", junctions: 121 } },
     "GET /traffic/signals": {
       body: {
@@ -154,6 +188,52 @@ describe("live controls", () => {
     const { backend, user, panel } = await startRun()
     await user.click(within(panel).getByRole("checkbox", { name: "Dynamic rerouting" }))
     expect(backend.last("POST /traffic/rerouting")?.query.get("enabled")).toBe("false")
+  })
+})
+
+describe("floods and resilience", () => {
+  it("place a flood where the map is clicked, draw its roads, show its recovery, and clear it", async () => {
+    const { backend, polling, user, panel } = await startRun()
+    await user.selectOptions(within(panel).getByRole("combobox", { name: "Flood radius" }), "400")
+    await user.click(within(panel).getByRole("button", { name: "Place a flood on the map" }))
+    clickMap(START)
+
+    const query = await vi.waitFor(() => {
+      const sent = backend.last("POST /incident/flood")?.query
+      if (!sent) throw new Error("not sent yet")
+      return sent
+    })
+    expect(query.get("radius_metres")).toBe("400")
+    expect(query.get("severity")).toBe("closed")
+    expect(query.get("duration_seconds")).toBe("1200")
+    expect(await screen.findByText(/Flood: 2 roads closed for 20 min, then 10 min to recover/)).toBeTruthy()
+
+    await polling.tick()
+    const floods = within(panel).getByRole("list", { name: "Floods" })
+    expect(within(floods).getByText(/2 roads recovering: 40%/)).toBeTruthy()
+    const lines = screen.getAllByTestId("polyline").filter((l) => l.getAttribute("data-color") === "#1aa0c8")
+    expect(lines).toHaveLength(2)
+    expect(screen.getByText("Flooded road (fades as it recovers)")).toBeTruthy()
+
+    await user.click(within(floods).getByRole("button", { name: "Clear" }))
+    expect(backend.last("POST /incident/flood/clear")?.query.get("flood_id")).toBe("1")
+  })
+
+  it("take the bridges out of use", async () => {
+    const { backend, user, panel } = await startRun()
+    await user.click(within(panel).getByRole("checkbox", { name: "Bridges out of use" }))
+    expect(backend.last("POST /incident/bridges")?.query.get("fail")).toBe("true")
+    expect(await screen.findByText("21 bridges out of use: traffic reroutes around them")).toBeTruthy()
+  })
+
+  it("measure how reachable the city is now", async () => {
+    const { user } = await startRun()
+    const section = screen.getByRole("region", { name: "Network resilience" })
+    await user.click(within(section).getByRole("button", { name: "Measure accessibility now" }))
+    const table = await within(section).findByRole("table", { name: "Accessibility before and now" })
+    expect(within(table).getByText("93.7%")).toBeTruthy()
+    expect(within(table).getByText("Ambulance reach within target")).toBeTruthy()
+    expect(within(section).getByText(/2,245 pairs cut off/)).toBeTruthy()
   })
 })
 
