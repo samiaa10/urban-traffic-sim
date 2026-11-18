@@ -384,7 +384,7 @@ The deployed API is open to anyone, so one middleware, in-process like the runs 
 
 - **Rate limits** on requests that cost real CPU time: starting runs, fleets and surges, the optimiser, scenario studies and evaluations. Each visitor has a token bucket of `RATE_LIMIT_PER_MINUTE` (default 30), refilled evenly; over it they get `429` with `Retry-After`. Stepping, status and history are never limited, so the once-a-second polling is unaffected. Behind a proxy (`TRUST_PROXY=true`) the visitor is the first address in `X-Forwarded-For`; the Docker nginx sets that header to the visitor's own address only, so a browser cannot choose it.
 - **A 2 MB request limit** (`413`); a 1,000-scenario study is about 0.5 MB.
-- **Security headers** (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on every answer; nginx and the Render static site send the same for the website.
+- **Security headers** (`X-Content-Type-Options`, `X-Frame-Options`, `Referrer-Policy`) on every answer; nginx and the Render static site send the same for the website, except that the website uses `strict-origin-when-cross-origin`: OpenStreetMap's tile servers refuse map tiles requested with no referrer.
 - **One log line per request** (method, path, status, milliseconds, run ID), as text or `LOG_FORMAT=json`. The polling requests are logged at `DEBUG`.
 
 **Health.** `GET /health` answers `200` while the process is up; Render and the Docker health check use it. `GET /ready` also checks the database (`SELECT 1`) and answers `503 degraded` when it cannot be reached. These are separate on purpose: a database outage should not make Render restart an API that can still simulate.

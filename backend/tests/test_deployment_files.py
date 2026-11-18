@@ -6,6 +6,7 @@ that ignores Render's port, or an environment variable that was renamed on
 one side only.
 """
 
+import re
 from pathlib import Path
 
 import pytest
@@ -155,3 +156,30 @@ def test_the_static_site_sends_security_headers(blueprint):
 
     assert headers[("/*", "X-Content-Type-Options")] == "nosniff"
     assert headers[("/*", "X-Frame-Options")] == "DENY"
+
+
+# OpenStreetMap's tile servers refuse tiles requested without a Referer
+# (they answer with an "Access blocked" image), so the website must send
+# at least its origin; no-referrer broke the deployed map.
+SENDS_ORIGIN = {"origin", "strict-origin", "origin-when-cross-origin", "strict-origin-when-cross-origin"}
+
+
+def test_the_static_site_lets_openstreetmap_see_where_tiles_are_used(blueprint):
+    site = service(blueprint, "norwich-sim")
+    headers = {(h["path"], h["name"]): h["value"] for h in site["headers"]}
+
+    assert headers[("/*", "Referrer-Policy")] in SENDS_ORIGIN
+
+
+def test_nginx_lets_openstreetmap_see_where_tiles_are_used():
+    nginx = (ROOT / "frontend" / "nginx.conf").read_text()
+    policies = re.findall(r'add_header Referrer-Policy "([^"]+)"', nginx)
+
+    assert policies and set(policies) <= SENDS_ORIGIN
+
+
+def test_the_map_uses_openstreetmaps_current_tile_address():
+    app = (ROOT / "frontend" / "src" / "App.tsx").read_text()
+
+    assert "https://tile.openstreetmap.org/{z}/{x}/{y}.png" in app
+    assert "{s}.tile.openstreetmap.org" not in app
