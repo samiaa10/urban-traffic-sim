@@ -117,6 +117,52 @@ class Emergencies(Strict):
     distribution: Literal["uniform", "population"] = "uniform"
 
 
+class Area(Strict):
+    """A circle on the map."""
+
+    latitude: float = Field(ge=-90, le=90)
+    longitude: float = Field(ge=-180, le=180)
+    radius_metres: float = Field(ge=20, le=5000)
+
+
+class Flood(Strict):
+    """Roads under water (simulation/disruptions.py): the given roads and/or
+    every road inside `area`, from start_at for duration_seconds, then
+    recovering gradually over recovery_seconds. A transport disruption,
+    not a hydrological model: which roads and how badly are inputs."""
+
+    roads: List[Road] = Field(default_factory=list, max_length=200)
+    area: Optional[Area] = None
+    severity: Literal["minor", "moderate", "severe", "closed"] = "closed"
+    start_at: float = Field(0, ge=0, le=MAX_SECONDS)
+    duration_seconds: float = Field(1800, gt=0, le=MAX_SECONDS)
+    recovery_seconds: float = Field(900, ge=0, le=MAX_SECONDS)
+
+    @model_validator(mode="after")
+    def _has_roads(self):
+        if not self.roads and self.area is None:
+            raise ValueError("a flood needs roads or an area")
+        return self
+
+
+class Failure(Strict):
+    """Infrastructure out of use: bridges (simulation/infrastructure.py),
+    all of them, those with these road names, and/or those inside `area`,
+    closed from start_at until end_at (None: the end of the scenario)."""
+
+    kind: Literal["bridges"] = "bridges"
+    names: Optional[List[str]] = Field(None, max_length=50)
+    area: Optional[Area] = None
+    start_at: float = Field(0, ge=0, le=MAX_SECONDS)
+    end_at: Optional[float] = Field(None, gt=0, le=MAX_SECONDS)
+
+    @model_validator(mode="after")
+    def _ends_after_start(self):
+        if self.end_at is not None and self.end_at <= self.start_at:
+            raise ValueError("end_at must be after start_at")
+        return self
+
+
 class Signals(Strict):
     """Traffic signals (simulation/signals.py). junctions: "osm" for the
     junctions OpenStreetMap shows with traffic lights (signal_sites.py), or
@@ -157,6 +203,11 @@ class ScenarioSpec(Strict):
     traffic_model: Optional[Literal["osm", "simple", "ca"]] = None
     # Traffic signals at junctions; None: no signals (as before)
     signals: Optional[Signals] = None
+    # Disruptions beyond closures and accidents
+    floods: List[Flood] = Field(default_factory=list, max_length=20)
+    failures: List[Failure] = Field(default_factory=list, max_length=10)
+    # Measure accessibility before, during and after (resilience.py)
+    resilience: bool = False
     stations: List[Station] = Field(default_factory=list, max_length=20)
     # One group of emergencies, or several (for example ambulance and
     # fire calls at once, each with its own count, timing and target)
@@ -195,9 +246,16 @@ class ScenarioSpec(Strict):
         exclude = {"name"}
         if self.effective_traffic_model == "simple":
             exclude.add("traffic_model")
-        # Specs without signals keep the fingerprint they had before signals
+        # Specs without signals, floods, failures or resilience keep the
+        # fingerprint they had before those existed
         if self.signals is None:
             exclude.add("signals")
+        if not self.floods:
+            exclude.add("floods")
+        if not self.failures:
+            exclude.add("failures")
+        if not self.resilience:
+            exclude.add("resilience")
 
         body = self.model_dump(mode="json", exclude=exclude)
 
@@ -254,6 +312,10 @@ def validate_against_graph(spec, graph):
 
     for index, accident in enumerate(spec.accidents):
         check_road("accidents", index, accident)
+
+    for index, flood in enumerate(spec.floods):
+        for number, road in enumerate(flood.roads):
+            check_road(f"floods[{index}].roads", number, road)
 
     if spec.signals is not None and isinstance(spec.signals.junctions, list):
         for node in spec.signals.junctions:
