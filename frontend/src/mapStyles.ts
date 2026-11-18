@@ -62,7 +62,11 @@ export const LINE = {
 // 3D buildings: taller ones a little darker, in the app's slate blues.
 // Heights in metres where each colour applies (blended in between).
 export const BUILDINGS = [
-  { height: 0, colour: "#d3dae2", label: "Under 15 m" },
-  { height: 15, colour: "#bcc6d1", label: "15-40 m" },
-  { height: 40, colour: "#9eabb9", label: "Over 40 m" },
+  { height: 0, colour: "#253242", label: "Under 15 m" },
+  { height: 15, colour: "#34465b", label: "15-40 m" },
+  { height: 40, colour: "#4a6380", label: "Over 40 m" },
 ] as const
+
+// Ordinary vehicles on the 3D map: understated, so congestion, incidents
+// and emergency vehicles stand out
+export const VEHICLE_3D = "#b9c6d4"

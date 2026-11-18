@@ -94,6 +94,8 @@ type CongestionSegment = {
   // the road's cells taken
   stopped?: number
   occupancy?: number
+  // The road's real shape, [lat, lon] points (geometry=true)
+  path?: [number, number][]
 }
 
 // The 3D map (MapLibre) is only downloaded when someone switches to it
@@ -412,7 +414,8 @@ function App() {
             // Fetch live congestion data
             try {
               const congestionResponse = await fetch(
-                runUrl("/simulation/congestion", "/congestion")
+                // With each road's real shape, so congestion follows the road
+                runUrl("/simulation/congestion?geometry=true", "/congestion?geometry=true")
               )
 
               if (congestionResponse.ok) {
@@ -1695,10 +1698,14 @@ function App() {
               {congestion.map((segment, index) => (
                 <Polyline
                   key={`congestion-${index}`}
-                  positions={[
-                    [segment.start.latitude, segment.start.longitude],
-                    [segment.end.latitude, segment.end.longitude],
-                  ]}
+                  positions={
+                    segment.path && segment.path.length > 1
+                      ? segment.path
+                      : [
+                          [segment.start.latitude, segment.start.longitude],
+                          [segment.end.latitude, segment.end.longitude],
+                        ]
+                  }
                   pathOptions={{
                     color: congestionColour(segment.level),
                     weight: LINE.congestion,

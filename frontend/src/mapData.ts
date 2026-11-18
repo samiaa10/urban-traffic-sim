@@ -18,6 +18,7 @@ export type Feature = {
   geometry:
     | { type: "Point"; coordinates: Position }
     | { type: "LineString"; coordinates: Position[] }
+    | { type: "Polygon"; coordinates: Position[][] }
   properties: Record<string, string | number | boolean>
 }
 
@@ -36,6 +37,8 @@ export type MapState = {
     // Cellular-automaton runs only
     stopped?: number
     occupancy?: number
+    // The road's real shape, [lat, lon] points (asked for with geometry=true)
+    path?: [number, number][]
   }[]
   emergencyRoute: Coordinate[]
   blockedAhead: Coordinate[]
@@ -115,8 +118,12 @@ export function vehicleFeatures(vehicles: Vehicle[]): FeatureCollection {
         // it is one of the services or is answering an emergency
         const emergency = Boolean(service) || vehicle.on_emergency
         const marker = service ?? SERVICE_MARKERS.ambulance
-        return point([vehicle.longitude, vehicle.latitude], {
+        // On its road's real shape when the backend says where that is
+        const latitude = vehicle.road_latitude ?? vehicle.latitude
+        const longitude = vehicle.road_longitude ?? vehicle.longitude
+        return point([longitude, latitude], {
           id: vehicle.vehicle_id,
+          heading: vehicle.heading ?? 0,
           emergency,
           colour: emergency ? marker.colour : COLOURS.route,
           letter: emergency ? marker.letter : "",
@@ -203,13 +210,18 @@ export function stationFeatures(state: Parts<"candidates" | "stations">): Featur
 export function congestionFeatures(congestion: MapState["congestion"]): FeatureCollection {
   return collection(
     congestion.map((segment) =>
-      line([fromApi(segment.start), fromApi(segment.end)], {
+      line(
+        segment.path && segment.path.length > 1
+          ? segment.path.map(([lat, lon]) => [lon, lat] as Position)
+          : [fromApi(segment.start), fromApi(segment.end)],
+        {
         level: segment.level,
         colour: congestionColour(segment.level),
         vehicles: segment.vehicle_count,
         ...(segment.stopped === undefined ? {} : { stopped: segment.stopped }),
         ...(segment.occupancy === undefined ? {} : { occupancy: segment.occupancy }),
-      }),
+        },
+      ),
     ),
   )
 }
@@ -325,6 +337,13 @@ export function metresBetween(a: ApiPoint, b: ApiPoint): number {
 
 const LEVELS = ["light", "moderate", "heavy"]
 
+// A line feature's first and last points (a road drawn along its shape
+// has more in between)
+export function endsOf(feature: Feature): Position[] {
+  const points = feature.geometry.coordinates as Position[]
+  return points.length < 2 ? points : [points[0], points[points.length - 1]]
+}
+
 // The same road segment, either way round. Positions drawn on the map
 // come back from MapLibre rounded to its tile grid, so allow about 3 m.
 export function sameSegment(a: Position[], b: Position[], tolerance = 3e-5): boolean {
@@ -358,7 +377,7 @@ function queueLine(segments: Feature[]): string | null {
 export function describeRoad(road: InspectedRoad, congestion: FeatureCollection): string[] {
   const ends = [fromApi(road.start_point), fromApi(road.end_point)]
   const live = congestion.features.filter((feature) =>
-    sameSegment(feature.geometry.coordinates as Position[], ends, 1e-9),
+    sameSegment(endsOf(feature), ends, 1e-9),
   )
   const queue = queueLine(live)
   return [

@@ -17,6 +17,11 @@ export type Vehicle = {
   // Journey time in simulated seconds, including time spent waiting.
   speed_factor?: number
   journey_seconds?: number
+  // Drawing: where it is on its road's real shape, and which way it faces
+  // (compass degrees)
+  road_latitude?: number
+  road_longitude?: number
+  heading?: number
 }
 
 export type EmergencyStatus = {
