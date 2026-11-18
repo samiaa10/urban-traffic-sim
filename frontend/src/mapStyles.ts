@@ -25,6 +25,8 @@ export const COLOURS = {
   // Scenario analysis: the roads that lost the most time (amber, the
   // palette's "waiting" colour), drawn wide and see-through
   delayHotspot: "#a86d17",
+  // Flooded roads: water, kept apart from the route's darker blue
+  flood: "#1aa0c8",
 } as const
 
 // Traffic signals: what each approach's driver sees

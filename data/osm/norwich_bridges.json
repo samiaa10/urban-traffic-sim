@@ -1,0 +1,154 @@
+{
+ "source": "OpenStreetMap (ODbL), ways tagged bridge=*, download of 8 September 2026",
+ "match_metres": 15.0,
+ "bridge_ways": 66,
+ "bridges": [
+  {
+   "start": 1361026200,
+   "destination": 280266272,
+   "name": "Mile Cross Road",
+   "latitude": 52.6413477,
+   "longitude": 1.2759938
+  },
+  {
+   "start": 211958,
+   "destination": 211967,
+   "name": "Sweet Briar Road",
+   "latitude": 52.64257295,
+   "longitude": 1.25948575
+  },
+  {
+   "start": 212107,
+   "destination": 275829,
+   "name": "Saint Crispins Road",
+   "latitude": 52.63549125,
+   "longitude": 1.2884258499999999
+  },
+  {
+   "start": 212135,
+   "destination": 431144761,
+   "name": "Calvert Street",
+   "latitude": 52.6352678,
+   "longitude": 1.2945780999999998
+  },
+  {
+   "start": 212196,
+   "destination": 212203,
+   "name": "Carrow Road",
+   "latitude": 52.623223249999995,
+   "longitude": 1.3126220000000002
+  },
+  {
+   "start": 212203,
+   "destination": 431147075,
+   "name": "Clarence Road",
+   "latitude": 52.6237914,
+   "longitude": 1.31370335
+  },
+  {
+   "start": 212205,
+   "destination": 328761,
+   "name": "Prince of Wales Road",
+   "latitude": 52.62796955,
+   "longitude": 1.305559
+  },
+  {
+   "start": 223022,
+   "destination": 340919376,
+   "name": "Earlham Road",
+   "latitude": 52.62773745,
+   "longitude": 1.23539415
+  },
+  {
+   "start": 223115,
+   "destination": 431144761,
+   "name": "Saint Crispins Road",
+   "latitude": 52.6355461,
+   "longitude": 1.29716945
+  },
+  {
+   "start": 275826,
+   "destination": 280266272,
+   "name": "Mile Cross Road",
+   "latitude": 52.642903000000004,
+   "longitude": 1.27572325
+  },
+  {
+   "start": 275841,
+   "destination": 29863712,
+   "name": "Saint Crispins Road",
+   "latitude": 52.63531095,
+   "longitude": 1.2884299000000001
+  },
+  {
+   "start": 287266934,
+   "destination": 290787811,
+   "name": "Loddon Road",
+   "latitude": 52.6117144,
+   "longitude": 1.3068305
+  },
+  {
+   "start": 288783274,
+   "destination": 336873,
+   "name": "Fye Bridge Street",
+   "latitude": 52.63271085,
+   "longitude": 1.2974217000000001
+  },
+  {
+   "start": 29863724,
+   "destination": 431146373,
+   "name": "Duke Street",
+   "latitude": 52.6318431,
+   "longitude": 1.2927436
+  },
+  {
+   "start": 336866,
+   "destination": 336868,
+   "name": "Whitefriars",
+   "latitude": 52.6339369,
+   "longitude": 1.30043325
+  },
+  {
+   "start": 380319626,
+   "destination": 380319639,
+   "name": "Mansfield Lane",
+   "latitude": 52.60866995,
+   "longitude": 1.2974468
+  },
+  {
+   "start": 380319774,
+   "destination": 695236614,
+   "name": "Barrett Road",
+   "latitude": 52.609579,
+   "longitude": 1.2946297
+  },
+  {
+   "start": 384347936,
+   "destination": 384348337,
+   "name": "Southwell Road",
+   "latitude": 52.62025165,
+   "longitude": 1.29342045
+  },
+  {
+   "start": 384348214,
+   "destination": 384348605,
+   "name": "Hall Road",
+   "latitude": 52.614223499999994,
+   "longitude": 1.2947980000000001
+  },
+  {
+   "start": 417389640,
+   "destination": 431145495,
+   "name": "Carrow Road",
+   "latitude": 52.621397200000004,
+   "longitude": 1.30662455
+  },
+  {
+   "start": 469118117,
+   "destination": 491015043,
+   "name": "Hellesdon Road",
+   "latitude": 52.643309450000004,
+   "longitude": 1.2472589
+  }
+ ]
+}

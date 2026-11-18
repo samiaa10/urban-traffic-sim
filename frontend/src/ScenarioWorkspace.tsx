@@ -429,6 +429,22 @@ export function ScenarioWorkspace({
                     />
                     City-centre surge
                   </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={draft.flood ?? false}
+                      onChange={(e) => update(draft.key, { flood: e.target.checked })}
+                    />
+                    Flood by the river
+                  </label>
+                  <label className="check">
+                    <input
+                      type="checkbox"
+                      checked={draft.bridgesOut ?? false}
+                      onChange={(e) => update(draft.key, { bridgesOut: e.target.checked })}
+                    />
+                    Central bridges out
+                  </label>
                 </div>
 
                 <div className="chips" aria-label={`Disruptions in ${draft.name}`}>

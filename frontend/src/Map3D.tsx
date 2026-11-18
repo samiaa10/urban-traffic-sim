@@ -54,6 +54,7 @@ const LAYER_GROUPS = [
   { key: "vehicles", label: "Vehicles", layers: ["vehicles", "emergency-vehicles", "emergency-vehicles-label"] },
   { key: "routes", label: "Routes and closures", layers: ["routes", "routes-emergency", "closures"] },
   { key: "signals", label: "Traffic signals", layers: ["signals", "signals-label"] },
+  { key: "floods", label: "Floods", layers: ["floods"] },
   { key: "analysis", label: "Stations and scenario results", layers: [...STATION_LAYERS, "hotspots"] },
 ] as const
 
@@ -133,6 +134,11 @@ function addLayers(map: MapLibreMap) {
       "line-opacity": 0.9,
       "line-dasharray": ["case", ["==", ["get", "kind"], "scenario"], ["literal", [1, 1]], ["literal", [1, 0]]],
     },
+  }, firstLabel)
+  map.addLayer({
+    id: "floods", type: "line", source: "floods",
+    layout: { "line-cap": "round" },
+    paint: { "line-color": COLOURS.flood, "line-width": LINE.closure + 2, "line-opacity": ["get", "opacity"] },
   }, firstLabel)
   map.addLayer({
     id: "routes", type: "line", source: "routes",

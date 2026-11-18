@@ -177,3 +177,90 @@ export function signalQueues(junctions: SignalJunction[]) {
   }
   return { queued, busy }
 }
+
+// ------------------------------------------------
+// Floods, bridge failures and accessibility
+// (backend: simulation/disruptions.py, scenarios/resilience.py)
+// ------------------------------------------------
+
+export type FloodSeverity = "minor" | "moderate" | "severe" | "closed"
+
+export type FloodSettings = {
+  radiusMetres: number
+  severity: FloodSeverity
+  minutes: number
+  recoveryMinutes: number
+}
+
+export const DEFAULT_FLOOD: FloodSettings = { radiusMetres: 250, severity: "closed", minutes: 20, recoveryMinutes: 10 }
+
+export const FLOOD_SEVERITIES: { value: FloodSeverity; label: string }[] = [
+  { value: "closed", label: "Roads closed" },
+  { value: "severe", label: "Severe (crawling)" },
+  { value: "moderate", label: "Moderate (one lane)" },
+  { value: "minor", label: "Minor (standing water)" },
+]
+
+export function floodRequest(latitude: number, longitude: number, settings: FloodSettings): [string, string] {
+  const query =
+    `latitude=${latitude}&longitude=${longitude}&radius_metres=${settings.radiusMetres}` +
+    `&severity=${settings.severity}&duration_seconds=${settings.minutes * 60}` +
+    `&recovery_seconds=${settings.recoveryMinutes * 60}`
+  return [`/incident/flood?${query}`, `/incidents/flood?${query}`]
+}
+
+export const clearFloodRequest = (id: number): [string, string] =>
+  [`/incident/flood/clear?flood_id=${id}`, `/incidents/flood/clear?flood_id=${id}`]
+
+export const bridgesRequest = (fail: boolean): [string, string] =>
+  [`/incident/bridges?fail=${fail}`, `/incidents/bridges?fail=${fail}`]
+
+type ApiPoint = { latitude: number; longitude: number }
+
+// One flood as GET /incident/floods describes it
+export type FloodInfo = {
+  id: number
+  severity: FloodSeverity
+  stage: "flooded" | "recovering" | "over"
+  closed: boolean
+  recovered_percent: number
+  speed_factor: number | null
+  ends_at: number
+  recovered_at: number
+  roads: { start: ApiPoint; end: ApiPoint }[]
+}
+
+export function describeFlood(flood: FloodInfo, now: number | null): string {
+  if (flood.stage === "flooded") {
+    const left = now === null ? null : Math.max(0, Math.round((flood.ends_at - now) / 60))
+    return `${flood.roads.length} roads ${flood.closed ? "closed" : "flooded"}` +
+      (left === null ? "" : `, ${left} min until it recedes`)
+  }
+  return `${flood.roads.length} roads recovering: ${flood.recovered_percent}%`
+}
+
+// GET /resilience/accessibility
+export type Accessibility = {
+  reachable_percent: number | null
+  unreachable_pairs: number
+  mean_seconds: number | null
+  worst_seconds: number | null
+  mean_increase_seconds: number | null
+  worst_increase_seconds: number | null
+  areas: { bounds: [number, number, number, number]; junctions: number; mean_increase_seconds: number | null; cut_off_pairs: number }[]
+}
+
+export type EmergencyAccess = Record<string, {
+  reachable_percent: number | null
+  mean_seconds: number | null
+  worst_seconds: number | null
+  within_target_percent: number | null
+}>
+
+export type ResilienceReport = {
+  destinations_sampled: number
+  closed_roads: number
+  affected_roads: number
+  accessibility: { before: Accessibility; now: Accessibility }
+  emergency_access: { before: EmergencyAccess; now: EmergencyAccess }
+}

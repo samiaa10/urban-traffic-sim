@@ -1277,6 +1277,31 @@ a {
   color: var(--ink-2);
 }
 
+/* Network resilience panel (in the main column, like the other sections) */
+.resilience {
+  grid-column: 2;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+}
+
+.resilience > .btn {
+  align-self: flex-start;
+}
+
+.resilience-subtitle {
+  font-size: var(--text-sm);
+  font-weight: var(--weight-semibold);
+  color: var(--navy-800);
+}
+
+.resilience-areas {
+  margin: 0;
+  padding-left: 20px;
+  font-size: var(--text-sm);
+  color: var(--ink-2);
+}
+
 /* Traffic signal settings in the live controls */
 .live-signals {
   display: flex;
@@ -1295,7 +1320,14 @@ a {
 }
 
 .live-signals .fields {
-  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  /* Two to a row, shrinking with the sidebar (never wider than it) */
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+}
+
+.live-signals select,
+.live-signals input {
+  min-width: 0;
+  max-width: 100%;
 }
 
 /* Map legend: always shows congestion, and lists the other layers only
@@ -1912,6 +1944,7 @@ a {
   .results,
   .scenarios,
   .live-analytics,
+  .resilience,
   .evaluation,
   .history,
   .sidebar {

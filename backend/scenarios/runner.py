@@ -30,6 +30,8 @@ import time
 
 from backend.routing.travel_time import RoadNetwork
 from backend.scenarios.impact import ImpactTracker, percentile
+from backend.scenarios.resilience import ResilienceProbe
+from backend.simulation.disruptions import segments_in_area
 from backend.scenarios.spec import ScenarioSpec, load_stored_spec, validate_against_graph
 from backend.simulation import dispatch, rerouting
 from backend.simulation.demand import DemandModel, Zone
@@ -76,6 +78,27 @@ class World:
 
 class ScenarioError(ValueError):
     """The spec does not fit the map (unknown junctions, ...)."""
+
+
+def failed_roads(world, failure):
+    """The roads (segment keys) a failure closes: the map's bridges, by
+    name and/or inside an area."""
+    from backend.simulation.infrastructure import load_bridges
+    from backend.simulation.vehicle import straight_line_metres
+
+    position = world.network.position
+    roads = []
+    for a, b, name in load_bridges():
+        if a not in position or b not in position:
+            continue
+        if failure.names is not None and name not in failure.names:
+            continue
+        if failure.area is not None:
+            middle = ((position[a][0] + position[b][0]) / 2, (position[a][1] + position[b][1]) / 2)
+            if straight_line_metres(middle, (failure.area.latitude, failure.area.longitude)) > failure.area.radius_metres:
+                continue
+        roads.append(tuple(sorted((position[a], position[b]))))
+    return roads
 
 
 def _seed(seed, name):
@@ -218,6 +241,12 @@ def run_scenario(world, spec, progress=None, measure=True):
             events.append((closure.end_at, 1, number, "reopen", closure))
     for number, accident in enumerate(spec.accidents):
         events.append((accident.start_at, 2, number, "accident", accident))
+    for number, flood in enumerate(spec.floods):
+        events.append((flood.start_at, 3, number, "flood", flood))
+    for number, failure in enumerate(spec.failures):
+        events.append((failure.start_at, 4, number, "fail", failure))
+        if failure.end_at is not None:
+            events.append((failure.end_at, 5, number, "restore", failure))
     events.sort(key=lambda event: event[:3])
     event_index = 0
 
@@ -250,6 +279,9 @@ def run_scenario(world, spec, progress=None, measure=True):
 
     reroutes_before = traffic.stats["reroutes"]
 
+    # Accessibility before, during and after the disruptions (resilience.py)
+    probe = ResilienceProbe(world, simulation, spec, trip_speed) if spec.resilience else None
+
     def depart(trip):
         """Route a trip under current traffic and closures and put it on
         the road; a trip with no route stays unroutable."""
@@ -278,19 +310,43 @@ def run_scenario(world, spec, progress=None, measure=True):
 
         # 1. Events due now
         while event_index < len(events) and events[event_index][0] <= now:
-            _, _, _, kind, item = events[event_index]
+            _, _, number, kind, item = events[event_index]
             event_index += 1
+            closed_something = False
 
+            # Each closure, flood and failure closes roads under its own
+            # name, so overlapping ones reopen a road only when all are over
             if kind == "close":
-                simulation.block_segment(_road_points(world, item))
+                simulation.block_segment(_road_points(world, item), source=f"closure:{number}")
+                closed_something = True
+            elif kind == "reopen":
+                simulation.unblock_segment(_road_points(world, item), source=f"closure:{number}")
+            elif kind == "accident":
+                simulation.add_accident(segment(item), item.severity, item.duration_seconds)
+            elif kind == "flood":
+                roads = [segment(road) for road in item.roads]
+                if item.area is not None:
+                    roads += segments_in_area(
+                        network, item.area.latitude, item.area.longitude, item.area.radius_metres
+                    )
+                if roads:
+                    flood = simulation.add_flood(
+                        roads, item.severity, item.duration_seconds, item.recovery_seconds
+                    )
+                    closed_something = flood.closes_roads
+            elif kind in ("fail", "restore"):
+                for road in failed_roads(world, item):
+                    if kind == "fail":
+                        simulation.block_segment(road, source=f"failure:{number}")
+                        closed_something = True
+                    else:
+                        simulation.unblock_segment(road, source=f"failure:{number}")
+
+            if closed_something:
                 rerouting.reroute_affected_vehicles(
                     world.graph, simulation, world.node_by_point,
                     route_finder=traffic.route_finder(),
                 )
-            elif kind == "reopen":
-                simulation.unblock_segment(_road_points(world, item))
-            else:
-                simulation.add_accident(segment(item), item.severity, item.duration_seconds)
 
             traffic.process_events()
 
@@ -365,16 +421,21 @@ def run_scenario(world, spec, progress=None, measure=True):
         tracker.before_step()
         traffic.step()
         tracker.after_step()
+        if probe is not None:
+            probe.after_step()
 
         if progress is not None and simulation.time % 60 == 0:
             progress(simulation.time)
 
     tracker.finish()
-
-    return _result(
+    result = _result(
         spec, world, simulation, traffic, tracker, trips, surges, emergencies,
         reroutes_before, wall_started, cpu_started,
     )
+    if probe is not None:
+        probe.finish()
+        result["resilience"] = probe.summarise(tracker.timeseries, emergencies)
+    return result
 
 
 def _sent(entry):

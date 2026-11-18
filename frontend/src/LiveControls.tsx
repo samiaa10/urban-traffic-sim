@@ -14,6 +14,15 @@ import {
   closureRequest,
   fleetRequest,
   reroutingRequest,
+  bridgesRequest,
+  clearFloodRequest,
+  describeFlood,
+  floodRequest,
+  DEFAULT_FLOOD,
+  FLOOD_SEVERITIES,
+  type FloodInfo,
+  type FloodSettings,
+  type FloodSeverity,
   SIGNAL_CONTROLLERS,
   type SignalSettings,
   surgeRequest,
@@ -35,6 +44,9 @@ export function LiveControls({
   onMessage,
   signals,
   onApplySignals,
+  floods,
+  simulationTime,
+  onFloodsChanged,
 }: {
   // A run is going (controls that change it are enabled)
   active: boolean
@@ -50,7 +62,41 @@ export function LiveControls({
   // Traffic signals: what the run has, and how to change it
   signals: SignalSettings
   onApplySignals: (settings: SignalSettings) => Promise<{ junctions: number }>
+  // Floods on the run, now, and telling the app when they change
+  floods: FloodInfo[]
+  simulationTime: number | null
+  onFloodsChanged: (floods: FloodInfo[]) => void
 }) {
+  const [flood, setFlood] = useState<FloodSettings>(DEFAULT_FLOOD)
+  const [bridgesOut, setBridgesOut] = useState(false)
+  const changeFlood = (change: Partial<FloodSettings>) => setFlood((current) => ({ ...current, ...change }))
+
+  const placeFlood = () => {
+    onPickRoad("Flood centre", async (lat, lon) => {
+      try {
+        const answer = await send(floodRequest(lat, lon, flood))
+        const created = answer.flood as FloodInfo
+        onFloodsChanged([...floods, created])
+        onMessage(
+          `Flood: ${created.roads.length} roads ${created.closed ? "closed" : "flooded"} for ` +
+          `${flood.minutes} min, then ${flood.recoveryMinutes} min to recover`,
+        )
+      } catch (caught) {
+        onMessage(caught instanceof Error ? caught.message : "That did not work")
+      }
+    })
+  }
+
+  const clearFlood = async (id: number) => {
+    try {
+      await send(clearFloodRequest(id))
+      onFloodsChanged(floods.filter((f) => f.id !== id))
+      onMessage("Flood cleared: its roads are back to normal")
+    } catch (caught) {
+      onMessage(caught instanceof Error ? caught.message : "That did not work")
+    }
+  }
+
   const [signalDraft, setSignalDraft] = useState<SignalSettings>(signals)
   const changeSignals = (change: Partial<SignalSettings>) => setSignalDraft((current) => ({ ...current, ...change }))
   const applySignals = async () => {
@@ -200,6 +246,71 @@ export function LiveControls({
           ))}
         </ul>
       )}
+
+      <fieldset className="live-signals" disabled={!active}>
+        <legend>Floods and failures</legend>
+        <p className="hint">
+          A flood closes or slows every road inside a circle you place on the map, then recovers
+          gradually. It is a transport disruption you choose, not a flood forecast.
+        </p>
+        <div className="fields">
+          <label className="field">
+            Radius
+            <select aria-label="Flood radius" value={flood.radiusMetres}
+              onChange={(event) => changeFlood({ radiusMetres: Number(event.target.value) })}>
+              {[150, 250, 400, 600].map((m) => <option key={m} value={m}>{m} m</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Severity
+            <select aria-label="Flood severity" value={flood.severity}
+              onChange={(event) => changeFlood({ severity: event.target.value as FloodSeverity })}>
+              {FLOOD_SEVERITIES.map((s) => <option key={s.value} value={s.value}>{s.label}</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Lasts
+            <select aria-label="Flood duration" value={flood.minutes}
+              onChange={(event) => changeFlood({ minutes: Number(event.target.value) })}>
+              {[10, 20, 30, 60].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </label>
+          <label className="field">
+            Recovery
+            <select aria-label="Flood recovery" value={flood.recoveryMinutes}
+              onChange={(event) => changeFlood({ recoveryMinutes: Number(event.target.value) })}>
+              {[0, 5, 10, 20].map((m) => <option key={m} value={m}>{m} min</option>)}
+            </select>
+          </label>
+        </div>
+        <button type="button" className="btn btn--block" onClick={placeFlood}>
+          Place a flood on the map
+        </button>
+        {floods.length > 0 && (
+          <ul className="incident-list" aria-label="Floods">
+            {floods.map((f) => (
+              <li key={f.id}>
+                <span>Flood {f.id}: {describeFlood(f, simulationTime)}</span>
+                <button type="button" className="btn btn--quiet" onClick={() => void clearFlood(f.id)}>
+                  Clear
+                </button>
+              </li>
+            ))}
+          </ul>
+        )}
+        <label className="toggle">
+          <input type="checkbox" checked={bridgesOut}
+            onChange={(event) => {
+              const fail = event.target.checked
+              setBridgesOut(fail)
+              void act(bridgesRequest(fail), (answer) =>
+                fail
+                  ? `${answer.bridges} bridges out of use: traffic reroutes around them`
+                  : "Bridges back in use")
+            }} />
+          Bridges out of use
+        </label>
+      </fieldset>
 
       <fieldset className="live-signals" disabled={!active}>
         <legend>Traffic signals</legend>

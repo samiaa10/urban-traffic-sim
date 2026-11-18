@@ -23,6 +23,16 @@ export type ScenarioSpec = {
   traffic_model?: TrafficModel
   // Not given: no traffic signals
   signals?: { controller: "fixed" | "adaptive"; emergency_priority: boolean }
+  // Disruptions beyond closures and accidents, and resilience measures
+  floods?: {
+    area: { latitude: number; longitude: number; radius_metres: number }
+    severity: "minor" | "moderate" | "severe" | "closed"
+    start_at: number
+    duration_seconds: number
+    recovery_seconds: number
+  }[]
+  failures?: { names: string[]; start_at: number; end_at: number }[]
+  resilience?: boolean
   closures: Road[]
   accidents: (Road & {
     severity: "minor" | "moderate" | "severe"
@@ -237,12 +247,30 @@ export type Draft = {
   trafficModel?: TrafficModel
   // undefined: no signals
   signals?: StudySignals
+  // Disruptions (illustrative: see RIVER_FLOOD and CENTRAL_BRIDGES)
+  flood?: boolean
+  bridgesOut?: boolean
   surge: boolean
   closures: (Road & { label: string })[]
   accidents: (Road & { label: string; severity: "minor" | "moderate" | "severe"; start_at: number })[]
 }
 
 export const CITY_CENTRE = { latitude: 52.6286, longitude: 1.2927 }
+
+// A flood for the scenario builder: every road within 350 m of a point on
+// the Wensum by Riverside closed from 5 minutes for 20, then 10 minutes to
+// recover. An illustrative area chosen by hand, not a flood map.
+export const RIVER_FLOOD = {
+  area: { latitude: 52.6305, longitude: 1.3045, radius_metres: 350 },
+  severity: "closed" as const,
+  start_at: 300,
+  duration_seconds: 1200,
+  recovery_seconds: 600,
+}
+
+// Central river bridges (OpenStreetMap bridge=* roads), out of use from 5
+// minutes for 20
+export const CENTRAL_BRIDGES = ["Prince of Wales Road", "Whitefriars", "Fye Bridge Street", "Duke Street"]
 
 // Traffic signals for a scenario, at the junctions OpenStreetMap shows with lights
 export type StudySignals = "fixed" | "adaptive" | "priority"
@@ -259,6 +287,11 @@ export function draftToSpec(draft: Draft): ScenarioSpec {
     demand: { vehicles: draft.vehicles, spread_seconds: 300 },
     rerouting: draft.rerouting,
     ...(draft.trafficModel ? { traffic_model: draft.trafficModel } : {}),
+    ...(draft.flood ? { floods: [RIVER_FLOOD] } : {}),
+    ...(draft.bridgesOut
+      ? { failures: [{ names: CENTRAL_BRIDGES, start_at: 300, end_at: 1500 }] }
+      : {}),
+    ...(draft.flood || draft.bridgesOut ? { resilience: true } : {}),
     ...(draft.signals
       ? {
           signals: {

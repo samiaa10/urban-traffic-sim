@@ -51,6 +51,17 @@ describe("draftToSpec", () => {
     })
   })
 
+  it("adds a flood or bridge failures, with resilience measures, only when chosen", () => {
+    const plain = draftToSpec(draft())
+    assert.equal("floods" in plain || "failures" in plain || "resilience" in plain, false)
+    const flooded = draftToSpec(draft({ flood: true }))
+    assert.equal(flooded.floods?.[0].severity, "closed")
+    assert.equal(flooded.resilience, true)
+    const bridges = draftToSpec(draft({ bridgesOut: true }))
+    assert.ok(bridges.failures?.[0].names.includes("Whitefriars"))
+    assert.equal(bridges.resilience, true)
+  })
+
   it("adds traffic signals only when chosen", () => {
     assert.equal("signals" in draftToSpec(draft()), false)
     assert.deepEqual(draftToSpec(draft({ signals: "fixed" })).signals, { controller: "fixed", emergency_priority: false })
