@@ -157,6 +157,35 @@ describe("live charts", () => {
     expect(within(section).getByText("40 driving, 10 held up, average speed 75% of free flow, 5 arrived")).toBeTruthy()
     expect(within(section).getByRole("img", { name: /Vehicles driving over/ })).toBeTruthy()
     expect(within(section).getByText("320 s")).toBeTruthy()
+    // Only cellular-automaton runs report cars stopped in queues
+    expect(within(section).queryByRole("img", { name: /Stopped in queues/ })).toBeNull()
+  })
+
+  it("chart cars stopped in queues when the run reports them (the cellular automaton)", async () => {
+    const backend = liveBackend()
+    const step = backend["POST /simulation/step"] as (request: { query: URLSearchParams }) => {
+      body: { summary: Record<string, number> }
+    }
+    mockBackend({
+      ...backend,
+      "POST /simulation/step": (request: { query: URLSearchParams }) => {
+        const answer = step(request)
+        return { body: { ...answer.body, summary: { ...answer.body.summary, stopped: 8 } } }
+      },
+    })
+    const polling = controlPolling()
+    const user = userEvent.setup()
+    render(<App />)
+    clickMap(START)
+    clickMap(DESTINATION)
+    await user.click(screen.getByRole("button", { name: /Calculate Route/ }))
+    await screen.findByText(/Route: /)
+    await polling.tick()
+    await polling.tick()
+
+    const section = screen.getByRole("region", { name: "Live traffic" })
+    expect(within(section).getByRole("img", { name: /Stopped in queues over/ })).toBeTruthy()
+    expect(within(section).getByText("20%")).toBeTruthy()
   })
 })
 

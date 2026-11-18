@@ -517,9 +517,15 @@ class Simulation:
         def emergency_speed_factor(point_a, point_b):
             return rules.emergency_factor(speed_factor(point_a, point_b))
 
+        # The ca model moves ordinary cars itself (cellular.py); everything
+        # else moves below, as in the other models
+        handled = ()
+        if self.road_model.cellular:
+            handled = self.road_model.step(self)
+
         for vehicle in self.vehicles:
 
-            if vehicle.finished:
+            if vehicle.finished or vehicle in handled:
                 continue
 
             # The trip clock runs while the vehicle is on its way, so
@@ -569,6 +575,10 @@ class Simulation:
 
     def get_traffic_density(self):
         """Vehicles on each road, keyed by traffic key (road_model.py)."""
+
+        # The ca model counts cars on the roads its lattice has them on
+        if self.road_model.cellular:
+            return self.road_model.traffic_density(self)
 
         traffic = {}
         key = self.road_model.key

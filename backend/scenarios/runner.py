@@ -78,6 +78,13 @@ class ScenarioError(ValueError):
     """The spec does not fit the map (unknown junctions, ...)."""
 
 
+def _seed(seed, name):
+    """A whole-number seed for one named stream of a scenario."""
+
+    digest = hashlib.sha256(f"{seed}:{name}".encode()).digest()
+    return int.from_bytes(digest[:8], "big")
+
+
 def _stream(seed, name):
     """A random generator for one named stream of a scenario."""
 
@@ -133,7 +140,9 @@ def run_scenario(world, spec, progress=None, measure=True):
     parked = network.point(world.demand.nodes[0])
     simulation = Simulation(
         [parked, parked],
-        road_model=make_road_model(spec.effective_traffic_model, network),
+        road_model=make_road_model(
+            spec.effective_traffic_model, network, seed=_seed(spec.seed, "ca"),
+        ),
     )
     simulation.vehicles[0].finished = True
     trip_speed = car_speed(simulation)

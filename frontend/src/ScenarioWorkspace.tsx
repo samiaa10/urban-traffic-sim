@@ -8,6 +8,7 @@ import { useEffect, useRef, useState } from "react"
 
 import { Icon, KpiCard, Spinner } from "./components.tsx"
 import { BarChart } from "./OptimiserResults.tsx"
+import { TRAFFIC_MODELS, type TrafficModel } from "./services.ts"
 import {
   binLabel,
   STUDY_POLL_MS,
@@ -363,6 +364,21 @@ export function ScenarioWorkspace({
                     >
                       {VEHICLES.map((n) => (
                         <option key={n} value={n}>{n.toLocaleString("en-GB")}</option>
+                      ))}
+                    </select>
+                  </label>
+                  <label className="field">
+                    Traffic model
+                    <select
+                      aria-label={`${draft.name || "Scenario"} traffic model`}
+                      value={draft.trafficModel ?? ""}
+                      onChange={(e) =>
+                        update(draft.key, { trafficModel: (e.target.value || undefined) as TrafficModel | undefined })
+                      }
+                    >
+                      <option value="">Server default</option>
+                      {TRAFFIC_MODELS.map((model) => (
+                        <option key={model.value} value={model.value}>{model.label}</option>
                       ))}
                     </select>
                   </label>

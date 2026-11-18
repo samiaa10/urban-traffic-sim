@@ -13,6 +13,7 @@ import {
   series,
   speedPercent,
   stepQuery,
+  stoppedPercent,
   surgeRequest,
   type Sample,
 } from "../src/live.ts"
@@ -48,6 +49,12 @@ describe("the live charts' samples", () => {
     const history = [sample(1), sample(2, { mean_speed_factor: null }), sample(3, { active_vehicles: 0, held_up: 0 })]
     assert.deepEqual(series(history, speedPercent), [{ x: 1, y: 80 }, { x: 3, y: 80 }])
     assert.deepEqual(series(history, heldUpPercent), [{ x: 1, y: 40 }, { x: 2, y: 40 }])
+  })
+
+  it("charts cars stopped in queues only for runs that report them (the cellular automaton)", () => {
+    assert.equal(stoppedPercent(sample(1)), null)
+    assert.equal(stoppedPercent(sample(1, { stopped: 3 })), 30)
+    assert.equal(stoppedPercent(sample(1, { stopped: 0, active_vehicles: 0 })), null)
   })
 
   it("describes the latest sample", () => {

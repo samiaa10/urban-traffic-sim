@@ -2,6 +2,7 @@
 // functions the scenario screen uses. No React or Leaflet in here, so it
 // can be tested on its own (tests/scenarios.test.ts).
 
+import type { TrafficModel } from "./services.ts"
 import { apiUrl } from "./optimiser.ts"
 
 // How often a running study is checked (ms)
@@ -18,6 +19,8 @@ export type ScenarioSpec = {
   seed: number
   demand: { vehicles: number; spread_seconds: number }
   rerouting: boolean
+  // Not given: the server's default model
+  traffic_model?: TrafficModel
   closures: Road[]
   accidents: (Road & {
     severity: "minor" | "moderate" | "severe"
@@ -228,6 +231,8 @@ export type Draft = {
   vehicles: number
   seed: number
   rerouting: boolean
+  // undefined: the server's default
+  trafficModel?: TrafficModel
   surge: boolean
   closures: (Road & { label: string })[]
   accidents: (Road & { label: string; severity: "minor" | "moderate" | "severe"; start_at: number })[]
@@ -241,6 +246,7 @@ export function draftToSpec(draft: Draft): ScenarioSpec {
     seed: draft.seed,
     demand: { vehicles: draft.vehicles, spread_seconds: 300 },
     rerouting: draft.rerouting,
+    ...(draft.trafficModel ? { traffic_model: draft.trafficModel } : {}),
     closures: draft.closures.map(({ start, destination }) => ({ start, destination })),
     accidents: draft.accidents.map(({ start, destination, severity, start_at }) => ({
       start,

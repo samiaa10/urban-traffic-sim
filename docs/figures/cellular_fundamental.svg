@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 640 360" role="img" aria-label="Flow against density (ring road, vmax 5)"><style>text{font:12px system-ui,sans-serif;fill:#4a5b6e}.axis{stroke:#98a6b5;stroke-width:1}.grid{stroke:#e8ecf0;stroke-width:1}.t{font-weight:600;fill:#17283a}</style>
+<rect width="640" height="360" fill="#fff"/>
+<text class="t" x="56" y="20">Flow against density (ring road, vmax 5)</text>
+<line class="grid" x1="56" x2="624" y1="314.0" y2="314.0"/>
+<text x="50" y="318.0" text-anchor="end">0</text>
+<text x="56.0" y="330" text-anchor="middle">0</text>
+<line class="grid" x1="56" x2="624" y1="258.0" y2="258.0"/>
+<text x="50" y="262.0" text-anchor="end">600</text>
+<text x="169.6" y="330" text-anchor="middle">24</text>
+<line class="grid" x1="56" x2="624" y1="202.0" y2="202.0"/>
+<text x="50" y="206.0" text-anchor="end">1200</text>
+<text x="283.2" y="330" text-anchor="middle">48</text>
+<line class="grid" x1="56" x2="624" y1="146.0" y2="146.0"/>
+<text x="50" y="150.0" text-anchor="end">1800</text>
+<text x="396.8" y="330" text-anchor="middle">72</text>
+<line class="grid" x1="56" x2="624" y1="90.0" y2="90.0"/>
+<text x="50" y="94.0" text-anchor="end">2400</text>
+<text x="510.4" y="330" text-anchor="middle">96</text>
+<line class="grid" x1="56" x2="624" y1="34.0" y2="34.0"/>
+<text x="50" y="38.0" text-anchor="end">3000</text>
+<text x="624.0" y="330" text-anchor="middle">120</text>
+<line class="axis" x1="56" x2="624" y1="314" y2="314"/>
+<line class="axis" x1="56" x2="56" y1="34" y2="314"/>
+<text x="340.0" y="352" text-anchor="middle">density (cars/km)</text>
+<text transform="translate(14 174.0) rotate(-90)" text-anchor="middle">flow (cars/h)</text>
+<path d="M74.9,263.6 L93.9,213.2 L119.1,146.0 L138.0,95.6 L157.0,45.2 L182.2,45.2 L213.8,62.0 L245.3,78.8 L308.4,112.4 L371.6,146.0 L434.7,179.6 L497.8,213.2 L560.9,246.8" fill="none" stroke="#2a5d8f" stroke-width="2"/>
+<line x1="434" x2="456" y1="44" y2="44" stroke="#2a5d8f" stroke-width="2"/>
+<text x="462" y="48">p = 0</text>
+<path d="M74.9,266.7 L93.9,218.6 L119.1,156.5 L138.0,140.0 L157.0,142.4 L182.2,151.2 L213.8,158.3 L245.3,167.1 L308.4,185.2 L371.6,203.8 L434.7,226.9 L497.8,244.6 L560.9,265.8" fill="none" stroke="#a86d17" stroke-width="2"/>
+<line x1="434" x2="456" y1="62" y2="62" stroke="#a86d17" stroke-width="2"/>
+<text x="462" y="66">p = 0.25</text>
+<path d="M74.9,268.5 L93.9,223.7 L119.1,202.0 L138.0,216.6 L157.0,217.5 L182.2,217.2 L213.8,223.1 L245.3,228.7 L308.4,233.4 L371.6,245.9 L434.7,257.1 L497.8,269.9 L560.9,282.4" fill="none" stroke="#b4423a" stroke-width="2"/>
+<line x1="434" x2="456" y1="80" y2="80" stroke="#b4423a" stroke-width="2"/>
+<text x="462" y="84">p = 0.5</text>
+</svg>

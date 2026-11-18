@@ -130,8 +130,9 @@ class ScenarioSpec(Strict):
     # original rules. Not given: the API fills in the server's default
     # (TRAFFIC_MODEL) before saving the study; a spec still without one
     # (saved before this field existed, or built directly in code) runs
-    # the simple model it always ran.
-    traffic_model: Optional[Literal["osm", "simple"]] = None
+    # the simple model it always ran. "ca" is the experimental cellular
+    # automaton (simulation/cellular.py).
+    traffic_model: Optional[Literal["osm", "simple", "ca"]] = None
     stations: List[Station] = Field(default_factory=list, max_length=20)
     # One group of emergencies, or several (for example ambulance and
     # fire calls at once, each with its own count, timing and target)

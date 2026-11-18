@@ -1389,3 +1389,40 @@ def test_five_one_second_steps_equal_one_five_second_step(client):
         return [(v["latitude"], v["longitude"]) for v in body["vehicles"]]
 
     assert run(1, 5) == run(5, 1)
+
+
+# ------------------------------------------------------------
+# The experimental cellular-automaton traffic model
+# ------------------------------------------------------------
+
+def test_a_run_can_use_the_cellular_automaton(client):
+    response = client.post(
+        "/simulation/start", params={"start": 0, "destination": 15, "traffic_model": "ca"}
+    )
+    assert response.status_code == 200
+    assert response.json()["traffic_model"] == "ca"
+    assert client.post("/simulation/fleet", params={"count": 40, "seed": 3}).status_code == 200
+
+    for _ in range(5):
+        body = client.post("/simulation/step", params={"seconds": 10}).json()
+
+    # Cars standing still in queues, counted from the CA's own speeds
+    stopped = sum(
+        1 for v in body["vehicles"]
+        if v["vehicle_type"] == "normal" and not v["finished"] and v["speed_factor"] == 0
+    )
+    assert body["summary"]["stopped"] == stopped
+
+    segments = client.get("/simulation/congestion").json()["congestion"]
+    assert segments
+    for segment in segments:
+        assert 0 <= segment["occupancy"] <= 1
+        assert 0 <= segment["speed_factor"] <= 1
+        assert 0 <= segment["stopped"] <= segment["vehicle_count"]
+
+
+def test_the_other_models_report_what_they_always_did(running):
+    body = running.post("/simulation/step").json()
+    assert "stopped" not in body["summary"]
+    segment = running.get("/simulation/congestion").json()["congestion"][0]
+    assert set(segment) == {"start", "end", "vehicle_count", "level"}
