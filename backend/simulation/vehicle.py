@@ -65,6 +65,11 @@ class Vehicle:
         # delay = last_move_seconds - last_free_flow_seconds
         self.last_free_flow_seconds = 0.0
 
+        # Traffic signals (signals.py): stopped at a red light during the
+        # last move, and seconds spent waiting at signals this trip
+        self.held_at_signal = False
+        self.signal_wait_seconds = 0
+
         # Emergency vehicle state
         self.on_emergency = False
         self.available = True
@@ -139,7 +144,8 @@ class Vehicle:
 
         return self.vehicle_type == "normal"
 
-    def move(self, time_seconds=1, is_blocked=None, speed_factor=None, limit_factor=None):
+    def move(self, time_seconds=1, is_blocked=None, speed_factor=None, limit_factor=None,
+             may_cross=None):
         """Drive for time_seconds.
 
         is_blocked(point_a, point_b) is an optional function that says
@@ -155,7 +161,14 @@ class Vehicle:
         road's speed limit as a fraction of the vehicle's speed (at most
         1): the vehicle's free-flow speed on that road. Traffic then slows
         it from there.
+
+        may_cross(previous, junction, following) is an optional function
+        saying whether the vehicle may go through a junction (traffic
+        signals, signals.py). If not, it stops at the end of its road (the
+        stop line) and held_at_signal is set.
         """
+
+        self.held_at_signal = False
 
         if self.finished:
             return
@@ -200,6 +213,21 @@ class Vehicle:
 
             # Distance we could cover with the time we have left
             reachable = road_speed * time_left
+
+            if reachable >= remaining_segment and (
+                may_cross is not None
+                and self.position + 2 < len(self.route)
+                and not may_cross(current_point, next_point, self.route[self.position + 2])
+            ):
+
+                # A red light (or a full junction): drive to the stop line
+                # and wait there
+                time_left -= remaining_segment / road_speed
+                free_flow_seconds += remaining_segment / free_speed
+                self.distance_travelled += remaining_segment
+                self.distance_on_segment = segment_distance
+                self.held_at_signal = True
+                break
 
             if reachable >= remaining_segment:
 

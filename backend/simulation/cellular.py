@@ -62,6 +62,8 @@ How it fits the road network (CellularTraffic)
     slow-downs.
   * Closures: a car on a closed road does not move (as in the other
     models); a closed next road is a wall at the end of the road.
+  * Traffic signals (signals.py): a red light ahead is a wall at the end
+    of the approach lane too, so a queue forms behind the first car.
   * Accidents: vmax on the road is multiplied by the accident's speed
     factor (at least one cell per step), and only that share of lanes,
     lanes x capacity factor (at least one), take new cars.
@@ -473,6 +475,7 @@ class CellularTraffic:
                 continue
             handled.add(vehicle)
             vehicle.journey_seconds += 1
+            vehicle.held_at_signal = False
             vehicle.last_move_seconds = 1.0
             vehicle.last_free_flow_seconds = 0.0
             car = self.cars.get(id(vehicle))
@@ -538,8 +541,10 @@ class CellularTraffic:
                 gap, plan = self._look_ahead(simulation, car, vmax)
 
             car.v = nasch_speed(car.v, vmax, gap, slows)
+            if car.v == 0 and plan is not None and plan[-1:] == ["signal"]:
+                vehicle.held_at_signal = True
             speeds[car] = (car.v, vmax)
-            plans.append((car, plan))
+            plans.append((car, [item for item in plan if item != "signal"] if plan else plan))
 
         # ---- Rule 4: move ----------------------------------------------
         crossing = []
@@ -572,6 +577,7 @@ class CellularTraffic:
         plan = []
         route, index = car.route, car.index
         came_from = road
+        signals = simulation.signals
 
         while gap < vmax:
             index += 1
@@ -579,6 +585,14 @@ class CellularTraffic:
                 plan.append("exit")
                 return vmax, plan
             if simulation.is_road_closed(route[index], route[index + 1]):
+                break
+            if signals is not None and not signals.may_cross(
+                car.vehicle, route[index - 1], route[index], route[index + 1]
+            ):
+                # A red light: the stop line is a wall (marked so the car
+                # can be counted as held if it stops there)
+                if index == car.index + 1:
+                    plan.append("signal")
                 break
             nxt = self._road(simulation, self._route_key(route, index))
             lane = self._entry_lane(simulation, nxt, came_from)

@@ -1,0 +1,733 @@
+{
+ "source": "OpenStreetMap (ODbL), highway=traffic_signals nodes, download of 8 September 2026",
+ "snap_metres": 30.0,
+ "signal_nodes": 218,
+ "junctions": [
+  {
+   "node": 210391,
+   "signal_nodes": 1,
+   "latitude": 52.6516309,
+   "longitude": 1.2799517
+  },
+  {
+   "node": 211951,
+   "signal_nodes": 1,
+   "latitude": 52.6519167,
+   "longitude": 1.2617305
+  },
+  {
+   "node": 211958,
+   "signal_nodes": 1,
+   "latitude": 52.64755,
+   "longitude": 1.2597324
+  },
+  {
+   "node": 211994,
+   "signal_nodes": 2,
+   "latitude": 52.6328138,
+   "longitude": 1.2591012
+  },
+  {
+   "node": 212105,
+   "signal_nodes": 1,
+   "latitude": 52.6354372,
+   "longitude": 1.2921973
+  },
+  {
+   "node": 212115,
+   "signal_nodes": 1,
+   "latitude": 52.6354234,
+   "longitude": 1.29263
+  },
+  {
+   "node": 212135,
+   "signal_nodes": 1,
+   "latitude": 52.6352348,
+   "longitude": 1.2941033
+  },
+  {
+   "node": 212136,
+   "signal_nodes": 1,
+   "latitude": 52.6125953,
+   "longitude": 1.281985
+  },
+  {
+   "node": 212188,
+   "signal_nodes": 1,
+   "latitude": 52.621955,
+   "longitude": 1.3073033
+  },
+  {
+   "node": 212193,
+   "signal_nodes": 1,
+   "latitude": 52.6233059,
+   "longitude": 1.3095243
+  },
+  {
+   "node": 212196,
+   "signal_nodes": 1,
+   "latitude": 52.6227595,
+   "longitude": 1.3115452
+  },
+  {
+   "node": 212205,
+   "signal_nodes": 1,
+   "latitude": 52.6278033,
+   "longitude": 1.3060819
+  },
+  {
+   "node": 212210,
+   "signal_nodes": 1,
+   "latitude": 52.6255394,
+   "longitude": 1.3134109
+  },
+  {
+   "node": 212291,
+   "signal_nodes": 1,
+   "latitude": 52.6449785,
+   "longitude": 1.3230302
+  },
+  {
+   "node": 272384,
+   "signal_nodes": 1,
+   "latitude": 52.6284526,
+   "longitude": 1.2850214
+  },
+  {
+   "node": 272426,
+   "signal_nodes": 2,
+   "latitude": 52.6217624,
+   "longitude": 1.2873088
+  },
+  {
+   "node": 275856,
+   "signal_nodes": 1,
+   "latitude": 52.6257259,
+   "longitude": 1.2932215
+  },
+  {
+   "node": 275888,
+   "signal_nodes": 1,
+   "latitude": 52.6230302,
+   "longitude": 1.2935584
+  },
+  {
+   "node": 275904,
+   "signal_nodes": 1,
+   "latitude": 52.6336124,
+   "longitude": 1.2787295
+  },
+  {
+   "node": 277355,
+   "signal_nodes": 1,
+   "latitude": 52.6393583,
+   "longitude": 1.2410416
+  },
+  {
+   "node": 326524,
+   "signal_nodes": 1,
+   "latitude": 52.641352,
+   "longitude": 1.2969262
+  },
+  {
+   "node": 326527,
+   "signal_nodes": 1,
+   "latitude": 52.6388643,
+   "longitude": 1.2966576
+  },
+  {
+   "node": 328740,
+   "signal_nodes": 1,
+   "latitude": 52.6213689,
+   "longitude": 1.2984431
+  },
+  {
+   "node": 328757,
+   "signal_nodes": 1,
+   "latitude": 52.6280915,
+   "longitude": 1.2994384
+  },
+  {
+   "node": 336117,
+   "signal_nodes": 1,
+   "latitude": 52.6351307,
+   "longitude": 1.2696522
+  },
+  {
+   "node": 336159,
+   "signal_nodes": 1,
+   "latitude": 52.6281033,
+   "longitude": 1.2834205
+  },
+  {
+   "node": 470657,
+   "signal_nodes": 1,
+   "latitude": 52.6194499,
+   "longitude": 1.2686021
+  },
+  {
+   "node": 505675,
+   "signal_nodes": 2,
+   "latitude": 52.6293042,
+   "longitude": 1.2986708
+  },
+  {
+   "node": 505690,
+   "signal_nodes": 1,
+   "latitude": 52.6280421,
+   "longitude": 1.2981297
+  },
+  {
+   "node": 505691,
+   "signal_nodes": 1,
+   "latitude": 52.6288003,
+   "longitude": 1.2976877
+  },
+  {
+   "node": 505842,
+   "signal_nodes": 1,
+   "latitude": 52.6319538,
+   "longitude": 1.2853308
+  },
+  {
+   "node": 17469601,
+   "signal_nodes": 2,
+   "latitude": 52.6413394,
+   "longitude": 1.2196856
+  },
+  {
+   "node": 276327916,
+   "signal_nodes": 3,
+   "latitude": 52.6686818,
+   "longitude": 1.2711844
+  },
+  {
+   "node": 280884542,
+   "signal_nodes": 1,
+   "latitude": 52.6212531,
+   "longitude": 1.2640801
+  },
+  {
+   "node": 281005588,
+   "signal_nodes": 1,
+   "latitude": 52.6254943,
+   "longitude": 1.260074
+  },
+  {
+   "node": 287005885,
+   "signal_nodes": 1,
+   "latitude": 52.66486,
+   "longitude": 1.282777
+  },
+  {
+   "node": 287005889,
+   "signal_nodes": 1,
+   "latitude": 52.665128,
+   "longitude": 1.2813283
+  },
+  {
+   "node": 287262508,
+   "signal_nodes": 1,
+   "latitude": 52.6274519,
+   "longitude": 1.2949677
+  },
+  {
+   "node": 288793608,
+   "signal_nodes": 1,
+   "latitude": 52.6292639,
+   "longitude": 1.2973029
+  },
+  {
+   "node": 290787808,
+   "signal_nodes": 2,
+   "latitude": 52.611941,
+   "longitude": 1.3066433
+  },
+  {
+   "node": 290787811,
+   "signal_nodes": 2,
+   "latitude": 52.6118647,
+   "longitude": 1.3065525
+  },
+  {
+   "node": 291463553,
+   "signal_nodes": 1,
+   "latitude": 52.6206992,
+   "longitude": 1.2708813
+  },
+  {
+   "node": 292589329,
+   "signal_nodes": 1,
+   "latitude": 52.6173161,
+   "longitude": 1.2762825
+  },
+  {
+   "node": 296467872,
+   "signal_nodes": 1,
+   "latitude": 52.6086081,
+   "longitude": 1.2513977
+  },
+  {
+   "node": 300915831,
+   "signal_nodes": 2,
+   "latitude": 52.6003324,
+   "longitude": 1.2778921
+  },
+  {
+   "node": 302224387,
+   "signal_nodes": 1,
+   "latitude": 52.6229023,
+   "longitude": 1.2935111
+  },
+  {
+   "node": 304397790,
+   "signal_nodes": 1,
+   "latitude": 52.6286211,
+   "longitude": 1.3017269
+  },
+  {
+   "node": 304740476,
+   "signal_nodes": 1,
+   "latitude": 52.6079637,
+   "longitude": 1.2884033
+  },
+  {
+   "node": 307036266,
+   "signal_nodes": 1,
+   "latitude": 52.6291641,
+   "longitude": 1.3021669
+  },
+  {
+   "node": 335649946,
+   "signal_nodes": 1,
+   "latitude": 52.6154727,
+   "longitude": 1.2706123
+  },
+  {
+   "node": 335750883,
+   "signal_nodes": 1,
+   "latitude": 52.6276291,
+   "longitude": 1.2858606
+  },
+  {
+   "node": 339094426,
+   "signal_nodes": 1,
+   "latitude": 52.6297288,
+   "longitude": 1.2989015
+  },
+  {
+   "node": 344604554,
+   "signal_nodes": 1,
+   "latitude": 52.6285951,
+   "longitude": 1.2838127
+  },
+  {
+   "node": 344604563,
+   "signal_nodes": 1,
+   "latitude": 52.6283278,
+   "longitude": 1.2837547
+  },
+  {
+   "node": 354835818,
+   "signal_nodes": 1,
+   "latitude": 52.6412642,
+   "longitude": 1.2198353
+  },
+  {
+   "node": 354835821,
+   "signal_nodes": 1,
+   "latitude": 52.6413365,
+   "longitude": 1.2198533
+  },
+  {
+   "node": 355603133,
+   "signal_nodes": 1,
+   "latitude": 52.6412666,
+   "longitude": 1.219676
+  },
+  {
+   "node": 369560060,
+   "signal_nodes": 1,
+   "latitude": 52.6282903,
+   "longitude": 1.2858273
+  },
+  {
+   "node": 369560194,
+   "signal_nodes": 1,
+   "latitude": 52.6283211,
+   "longitude": 1.2833435
+  },
+  {
+   "node": 371144767,
+   "signal_nodes": 1,
+   "latitude": 52.6393259,
+   "longitude": 1.2411931
+  },
+  {
+   "node": 371146031,
+   "signal_nodes": 1,
+   "latitude": 52.639436,
+   "longitude": 1.2412258
+  },
+  {
+   "node": 380319626,
+   "signal_nodes": 1,
+   "latitude": 52.6092382,
+   "longitude": 1.297263
+  },
+  {
+   "node": 380320360,
+   "signal_nodes": 1,
+   "latitude": 52.6004224,
+   "longitude": 1.2779243
+  },
+  {
+   "node": 384347826,
+   "signal_nodes": 2,
+   "latitude": 52.6227846,
+   "longitude": 1.2934175
+  },
+  {
+   "node": 384347871,
+   "signal_nodes": 1,
+   "latitude": 52.6216054,
+   "longitude": 1.2872936
+  },
+  {
+   "node": 384349084,
+   "signal_nodes": 2,
+   "latitude": 52.6214717,
+   "longitude": 1.2872246
+  },
+  {
+   "node": 386775441,
+   "signal_nodes": 1,
+   "latitude": 52.6103588,
+   "longitude": 1.3010539
+  },
+  {
+   "node": 388706025,
+   "signal_nodes": 1,
+   "latitude": 52.6285505,
+   "longitude": 1.2865086
+  },
+  {
+   "node": 391287998,
+   "signal_nodes": 1,
+   "latitude": 52.6389888,
+   "longitude": 1.2797825
+  },
+  {
+   "node": 391288003,
+   "signal_nodes": 1,
+   "latitude": 52.6388566,
+   "longitude": 1.2794765
+  },
+  {
+   "node": 418161045,
+   "signal_nodes": 1,
+   "latitude": 52.6249671,
+   "longitude": 1.3079946
+  },
+  {
+   "node": 418161046,
+   "signal_nodes": 1,
+   "latitude": 52.6247965,
+   "longitude": 1.3083709
+  },
+  {
+   "node": 431145397,
+   "signal_nodes": 2,
+   "latitude": 52.6235119,
+   "longitude": 1.3098651
+  },
+  {
+   "node": 431146177,
+   "signal_nodes": 1,
+   "latitude": 52.6286645,
+   "longitude": 1.2858607
+  },
+  {
+   "node": 431146373,
+   "signal_nodes": 1,
+   "latitude": 52.6307677,
+   "longitude": 1.2929893
+  },
+  {
+   "node": 431146513,
+   "signal_nodes": 1,
+   "latitude": 52.6291943,
+   "longitude": 1.2981303
+  },
+  {
+   "node": 431147041,
+   "signal_nodes": 1,
+   "latitude": 52.6177047,
+   "longitude": 1.3076066
+  },
+  {
+   "node": 431147063,
+   "signal_nodes": 2,
+   "latitude": 52.6351466,
+   "longitude": 1.2921857
+  },
+  {
+   "node": 457484525,
+   "signal_nodes": 1,
+   "latitude": 52.6405389,
+   "longitude": 1.2768334
+  },
+  {
+   "node": 471355156,
+   "signal_nodes": 4,
+   "latitude": 52.6564102,
+   "longitude": 1.2770357
+  },
+  {
+   "node": 471355157,
+   "signal_nodes": 5,
+   "latitude": 52.6564865,
+   "longitude": 1.2772712
+  },
+  {
+   "node": 477806855,
+   "signal_nodes": 3,
+   "latitude": 52.6575351,
+   "longitude": 1.2844808
+  },
+  {
+   "node": 477807010,
+   "signal_nodes": 1,
+   "latitude": 52.6574651,
+   "longitude": 1.2824582
+  },
+  {
+   "node": 477808308,
+   "signal_nodes": 1,
+   "latitude": 52.6388662,
+   "longitude": 1.2938832
+  },
+  {
+   "node": 477808658,
+   "signal_nodes": 1,
+   "latitude": 52.6389239,
+   "longitude": 1.2909096
+  },
+  {
+   "node": 477808680,
+   "signal_nodes": 2,
+   "latitude": 52.6385265,
+   "longitude": 1.2913066
+  },
+  {
+   "node": 543391486,
+   "signal_nodes": 1,
+   "latitude": 52.6119436,
+   "longitude": 1.3065036
+  },
+  {
+   "node": 642246761,
+   "signal_nodes": 2,
+   "latitude": 52.6328393,
+   "longitude": 1.2592531
+  },
+  {
+   "node": 649611334,
+   "signal_nodes": 2,
+   "latitude": 52.6229922,
+   "longitude": 1.2934743
+  },
+  {
+   "node": 649611393,
+   "signal_nodes": 1,
+   "latitude": 52.6232815,
+   "longitude": 1.2928983
+  },
+  {
+   "node": 656164991,
+   "signal_nodes": 1,
+   "latitude": 52.6293843,
+   "longitude": 1.2981611
+  },
+  {
+   "node": 674087095,
+   "signal_nodes": 1,
+   "latitude": 52.657557,
+   "longitude": 1.2824338
+  },
+  {
+   "node": 680555158,
+   "signal_nodes": 1,
+   "latitude": 52.6288212,
+   "longitude": 1.2863989
+  },
+  {
+   "node": 695236695,
+   "signal_nodes": 1,
+   "latitude": 52.6100068,
+   "longitude": 1.3007352
+  },
+  {
+   "node": 831200117,
+   "signal_nodes": 1,
+   "latitude": 52.6277864,
+   "longitude": 1.2982977
+  },
+  {
+   "node": 908053434,
+   "signal_nodes": 2,
+   "latitude": 52.6319288,
+   "longitude": 1.2851245
+  },
+  {
+   "node": 908053476,
+   "signal_nodes": 1,
+   "latitude": 52.6320083,
+   "longitude": 1.2848232
+  },
+  {
+   "node": 1023215683,
+   "signal_nodes": 1,
+   "latitude": 52.6372852,
+   "longitude": 1.2941721
+  },
+  {
+   "node": 1023215723,
+   "signal_nodes": 1,
+   "latitude": 52.6388709,
+   "longitude": 1.2943998
+  },
+  {
+   "node": 1163638358,
+   "signal_nodes": 2,
+   "latitude": 52.6368653,
+   "longitude": 1.2935114
+  },
+  {
+   "node": 1326596155,
+   "signal_nodes": 1,
+   "latitude": 52.6003635,
+   "longitude": 1.2778071
+  },
+  {
+   "node": 1476070004,
+   "signal_nodes": 2,
+   "latitude": 52.6252415,
+   "longitude": 1.3136416
+  },
+  {
+   "node": 2627213150,
+   "signal_nodes": 1,
+   "latitude": 52.6532367,
+   "longitude": 1.2659992
+  },
+  {
+   "node": 2634040779,
+   "signal_nodes": 1,
+   "latitude": 52.6236545,
+   "longitude": 1.291955
+  },
+  {
+   "node": 2638240836,
+   "signal_nodes": 2,
+   "latitude": 52.6248359,
+   "longitude": 1.308277
+  },
+  {
+   "node": 2690978621,
+   "signal_nodes": 1,
+   "latitude": 52.628635,
+   "longitude": 1.2861331
+  },
+  {
+   "node": 2775387628,
+   "signal_nodes": 2,
+   "latitude": 52.6575101,
+   "longitude": 1.2828424
+  },
+  {
+   "node": 2904347672,
+   "signal_nodes": 1,
+   "latitude": 52.6451351,
+   "longitude": 1.3236737
+  },
+  {
+   "node": 2936699991,
+   "signal_nodes": 1,
+   "latitude": 52.6126402,
+   "longitude": 1.2818522
+  },
+  {
+   "node": 2936699992,
+   "signal_nodes": 1,
+   "latitude": 52.6126956,
+   "longitude": 1.2820267
+  },
+  {
+   "node": 2936699993,
+   "signal_nodes": 1,
+   "latitude": 52.6127413,
+   "longitude": 1.2818992
+  },
+  {
+   "node": 4786175359,
+   "signal_nodes": 1,
+   "latitude": 52.6368898,
+   "longitude": 1.2966177
+  },
+  {
+   "node": 5233581251,
+   "signal_nodes": 1,
+   "latitude": 52.6412736,
+   "longitude": 1.2968195
+  },
+  {
+   "node": 5478749160,
+   "signal_nodes": 1,
+   "latitude": 52.6215101,
+   "longitude": 1.298789
+  },
+  {
+   "node": 6835721934,
+   "signal_nodes": 1,
+   "latitude": 52.6286779,
+   "longitude": 1.3035943
+  },
+  {
+   "node": 11703991053,
+   "signal_nodes": 3,
+   "latitude": 52.6687597,
+   "longitude": 1.2711296
+  },
+  {
+   "node": 11721737951,
+   "signal_nodes": 1,
+   "latitude": 52.6102198,
+   "longitude": 1.3015107
+  },
+  {
+   "node": 11721737954,
+   "signal_nodes": 1,
+   "latitude": 52.6099732,
+   "longitude": 1.3012466
+  },
+  {
+   "node": 11721952044,
+   "signal_nodes": 2,
+   "latitude": 52.6405611,
+   "longitude": 1.2763907
+  },
+  {
+   "node": 11722103023,
+   "signal_nodes": 1,
+   "latitude": 52.6405743,
+   "longitude": 1.2762184
+  },
+  {
+   "node": 11729870532,
+   "signal_nodes": 1,
+   "latitude": 52.621273,
+   "longitude": 1.2984778
+  }
+ ]
+}
