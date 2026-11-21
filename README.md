@@ -2,13 +2,15 @@
 
 [![Tests](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml)
 
-NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing, the simulation and the optimisation, and a React/TypeScript map shows vehicles, congestion, road closures, accidents and emergency vehicles live.
+NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing, the simulation and the optimisation, and a React/TypeScript operations dashboard shows vehicles, congestion, incidents and emergency vehicles live, on a 2D map or a 3D map of the city.
+
+**Live demo: [norwich-sim.onrender.com](https://norwich-sim.onrender.com)** (free hosting: the first visit can take up to a minute while the backend wakes up).
 
 I built it as a computer science project to practise graph algorithms, simulation design, API design and testing on a realistic dataset. The main question it explores is: **what happens to traffic, and to emergency response times, when roads get busy or close, and where should emergency stations go?**
 
-![2,000 vehicles, a rush hour and a severe accident on Norwich's road network](docs/screenshots/live-simulation.jpg)
+![The operations view: 2,000 vehicles and a rush hour on the 3D map of Norwich, with an ambulance on a call](docs/screenshots/operations-3d.jpg)
 
-*2,000 vehicles and a rush hour into the centre at 5x speed, with a severe accident; roads are coloured by congestion. Screenshots are taken from the running app by `frontend/e2e/screenshots.spec.ts`.*
+*The operations view: 2,000 vehicles and a rush hour into the centre at 5x speed, an ambulance on its way to a call, live figures beside the map and the timeline under it. Screenshots are taken from the running app by `frontend/e2e/screenshots.spec.ts`.*
 
 ## At a glance
 
@@ -24,7 +26,11 @@ Measured on the real Norwich network (5,058 junctions, 10,980 roads); each figur
 | Station optimiser | the best 3-station set reaches 99.6% of emergencies within 4 minutes, against 84.6% for random sets; exhaustive search over up to 2 million sets ([details](#emergency-station-optimiser)) |
 | Scenarios at scale | 400 full simulations in 21.5 minutes on 4 worker processes ([report](docs/scenario_benchmark.md)) |
 | Through the API | 1,197 requests a second; a step of 2,000 vehicles in 219 ms (4.6x faster than real time); 8 visitors at once each still faster than real time ([report](docs/api_benchmark.md)) |
-| Tests | 833 backend tests (127 of them on a real PostgreSQL), 118 frontend logic tests, 92 interaction tests and 16 end-to-end tests in a real browser; 5 CI jobs on every push |
+| Traffic models | three, selectable per run: simple rules, OpenStreetMap capacity (`osm`), and a Nagel-Schreckenberg cellular automaton (`ca`) that reproduces the textbook flow-density curve and backward-moving jams ([report](docs/CELLULAR_AUTOMATON.md)) |
+| Traffic signals | at the 108 junctions OpenStreetMap shows with lights: adaptive control cut waiting at lights from 91 s to 22 s per trip against fixed time ([report](docs/TRAFFIC_SIGNALS.md)) |
+| Resilience | a flood by the Wensum cut off 4% of junction pairs and left 39 trips with no route; closing one central bridge cost about 1 s a trip ([report](docs/RESILIENCE.md)) |
+| 3D map | every vehicle drawn on the real shape of its road; 60 frames a second with 4,000 vehicles on an M1 ([report](docs/OPERATIONS_VIEW.md)) |
+| Tests | 935 backend tests (128 of them on a real PostgreSQL), 151 frontend logic tests, 110 interaction tests and 19 end-to-end tests in a real browser; 5 CI jobs on every push |
 
 ## How it fits together
 
@@ -61,8 +67,10 @@ The full diagram, the data model and every design decision are in the [architect
 |---|---|
 | ![A fire engine dispatched across the city](docs/screenshots/emergency-response.jpg) | ![The best set of four ambulance stations](docs/screenshots/station-optimiser.jpg) |
 | **Emergency response.** The fire engine that would arrive first by road is sent; its route, ETA and progress update live. | **Station optimiser.** The best set of four stations, chosen by searching every possible set. |
-| ![A study of 20 random sets of road closures](docs/screenshots/scenario-study.png) | ![Live traffic charts](docs/screenshots/live-analytics.png) |
-| **Scenario study.** 20 random sets of closures simulated and ranked, with an explanation of why the winner won. | **Live traffic.** Vehicles driving, the share held up and average speed, as the simulation runs. |
+| ![A study of 20 random sets of road closures](docs/screenshots/scenario-study.png) | ![Vehicles as 3D bodies on the real shapes of Norwich's roads](docs/screenshots/vehicles-3d.jpg) |
+| **Scenario study.** 20 random sets of closures simulated and ranked, with an explanation of why the winner won. | **3D close up.** Every simulated vehicle is a body on the real shape of its road, facing the way it drives; congestion glows where it builds. |
+| ![2,000 vehicles, a rush hour and a severe accident on the 2D map](docs/screenshots/live-simulation.jpg) | ![Live traffic charts](docs/screenshots/live-analytics.png) |
+| **2D map.** The same simulation on the 2D map: 2,000 vehicles, a rush hour and a severe accident. | **Live traffic.** Vehicles driving, the share held up and average speed, as the simulation runs. |
 
 See the [demo guide](docs/DEMO.md) to try it yourself.
 
@@ -294,14 +302,14 @@ The tests use small hand-built road networks (`backend/tests/helpers.py`, and a 
 
 Tests that load the real Norwich map, and the station-set search, need `numpy` (in `requirements.txt`). `backend/tests/test_api.py` and `test_sessions.py` test the HTTP endpoints through FastAPI's `TestClient`, so they need `fastapi` and `httpx` (both in `requirements.txt`); if either is missing those files are skipped and everything else still runs. The checks of `render.yaml`, `docker-compose.yml` and the CI workflow need `pyyaml` and are skipped without it.
 
-**Database tests.** `backend/tests/db/` (125 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
+**Database tests.** `backend/tests/db/` (129 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
 
 ```bash
 createdb norwich_sim_test
 TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
 ```
 
-Without `TEST_DATABASE_URL` they are skipped: **678 tests pass and 124 are skipped**; with it, **all 802 run** (counted on 2026-11-17). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+Without `TEST_DATABASE_URL` they are skipped: **807 tests pass and 128 are skipped**; with it, **all 935 run** (counted on 2026-11-21). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
 
 What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 
@@ -332,7 +340,7 @@ E2E_DATABASE_URL=postgresql://norwich:norwich@localhost:5432/norwich_sim_e2e_tes
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 117) and the interaction tests (`npm run test:ui`, 91), as separate steps;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 151) and the interaction tests (`npm run test:ui`, 110), as separate steps;
 - the end-to-end tests (`npm run test:e2e`) in Chromium against the backend installed from `requirements-deploy.txt`, with a PostgreSQL 16 service container;
 - a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
