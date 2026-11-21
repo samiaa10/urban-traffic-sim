@@ -4,14 +4,47 @@
 //
 //   SCREENSHOTS=1 E2E_DATABASE_URL=... npx playwright test screenshots
 
-import { expect, test } from "@playwright/test"
+import { expect, test, type Page } from "@playwright/test"
 
 import { clickMap, mapNotice, planRoute } from "./helpers.ts"
 
 const OUT = "../docs/screenshots"
 
 test.skip(!process.env.SCREENSHOTS, "Only with SCREENSHOTS=1")
-test.use({ viewport: { width: 1440, height: 1000 }, deviceScaleFactor: 2 })
+test.use({
+  viewport: { width: 1440, height: 1000 },
+  deviceScaleFactor: 2,
+  // The GPU where there is one (Apple silicon), for sharper 3D shots;
+  // Chromium falls back to software rendering elsewhere
+  launchOptions: { args: ["--use-angle=metal", "--enable-gpu", "--ignore-gpu-blocklist"] },
+})
+
+const map3d = (page: Page) => page.locator('[data-testid="map-3d"]')
+
+test("operations view in 3D", async ({ page }) => {
+  test.setTimeout(180_000)
+  await planRoute(page, [0.3, 0.4], [0.65, 0.55])
+  const live = page.getByRole("region", { name: "Live controls" })
+  await live.getByLabel("Fleet size").selectOption("2000")
+  await live.getByRole("button", { name: "Add vehicles" }).click()
+  await live.getByRole("button", { name: "Start a rush hour into the centre" }).click()
+  await live.getByLabel("Simulation speed").selectOption("5")
+  await page.waitForTimeout(30_000)
+  await page.getByRole("button", { name: "Trigger Ambulance Emergency" }).click()
+  await expect(mapNotice(page)).toContainText("dispatched")
+  await page.getByRole("button", { name: "3D", exact: true }).click()
+  await expect(map3d(page)).toHaveAttribute("data-ready", "true", { timeout: 30_000 })
+  await page.waitForTimeout(10_000)
+  await page.screenshot({ path: `${OUT}/operations-3d.jpg`, type: "jpeg", quality: 82 })
+
+  // Close up: every vehicle a body on the real shape of its road
+  await map3d(page).evaluate((element) =>
+    (element as unknown as { maplibre: { jumpTo(view: object): void } }).maplibre.jumpTo({
+      center: [1.2985, 52.6285], zoom: 17, pitch: 60, bearing: -30,
+    }))
+  await page.waitForTimeout(6_000)
+  await page.locator("#map").screenshot({ path: `${OUT}/vehicles-3d.jpg`, type: "jpeg", quality: 82 })
+})
 
 test("live simulation", async ({ page }) => {
   test.setTimeout(120_000)

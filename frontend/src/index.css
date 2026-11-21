@@ -480,7 +480,9 @@ a {
 
 .fields {
   display: grid;
-  grid-template-columns: 1fr 1fr;
+  /* minmax(0, ...): a long option name must not push a column wider than
+     its card */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
   gap: 12px;
 }
 
@@ -500,6 +502,9 @@ a {
 }
 
 .field select {
+  min-width: 0;
+  width: 100%;
+  text-overflow: ellipsis;
   appearance: none;
   height: var(--control-h);
   padding: 0 32px 0 12px;
