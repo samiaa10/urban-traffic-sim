@@ -187,3 +187,10 @@ test("emergency response command centre", async ({ page }) => {
   await page.waitForTimeout(3_000)
   await workspace.screenshot({ path: `${OUT}/command-replay.jpg`, type: "jpeg", quality: 84 })
 })
+
+test("landing and workspace", async ({ page }) => {
+  await page.goto("/")
+  await expect(page.getByRole("region", { name: "About NORWICH//SIM" })).toContainText("Road network")
+  await page.waitForTimeout(2_500)
+  await page.screenshot({ path: `${OUT}/landing.jpg`, type: "jpeg", quality: 84 })
+})

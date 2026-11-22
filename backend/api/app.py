@@ -11,6 +11,7 @@ from backend.api.protection import install as install_protection
 from backend.db.database import SchemaOutOfDate
 from backend.api.recorder import METRICS_INTERVAL
 from backend.api.routes import (
+    city,
     command,
     emergencies,
     history,
@@ -232,6 +233,7 @@ def create_app(
         history,
         scenarios,
         command,
+        city,
     ):
         app.include_router(module.router)
 

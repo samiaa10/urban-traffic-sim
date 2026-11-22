@@ -11,3 +11,6 @@ numpy>=2
 sqlalchemy>=2.0,<2.1
 alembic>=1.13,<2
 psycopg[binary]>=3.2,<4
+# The AI City Analyst's provider (optional: without a key the analyst
+# uses its built-in rules; docs/AI.md)
+anthropic

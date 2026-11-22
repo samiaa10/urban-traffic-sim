@@ -1611,3 +1611,21 @@ def test_an_ordinary_run_needs_a_fleet_before_its_command_centre(running):
     assert running.post("/command/fleet").status_code == 201
     assert running.get("/command").json()["units"]
     assert running.post("/command/fleet").status_code == 409
+
+
+# ------------------------------------------------------------
+# The city model's figures
+# ------------------------------------------------------------
+
+def test_the_city_overview_describes_the_loaded_map(client, api):
+    body = client.get("/city/overview").json()
+    graph = api.app.state.context.graph
+    assert body["junctions"] == len(graph.nodes)
+    assert 0 < body["road_segments"] <= sum(len(v) for v in graph.edges.values())
+    assert body["road_km"] > 0
+    assert body["population"]["residents"] > 100_000 and body["population"]["source"].startswith("Census 2021")
+    assert body["osm_stations"] == {"ambulance": 0, "fire": 3, "police": 4}
+    assert body["live_runs"] == 0
+    client.post("/simulation/start", params={"start": 0, "destination": 15})
+    assert client.get("/city/overview").json()["live_runs"] == 1
+    assert set(body["ai"]) == {"provider", "model", "available", "reason"}

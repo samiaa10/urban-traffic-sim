@@ -49,6 +49,8 @@ import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
 import { ResiliencePanel } from "./ResiliencePanel.tsx"
 import { CommandCentre } from "./CommandCentre.tsx"
+import { Landing, StatusPill } from "./Landing.tsx"
+import { useOverview } from "./overview.ts"
 import { PlanningWorkspace } from "./PlanningWorkspace.tsx"
 import type { Plan } from "./planning.ts"
 import { EmergencyMonitor, IncidentMonitor, SimulationTimeline } from "./Operations.tsx"
@@ -276,6 +278,9 @@ function App() {
       // Storage blocked: the choice lasts until the page is reloaded
     }
   }
+
+  // The city model's figures (landing band, status) and the analyst drawer
+  const overview = useOverview()
 
   // The planning and command views bring their own map, legend and controls
   const workspaceView = mapView === "plan" || mapView === "command"
@@ -1261,6 +1266,7 @@ function App() {
             <Icon name="clock" size={16} />
             <span>History</span>
           </a>
+          <StatusPill overview={overview} />
           <a
             href="https://github.com/samiaa10/urban-traffic-sim"
             target="_blank"
@@ -1272,6 +1278,14 @@ function App() {
           </a>
         </nav>
       </header>
+
+      <Landing
+        overview={overview}
+        onOpen={(view) => {
+          chooseMapView(view)
+          document.getElementById("map")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+        }}
+      />
 
       <main className="workspace">
         {/* ---------------- CONTROLS ---------------- */}

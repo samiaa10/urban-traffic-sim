@@ -72,6 +72,9 @@ function fakeResponse(reply: Reply): Response {
   } as Response
 }
 
+// The request the page makes once when it opens (Landing.tsx)
+export const PAGE_LOAD = "GET /city/overview"
+
 // Replace fetch with the fake backend. Returns a record of every request.
 export function mockBackend(backend: Backend) {
   const requests: FakeRequest[] = []
@@ -109,8 +112,14 @@ export function mockBackend(backend: Backend) {
     requests.filter((request) => `${request.method} ${request.path}` === key)
 
   return {
-    // Every request so far, as "METHOD /path", in order
-    paths: () => requests.map((request) => `${request.method} ${request.path}`),
+    // Every request so far, as "METHOD /path", in order; the page's one
+    // request on opening (the city model's figures for the landing band,
+    // tested in landing.test.tsx) is left out, so each test sees only
+    // what its own part of the page asked for
+    paths: () =>
+      requests
+        .map((request) => `${request.method} ${request.path}`)
+        .filter((path) => path !== PAGE_LOAD),
     count: (key: string) => matching(key).length,
     last: (key: string): FakeRequest | undefined => matching(key).at(-1),
   }
