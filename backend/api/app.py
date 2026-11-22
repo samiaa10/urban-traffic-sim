@@ -12,6 +12,7 @@ from backend.db.database import SchemaOutOfDate
 from backend.api.recorder import METRICS_INTERVAL
 from backend.api.routes import (
     city,
+    intelligence,
     command,
     emergencies,
     history,
@@ -99,6 +100,7 @@ API_TAGS = [
     {"name": "Incidents", "description": "Road closures and accidents, with rerouting of the vehicles they affect."},
     {"name": "Emergency services", "description": "Stations, ambulances, fire engines and police cars, dispatch and response times."},
     {"name": "Command centre", "description": "Incidents logged on the map, the units sent to them, their timelines, response figures and recorded tracks for replay."},
+    {"name": "Intelligence", "description": "The AI City Analyst, natural-language scenarios and calculated analyses (coverage gaps, station recommendations, critical roads, bottlenecks, anomalies). Works without an AI provider, using built-in rules."},
     {"name": "Optimiser", "description": "Where emergency stations should go, and those answers tested in traffic."},
     {"name": "Scenarios", "description": "Whole scenarios simulated, compared and ranked; large studies in the background."},
     {"name": "History", "description": "What a run did, as saved in PostgreSQL."},
@@ -234,6 +236,7 @@ def create_app(
         scenarios,
         command,
         city,
+        intelligence,
     ):
         app.include_router(module.router)
 

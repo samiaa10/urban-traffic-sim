@@ -63,6 +63,11 @@ class LiveRun:
         # run (simulation/command.py)
         self.command = None
 
+        # Roads far above their own recent traffic (intelligence/analysis.py)
+        from backend.intelligence.analysis import CongestionMonitor
+
+        self.monitor = CongestionMonitor()
+
     def touch(self):
         self.last_used = time.monotonic()
 

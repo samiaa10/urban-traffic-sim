@@ -509,6 +509,11 @@ def simulation_step(
                 run.command.update()
                 run.command.record()
 
+            # Congestion anomalies, every few simulated seconds
+            monitor = getattr(run, "monitor", None)
+            if monitor is not None and simulation.time % monitor.every == 0:
+                monitor.observe(simulation.time, simulation.get_traffic_density())
+
         vehicles = []
         active = held_up = arrived = stopped = 0
         speed_sum = 0.0
