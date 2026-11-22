@@ -48,6 +48,7 @@ import { EvaluationSection } from "./EvaluationSection.tsx"
 import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
 import { ResiliencePanel } from "./ResiliencePanel.tsx"
+import { CommandCentre } from "./CommandCentre.tsx"
 import { PlanningWorkspace } from "./PlanningWorkspace.tsx"
 import type { Plan } from "./planning.ts"
 import { EmergencyMonitor, IncidentMonitor, SimulationTimeline } from "./Operations.tsx"
@@ -104,7 +105,7 @@ type CongestionSegment = {
 // The 3D map (MapLibre) is only downloaded when someone switches to it
 const Map3D = lazy(() => import("./Map3D.tsx"))
 
-type MapView = "2d" | "3d" | "plan"
+type MapView = "2d" | "3d" | "plan" | "command"
 const MAP_VIEW_KEY = "norwich-sim-map-view"
 
 // The last view chosen, remembered in this browser (2D if none, or if
@@ -112,7 +113,7 @@ const MAP_VIEW_KEY = "norwich-sim-map-view"
 function savedMapView(): MapView {
   try {
     const saved = localStorage.getItem(MAP_VIEW_KEY)
-    return saved === "3d" || saved === "plan" ? saved : "2d"
+    return saved === "3d" || saved === "plan" || saved === "command" ? saved : "2d"
   } catch {
     return "2d"
   }
@@ -275,6 +276,9 @@ function App() {
       // Storage blocked: the choice lasts until the page is reloaded
     }
   }
+
+  // The planning and command views bring their own map, legend and controls
+  const workspaceView = mapView === "plan" || mapView === "command"
 
   // Full URL of an endpoint that acts on the running simulation
   const runUrl = (original: string, perRun: string) =>
@@ -1618,13 +1622,16 @@ function App() {
         <section className="map-card" id="map" aria-label="Norwich map">
           <div className="map-toolbar">
             <div>
-              <h2>{mapView === "plan" ? "Emergency infrastructure planning" : "Norwich road network"}</h2>
+              <h2>{mapView === "plan" ? "Emergency infrastructure planning"
+                : mapView === "command" ? "Emergency response command centre" : "Norwich road network"}</h2>
               <p>{mapView === "plan"
                 ? "Road-network response times from existing and optimised stations"
-                : "OpenStreetMap road graph with A* routing"}</p>
+                : mapView === "command"
+                  ? "Incidents, units and response times from the live simulation"
+                  : "OpenStreetMap road graph with A* routing"}</p>
             </div>
             <div className="map-view" role="group" aria-label="Map view">
-              {(["2d", "3d", "plan"] as const).map((view) => (
+              {(["2d", "3d", "plan", "command"] as const).map((view) => (
                 <button
                   key={view}
                   type="button"
@@ -1632,11 +1639,11 @@ function App() {
                   aria-pressed={mapView === view}
                   onClick={() => chooseMapView(view)}
                 >
-                  {view === "plan" ? "Plan" : view.toUpperCase()}
+                  {view === "plan" ? "Plan" : view === "command" ? "Command" : view.toUpperCase()}
                 </button>
               ))}
             </div>
-            {mapView !== "plan" && (
+            {!workspaceView && (
               <div className="map-mode" aria-live="polite">
                 <span
                   className="swatch-dot"
@@ -1664,7 +1671,9 @@ function App() {
               </div>
             )}
 
-            {mapView === "plan" ? (
+            {mapView === "command" ? (
+              <CommandCentre />
+            ) : mapView === "plan" ? (
               <PlanningWorkspace
                 fetchPlan={fetchPlan}
                 onFailed={(reason) => {
@@ -1901,7 +1910,7 @@ function App() {
             )}
 
             {/* LEGEND: congestion, plus whichever layers are on the map */}
-            {mapView !== "plan" && (
+            {!workspaceView && (
               <MapLegend
                 groups={[
                   { title: "Live congestion", entries: congestionLegend },
@@ -1913,7 +1922,7 @@ function App() {
           </div>
 
           {/* TIMELINE: simulated time, playback and incidents as they happened */}
-          {mapView !== "plan" && <SimulationTimeline
+          {!workspaceView && <SimulationTimeline
             history={history}
             simulationTime={simulationTime}
             paused={paused}

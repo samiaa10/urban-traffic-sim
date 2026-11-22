@@ -11,6 +11,7 @@ from backend.api.protection import install as install_protection
 from backend.db.database import SchemaOutOfDate
 from backend.api.recorder import METRICS_INTERVAL
 from backend.api.routes import (
+    command,
     emergencies,
     history,
     scenarios,
@@ -96,6 +97,7 @@ API_TAGS = [
     {"name": "Traffic", "description": "Rush-hour surges and dynamic rerouting."},
     {"name": "Incidents", "description": "Road closures and accidents, with rerouting of the vehicles they affect."},
     {"name": "Emergency services", "description": "Stations, ambulances, fire engines and police cars, dispatch and response times."},
+    {"name": "Command centre", "description": "Incidents logged on the map, the units sent to them, their timelines, response figures and recorded tracks for replay."},
     {"name": "Optimiser", "description": "Where emergency stations should go, and those answers tested in traffic."},
     {"name": "Scenarios", "description": "Whole scenarios simulated, compared and ranked; large studies in the background."},
     {"name": "History", "description": "What a run did, as saved in PostgreSQL."},
@@ -229,6 +231,7 @@ def create_app(
         optimiser,
         history,
         scenarios,
+        command,
     ):
         app.include_router(module.router)
 

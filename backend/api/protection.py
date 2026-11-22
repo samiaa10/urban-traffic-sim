@@ -39,6 +39,7 @@ MAX_BODY_BYTES = 2 * 1024 * 1024
 EXPENSIVE = [
     ("POST", re.compile(r"^/simulation/start$")),
     ("POST", re.compile(r"^/simulations$")),
+    ("POST", re.compile(r"^/command/start$")),
     ("POST", re.compile(r"^/simulations/[^/]+/restart$")),
     ("POST", re.compile(r"^(/simulations/[^/]+)?(/simulation)?/fleet$")),
     ("POST", re.compile(r"^(/simulations/[^/]+)?/traffic/surge$")),

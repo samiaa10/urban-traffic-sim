@@ -33,11 +33,26 @@ class Emergency:
         # Why it was refused, if it was: "no_vehicle" or "no_route"
         self.cancel_reason = None
 
+        # Seconds the vehicle stays at the scene after arriving before it is
+        # free again (the command centre's incidents, command.py). 0, the
+        # default, frees it the moment it arrives, as before.
+        self.on_scene_seconds = 0
+        # Simulated time the vehicle left the scene (None until then)
+        self.cleared_at = None
+
     def resolve(self, resolved_time):
         self.resolved_at = resolved_time
         self.response_time = resolved_time - self.created_at
         self.resolved = True
         self.active = False
+
+    @property
+    def on_scene(self):
+        """Arrived, and the vehicle is still working at the scene."""
+        return self.resolved and self.cleared_at is None and self.on_scene_seconds > 0
+
+    def clear(self, cleared_time):
+        self.cleared_at = cleared_time
 
     def get_location(self):
         return {

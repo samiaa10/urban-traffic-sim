@@ -658,3 +658,30 @@ def test_a_queued_emergency_that_becomes_unreachable_is_saved_as_refused(make_ap
 
     saved = history(client, run_id, "/emergencies")["emergencies"]
     assert [e["cancel_reason"] for e in saved if e["status"] == "cancelled"] == ["no_route"]
+
+
+def test_command_centre_units_and_road_effects_are_saved(make_app):
+    client = TestClient(make_app(traffic_model="osm"))
+    run_id = start(client)
+    app = client.app
+    fleet = client.post("/command/fleet", params={"vehicles_per_station": 1})
+    assert fleet.status_code == 201
+    stations = len(fleet.json()["stations"])
+
+    medical = client.post("/command/incidents", params={"kind": "medical", **point(app, 15)}).json()
+    closure = client.post("/command/incidents", params={"kind": "road_closure", **point(app, 5)}).json()
+    assert closure["incident"]["road"] is not None
+    for _ in range(40):
+        client.post("/simulation/step", params={"seconds": 60})
+    state = client.get("/command").json()
+    assert state["incidents"][0]["status"] == "resolved"
+    client.post("/command/incidents/2/resolve")
+
+    saved = history(client, run_id, "/emergencies")["emergencies"]
+    assert len(saved) == 1 and saved[0]["status"] == "arrived"
+    assert saved[0]["vehicle_id"] == medical["incident"]["units"][0]
+    arrived = next(e for e in state["incidents"][0]["timeline"] if e["event"] == "arrived")
+    assert saved[0]["response_time_seconds"] == arrived["response_seconds"]
+    assert len(history(client, run_id, "/stations")["stations"]) == stations
+    closures = history(client, run_id, "/incidents")["incidents"]
+    assert [(i["kind"], i["end_reason"]) for i in closures] == [("closure", "reopened")]

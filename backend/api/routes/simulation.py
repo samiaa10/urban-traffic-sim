@@ -504,6 +504,11 @@ def simulation_step(
             # Save what changed (usually nothing: then no database work)
             run.recorder.sync()
 
+            # The command centre's incidents and recorded tracks
+            if run.command is not None:
+                run.command.update()
+                run.command.record()
+
         vehicles = []
         active = held_up = arrived = stopped = 0
         speed_sum = 0.0

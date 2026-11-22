@@ -422,19 +422,47 @@ class Simulation:
 
             emergency.resolve(self.time)
 
-            if self.emergency_rules.drive_back and vehicle.home_station is not None:
-                # It drives back (dispatch.after_step gives it the route);
-                # it can be sent again from on the way
+            # Working at the scene first (command centre incidents): the
+            # vehicle stays there, busy, until clear_from_scene
+            if emergency.on_scene_seconds > 0:
                 vehicle.on_emergency = False
-                vehicle.available = True
-                vehicle.going_home = True
-                vehicle.needs_route_home = True
-            # Free the vehicle so it can answer the next emergency
-            elif vehicle.home_station is not None:
-                vehicle.home_station.return_vehicle(vehicle)
-            else:
-                vehicle.on_emergency = False
-                vehicle.available = True
+                continue
+
+            emergency.clear(self.time)
+            self._release(vehicle)
+
+        # Vehicles whose time at the scene is up
+        for emergency in self.emergencies:
+            if emergency.on_scene and self.time >= emergency.resolved_at + emergency.on_scene_seconds:
+                self.clear_from_scene(emergency)
+
+    def clear_from_scene(self, emergency):
+        """The vehicle at an emergency leaves the scene now (its time there
+        is up, or the command centre stood it down). False if it was not
+        on scene."""
+
+        if not emergency.on_scene:
+            return False
+        emergency.clear(self.time)
+        self._release(emergency.assigned_vehicle)
+        return True
+
+    def _release(self, vehicle):
+        """A vehicle that has finished with an emergency becomes free."""
+
+        if self.emergency_rules.drive_back and vehicle.home_station is not None:
+            # It drives back (dispatch.after_step gives it the route);
+            # it can be sent again from on the way
+            vehicle.on_emergency = False
+            vehicle.available = True
+            vehicle.going_home = True
+            vehicle.needs_route_home = True
+        # Free the vehicle so it can answer the next emergency
+        elif vehicle.home_station is not None:
+            vehicle.home_station.return_vehicle(vehicle)
+        else:
+            vehicle.on_emergency = False
+            vehicle.available = True
 
     @staticmethod
     def on_call(vehicle):

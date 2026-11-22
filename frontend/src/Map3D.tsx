@@ -81,7 +81,12 @@ type Props = {
   // Inspect mode: clicks describe what is there instead of placing points
   inspecting: boolean
   onInspectingChange: (inspecting: boolean) => void
+  // Where the camera goes instead of following new emergencies, stations
+  // and routes (the command centre): it moves when the key changes
+  focus?: CameraFocus | null
 }
+
+export type CameraFocus = { key: string; positions: [number, number][]; maxZoom?: number }
 
 type Position = [number, number]
 
@@ -169,7 +174,7 @@ function addLayers(map: MapLibreMap) {
   map.addLayer({
     id: "routes-emergency", type: "line", source: "routes",
     filter: ["==", ["get", "kind"], "emergency"],
-    paint: { "line-color": COLOURS.emergency, "line-width": LINE.emergency + 1, "line-dasharray": [2, 1.5] },
+    paint: { "line-color": ["coalesce", ["get", "colour"], COLOURS.emergency], "line-width": LINE.emergency + 1, "line-dasharray": [2, 1.5] },
   }, firstLabel)
   // The road being inspected: a dark line with a white keyline
   map.addLayer({
@@ -209,10 +214,20 @@ function addLayers(map: MapLibreMap) {
       "circle-color": ["get", "colour"],
       "circle-opacity": ["case", ["==", ["get", "kind"], "incident"], 0.18, 1],
       "circle-radius": ["case", ["==", ["get", "kind"], "incident"], MARKER.incident + 2, MARKER.point + 1],
-      "circle-stroke-color": ["case", ["==", ["get", "kind"], "incident"], COLOURS.emergency, MARKER.outline],
+      "circle-stroke-color": ["case", ["==", ["get", "kind"], "incident"], ["coalesce", ["get", "colour"], COLOURS.emergency], MARKER.outline],
       "circle-stroke-width": 2.5,
       "circle-pitch-alignment": "viewport",
     },
+  })
+  // A point's label, when it has one (the command centre's incidents)
+  map.addLayer({
+    id: "points-label", type: "symbol", source: "points",
+    filter: ["has", "label"],
+    layout: {
+      "text-field": ["get", "label"], "text-font": FONT, "text-size": 11,
+      "text-offset": [0, 1.9], "text-allow-overlap": true,
+    },
+    paint: { "text-color": "#ffffff", "text-halo-color": "#0b1016", "text-halo-width": 1.4 },
   })
   // The overview: a small dot per vehicle until the bodies take over
   map.addLayer({
@@ -282,9 +297,11 @@ function addLayers(map: MapLibreMap) {
   })
 }
 
-function moveCamera(map: MapLibreMap, data: Props["data"], focused: Map<string, string>) {
+function moveCamera(map: MapLibreMap, data: Props["data"], focused: Map<string, string>, focus?: CameraFocus | null) {
   let target: Position[] | null = null
-  for (const { id, key, positions } of cameraTargets(data)) {
+  const maxZoom = focus?.maxZoom ?? 16.5
+  const targets = focus === undefined ? cameraTargets(data) : focus ? [{ id: "focus", ...focus }] : []
+  for (const { id, key, positions } of targets) {
     if (focused.get(id) === key) continue
     focused.set(id, key)
     // The first new thing in the list wins (emergency, stations, route)
@@ -304,7 +321,7 @@ function moveCamera(map: MapLibreMap, data: Props["data"], focused: Map<string, 
       left: Math.min(70, width * 0.12),
       right: Math.min(70, width * 0.12),
     },
-    maxZoom: 16.5,
+    maxZoom,
     pitch: map.getPitch(),
     bearing: map.getBearing(),
     duration: 1400,
@@ -333,7 +350,7 @@ function popupContent(lines: string[]) {
 
 const EMPTY: FeatureCollection = { type: "FeatureCollection", features: [] }
 
-export default function Map3D({ data, onClick, onFailed, inspecting, onInspectingChange }: Props) {
+export default function Map3D({ data, onClick, onFailed, inspecting, onInspectingChange, focus }: Props) {
   const container = useRef<HTMLDivElement>(null)
   const mapRef = useRef<MapLibreMap | null>(null)
   const popupRef = useRef<maplibregl.Popup | null>(null)
@@ -343,9 +360,9 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
   // What the camera last moved to (see cameraTargets)
   const focused = useRef(new Map<string, string>())
   // The newest props, for MapLibre's event handlers (set up once)
-  const latest = useRef({ data, onClick, onFailed, inspecting })
+  const latest = useRef({ data, onClick, onFailed, inspecting, focus })
   useEffect(() => {
-    latest.current = { data, onClick, onFailed, inspecting }
+    latest.current = { data, onClick, onFailed, inspecting, focus }
   })
 
   const [hidden, setHidden] = useState(savedHidden)
@@ -371,7 +388,7 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
       else (map.getSource(id) as GeoJSONSource | undefined)?.setData(collection)
       sent.current.set(id, collection)
     }
-    moveCamera(map, latest.current.data, focused.current)
+    moveCamera(map, latest.current.data, focused.current, latest.current.focus)
   }
 
   useEffect(() => {
@@ -538,7 +555,7 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
     }
   }, [toolsHost])
 
-  useEffect(push, [data])
+  useEffect(push, [data, focus])
 
   // Leaving inspect mode closes what it was showing
   useEffect(() => {

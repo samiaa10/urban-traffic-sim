@@ -28,6 +28,7 @@
     "src/scenarios.ts",
     "src/simulationHelpers.ts",
     "src/planning.ts",
-    "src/planningLayers.ts"
+    "src/planningLayers.ts",
+    "src/command.ts"
   ]
 }

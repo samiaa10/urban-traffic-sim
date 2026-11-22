@@ -59,6 +59,10 @@ class LiveRun:
         # Saves what happens to the database (see recorder.py)
         self.recorder = NullRecorder()
 
+        # The emergency response command centre, if one was set up for this
+        # run (simulation/command.py)
+        self.command = None
+
     def touch(self):
         self.last_used = time.monotonic()
 

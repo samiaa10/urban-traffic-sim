@@ -20,6 +20,22 @@ logger = logging.getLogger(__name__)
 router = APIRouter(tags=["Emergency services"])
 
 
+def record_outcome(run, outcome):
+    """Save what dispatch_emergency did (dispatched, queued or refused) to
+    the run's history. Call while holding the run's lock."""
+
+    emergency = outcome["emergency"]
+    status = outcome["status"]
+    if status == "queued":
+        run.recorder.emergency_queued(emergency)
+    elif status == "dispatched":
+        run.recorder.emergency_dispatched(
+            emergency, outcome["vehicle_index"], outcome["distance"], outcome["nodes_explored"]
+        )
+    else:
+        run.recorder.emergency_refused(emergency, status, outcome["vehicle_index"])
+
+
 @run_route(router, "post", "/emergency/create", "/emergencies")
 def create_emergency(
     latitude: float,
@@ -42,9 +58,9 @@ def create_emergency(
             context.graph, run.simulation, latitude, longitude, emergency_type
         )
         emergency = outcome["emergency"]
+        record_outcome(run, outcome)
 
         if outcome["status"] == "queued":
-            run.recorder.emergency_queued(emergency)
             waiting = len(run.simulation.queued_emergencies())
             return JSONResponse(status_code=202, content={
                 "status": "emergency queued",
@@ -54,16 +70,12 @@ def create_emergency(
             })
 
         if outcome["status"] == "no_vehicle":
-            run.recorder.emergency_refused(emergency, "no_vehicle")
             raise HTTPException(
                 status_code=404,
                 detail="No available emergency vehicle"
             )
 
         if outcome["status"] == "no_route":
-            run.recorder.emergency_refused(
-                emergency, "no_route", outcome["vehicle_index"]
-            )
             raise HTTPException(
                 status_code=404,
                 detail="No route to emergency"
@@ -74,10 +86,6 @@ def create_emergency(
         nodes_explored = outcome["nodes_explored"]
         new_route = outcome["route"]
         vehicle_id = outcome["vehicle_index"]
-
-        run.recorder.emergency_dispatched(
-            emergency, vehicle_id, distance, nodes_explored
-        )
 
     logger.info(
         "Emergency (%s) at (%s, %s): dispatched vehicle %d, "

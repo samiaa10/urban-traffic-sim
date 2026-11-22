@@ -1545,3 +1545,69 @@ def test_the_planning_view_checks_its_settings(client):
     assert client.get("/optimiser/plan", params={"service": "lifeboat"}).status_code == 422
     assert client.get("/optimiser/plan", params={"disruption": "volcano"}).status_code == 422
     assert client.get("/optimiser/plan", params={"stations": 0}).status_code == 422
+
+
+# ------------------------------------------------------------
+# The emergency response command centre
+# ------------------------------------------------------------
+
+def test_a_command_centre_run_has_a_fleet_and_answers_incidents(client):
+    started = client.post("/command/start", params={"background_vehicles": 20, "vehicles_per_station": 2})
+    assert started.status_code == 201
+    body = started.json()
+    run = f"/simulations/{body['simulation_id']}"
+    assert body["traffic_model"] == "osm"
+    # The optimiser's ambulance standby points, and whichever of Norwich's
+    # real stations lie within 500 m of the tiny map; two units each
+    sources = {(s["service"], s["source"]) for s in body["stations"]}
+    assert ("ambulance", "optimiser") in sources
+    assert all(source == "OpenStreetMap" for service, source in sources if service != "ambulance")
+    assert len(body["units"]) == 2 * len(body["stations"])
+    assert all(u["state"] == "available" for u in body["units"])
+    # It does not replace the default run
+    assert client.post("/simulation/step").status_code == 404
+
+    reported = client.post(f"{run}/command/incidents", params={"kind": "medical", "latitude": 52.624, "longitude": 1.286})
+    assert reported.status_code == 201
+    incident = reported.json()["incident"]
+    assert reported.json()["dispatched"] == ["dispatched"]
+    assert incident["status"] == "en_route" and incident["units"][0] is not None
+    assert [e["event"] for e in incident["timeline"]] == ["reported", "dispatched"]
+
+    for _ in range(20):
+        client.post(f"{run}/step", params={"seconds": 60})
+    state = client.get(f"{run}/command").json()
+    done = state["incidents"][0]
+    assert done["status"] == "resolved"
+    assert [e["event"] for e in done["timeline"]] == ["reported", "dispatched", "arrived", "cleared", "resolved"]
+    assert state["metrics"]["responses"] == 1
+    assert state["metrics"]["units_available"] == state["metrics"]["units_total"]
+
+    replay = client.get(f"{run}/command/replay").json()
+    track = next(t for t in replay["tracks"] if t["vehicle_id"] == incident["units"][0])
+    assert track["service"] == "ambulance" and len(track["samples"]) > 2
+
+
+def test_command_centre_requests_are_checked(client):
+    body = client.post("/command/start", params={"background_vehicles": 0}).json()
+    run = f"/simulations/{body['simulation_id']}"
+    bad = client.post(f"{run}/command/incidents", params={"kind": "volcano", "latitude": 52.62, "longitude": 1.28})
+    assert bad.status_code == 422
+    assert client.post(f"{run}/command/incidents/9/resolve").status_code == 404
+    # Resolving while the unit is on its way is refused
+    client.post(f"{run}/command/incidents", params={"kind": "medical", "latitude": 52.626, "longitude": 1.289})
+    assert client.post(f"{run}/command/incidents/1/resolve").status_code == 409
+    # A road closure stays until resolved, then the road reopens
+    closure = client.post(f"{run}/command/incidents", params={"kind": "road_closure", "latitude": 52.622, "longitude": 1.2815})
+    assert closure.json()["incident"]["road"] is not None
+    assert len(client.get(f"{run}/incidents").json()["incidents"]) == 1
+    assert client.post(f"{run}/command/incidents/2/resolve").json()["incident"]["status"] == "resolved"
+    assert client.get(f"{run}/incidents").json()["incidents"] == []
+    assert client.post("/command/start", params={"vehicles_per_station": 9}).status_code == 422
+
+
+def test_an_ordinary_run_needs_a_fleet_before_its_command_centre(running):
+    assert running.get("/command").status_code == 409
+    assert running.post("/command/fleet").status_code == 201
+    assert running.get("/command").json()["units"]
+    assert running.post("/command/fleet").status_code == 409

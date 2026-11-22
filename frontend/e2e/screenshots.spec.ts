@@ -132,3 +132,58 @@ test("emergency infrastructure planning in 3D", async ({ page }) => {
   await page.waitForTimeout(3_000)
   await workspace.screenshot({ path: `${OUT}/planning-step.jpg`, type: "jpeg", quality: 84 })
 })
+
+test("emergency response command centre", async ({ page }) => {
+  test.setTimeout(300_000)
+  const map = page.locator('[data-testid="map-3d"]')
+  // Report at a real place: projected to the screen through the map
+  const report = async (kind: string, latitude: number, longitude: number) => {
+    await page.getByRole("region", { name: "Report an incident" }).getByRole("button", { name: kind }).click()
+    const point = await map.evaluate((element, at) => {
+      const live = (element as unknown as { maplibre: {
+        jumpTo(view: object): void; project(p: number[]): { x: number; y: number } } }).maplibre
+      live.jumpTo({ center: [1.2935, 52.6295], zoom: 13.4, pitch: 52, bearing: -15 })
+      return live.project(at)
+    }, [longitude, latitude])
+    const box = await map.boundingBox()
+    if (!box) throw new Error("No map")
+    await page.mouse.click(box.x + point.x, box.y + point.y)
+    await expect(page.locator(".command-message")).toContainText(`${kind === "Medical" ? "Medical emergency" : kind === "Crime" ? "Crime in progress" : kind}:`, { timeout: 30_000 })
+  }
+  await page.goto("/")
+  await page.getByRole("button", { name: "Command" }).click()
+  await page.getByRole("button", { name: "Open the command centre" }).click()
+  await expect(map).toHaveAttribute("data-ready", "true", { timeout: 60_000 })
+  await page.waitForTimeout(4_000)
+  await report("Fire", 52.6352, 1.2868)
+  await page.waitForTimeout(1_500)
+  await report("Road accident", 52.6236, 1.3012)
+  await page.waitForTimeout(1_500)
+  await report("Medical", 52.6418, 1.2712)
+  await page.waitForTimeout(1_500)
+  await report("Crime", 52.6297, 1.3148)
+  // Back out to see the whole response
+  await map.evaluate((element) =>
+    (element as unknown as { maplibre: { easeTo(view: object): void } }).maplibre.easeTo({
+      center: [1.2935, 52.6295], zoom: 13.4, pitch: 52, bearing: -15, duration: 0,
+    }))
+  await page.getByRole("region", { name: "Incident log" }).getByRole("button", { name: /#1 Fire/ }).click()
+  await page.waitForTimeout(25_000)
+  await page.addStyleTag({ content: ".topbar { position: static !important; }" })
+  const workspace = page.locator("#map")
+  await workspace.scrollIntoViewIfNeeded()
+  await workspace.screenshot({ path: `${OUT}/command-centre.jpg`, type: "jpeg", quality: 84 })
+
+  // Replay of what was recorded
+  await page.getByRole("group", { name: "Simulation speed" }).getByRole("button", { name: "30x" }).click()
+  await page.waitForTimeout(20_000)
+  await page.getByRole("region", { name: "Simulation playback" }).getByRole("button", { name: "Replay" }).click()
+  const replay = page.getByRole("region", { name: "Replay" })
+  await replay.getByRole("button", { name: "Pause replay" }).click()
+  const slider = replay.getByRole("slider", { name: "Replay time" })
+  const max = Number(await slider.getAttribute("max"))
+  const min = Number(await slider.getAttribute("min"))
+  await slider.fill(String(Math.round(min + (max - min) * 0.12)))
+  await page.waitForTimeout(3_000)
+  await workspace.screenshot({ path: `${OUT}/command-replay.jpg`, type: "jpeg", quality: 84 })
+})
