@@ -74,3 +74,63 @@ def city_overview(context: AppContext = Depends(get_context)):
         "database": "configured" if context.database is not None else "not configured",
         "ai": provider_status(),
     }
+
+
+# ------------------------------------------------------------
+# Live weather (Open-Meteo: free, no key). Shown on the 3D map only: the
+# traffic model does not change with the weather.
+# ------------------------------------------------------------
+
+WEATHER_URL = (
+    "https://api.open-meteo.com/v1/forecast?latitude=52.6286&longitude=1.2925"
+    "&current=temperature_2m,precipitation,rain,snowfall,cloud_cover,visibility,"
+    "wind_speed_10m,wind_direction_10m,weather_code,is_day&timezone=Europe%2FLondon"
+)
+WEATHER_TTL = 600
+_weather = {"at": 0.0, "value": None}
+
+
+def fetch_weather(opener=None):
+    """Norwich's current weather from Open-Meteo, as plain numbers."""
+
+    import json
+    import urllib.request
+
+    opener = opener or (lambda url: urllib.request.urlopen(url, timeout=8))
+    with opener(WEATHER_URL) as response:
+        current = json.load(response)["current"]
+    return {
+        "time": current["time"],
+        "temperature_c": current["temperature_2m"],
+        "precipitation_mm": current["precipitation"],
+        "rain_mm": current.get("rain", 0.0),
+        "snowfall_cm": current.get("snowfall", 0.0),
+        "cloud_cover_percent": current["cloud_cover"],
+        "visibility_m": current.get("visibility"),
+        "wind_speed_kmh": current["wind_speed_10m"],
+        "wind_direction_deg": current.get("wind_direction_10m"),
+        "weather_code": current["weather_code"],
+        "is_day": bool(current["is_day"]),
+        "source": "Open-Meteo",
+    }
+
+
+@router.get("/city/weather")
+def city_weather():
+    """Norwich's weather now, from Open-Meteo (refreshed every 10 minutes):
+    the 3D map's sky, fog and rain. Not used by the traffic model. 503 if
+    Open-Meteo cannot be reached."""
+
+    import time
+
+    from fastapi import HTTPException
+
+    now = time.monotonic()
+    if _weather["value"] is None or now - _weather["at"] > WEATHER_TTL:
+        try:
+            _weather["value"] = fetch_weather()
+            _weather["at"] = now
+        except Exception:
+            if _weather["value"] is None:
+                raise HTTPException(status_code=503, detail="Live weather is unavailable (Open-Meteo could not be reached)") from None
+    return _weather["value"]

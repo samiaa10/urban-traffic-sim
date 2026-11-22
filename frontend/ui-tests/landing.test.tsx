@@ -45,7 +45,7 @@ describe("landing", () => {
   it("opens the command centre from the band", async () => {
     mockBackend({ ...workingBackend(), "GET /city/overview": { body: OVERVIEW } })
     render(<App />)
-    await userEvent.click(within(screen.getByRole("region", { name: "About NORWICH//SIM" })).getByRole("button", { name: "Command centre" }))
+    await userEvent.click(within(screen.getByRole("region", { name: "About NORWICH//SIM" })).getByRole("button", { name: "Emergency operations" }))
     expect(screen.getByTestId("command-centre")).toBeTruthy()
     expect(localStorage.getItem("norwich-sim-map-view")).toBe("command")
   })

@@ -16,6 +16,7 @@ import "maplibre-gl/dist/maplibre-gl.css"
 import { COLOURS, LINE, MARKER, VEHICLE_3D } from "./mapStyles.ts"
 import { OPS_STYLE, buildingsLayer } from "./mapTheme.ts"
 import { VehicleGlide } from "./vehicles3d.ts"
+import { TwinPanel } from "./TwinPanel.tsx"
 import {
   SOURCES,
   describeBuilding,
@@ -367,6 +368,9 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
 
   const [hidden, setHidden] = useState(savedHidden)
   const [layersOpen, setLayersOpen] = useState(false)
+  const [twinOpen, setTwinOpen] = useState(false)
+  // The map once it has loaded (the digital twin panel adds its layers then)
+  const [loaded, setLoaded] = useState<MapLibreMap | null>(null)
   // The map's own control corner holds our buttons, under the zoom and
   // compass, so MapLibre lays them out with its controls
   const [toolsHost] = useState(() => {
@@ -430,6 +434,7 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
       addLayers(map)
       applyVisibility(map, savedHidden())
       ready.current = true
+      setLoaded(map)
       push()
       // On a phone the open credit line covers the legend: start it folded
       // into MapLibre's "i" button, one tap away
@@ -550,6 +555,7 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
       focusedTargets.clear()
       mapRef.current = null
       popupRef.current = null
+      setLoaded(null)
       // Frees the WebGL context and its GPU memory
       map.remove()
     }
@@ -616,6 +622,18 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
             <path d="M10 9v5M10 6.2v.1" />
           </svg>
         </button>
+        <button
+          type="button"
+          title="Digital twin: light, weather, terrain, layers and viewpoints"
+          aria-label="Digital twin"
+          aria-expanded={twinOpen}
+          onClick={() => { setTwinOpen((open) => !open); setLayersOpen(false) }}
+        >
+          <svg viewBox="0 0 20 20" aria-hidden="true">
+            <circle cx="10" cy="10" r="3.2" />
+            <path d="M10 2.5v2M10 15.5v2M2.5 10h2M15.5 10h2M4.7 4.7l1.4 1.4M13.9 13.9l1.4 1.4M4.7 15.3l1.4-1.4M13.9 6.1l1.4-1.4" />
+          </svg>
+        </button>
         <button type="button" title="Back to the starting view" aria-label="Reset view" onClick={resetView}>
           <svg viewBox="0 0 20 20" aria-hidden="true">
             <path d="M3.5 9.5 10 4l6.5 5.5M5.5 8v8h9V8" />
@@ -651,6 +669,13 @@ export default function Map3D({ data, onClick, onFailed, inspecting, onInspectin
   return (
     <>
       <div ref={container} className="map map-3d" data-testid="map-3d" />
+      <TwinPanel
+        map={loaded}
+        congestion={data.congestion}
+        vehicles={data.vehicles.features.length}
+        open={twinOpen}
+        onClose={() => setTwinOpen(false)}
+      />
       {createPortal(tools, toolsHost)}
     </>
   )

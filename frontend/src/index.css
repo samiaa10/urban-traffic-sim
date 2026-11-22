@@ -3601,3 +3601,192 @@ body {
     transition-duration: 0.001ms !important;
   }
 }
+
+/* ---------------- 14. Digital twin panel ---------------- */
+
+.twin-panel {
+  position: absolute;
+  z-index: 960;
+  top: 12px;
+  left: 58px;
+  width: 290px;
+  max-height: calc(100% - 170px);
+  overflow-y: auto;
+  padding: 12px 14px 14px;
+  border-radius: var(--radius);
+  background: var(--glass);
+  backdrop-filter: blur(12px) saturate(1.3);
+  -webkit-backdrop-filter: blur(12px) saturate(1.3);
+  box-shadow: var(--elev-2);
+  font-size: var(--text-xs);
+  color: var(--ink-2);
+  animation: rise 0.25s var(--ease) both;
+  scrollbar-width: thin;
+}
+
+.twin-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  margin-bottom: 4px;
+}
+
+.twin-head strong {
+  font-size: var(--text-sm);
+  color: var(--heading);
+}
+
+.twin-head button {
+  width: 24px;
+  height: 24px;
+  border: 0;
+  border-radius: 50%;
+  background: transparent;
+  color: var(--ink-3);
+  font-size: 16px;
+  cursor: pointer;
+}
+
+.twin-head button:hover {
+  background: rgba(255, 255, 255, 0.07);
+  color: var(--heading);
+}
+
+.twin-panel section {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  padding: 10px 0;
+  border-top: 1px solid var(--line-2);
+}
+
+.twin-panel h4 {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  margin: 0;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  color: var(--ink-3);
+}
+
+.twin-panel h4 span {
+  letter-spacing: 0;
+  text-transform: none;
+  font-weight: var(--weight-medium);
+  color: var(--heading);
+}
+
+.twin-panel input[type="range"] {
+  width: 100%;
+  accent-color: var(--accent);
+}
+
+.twin-check {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--ink);
+}
+
+.twin-check input {
+  accent-color: var(--accent);
+}
+
+.twin-check select {
+  margin-left: auto;
+  height: 22px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-xs);
+  background: var(--surface-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-2xs);
+}
+
+.twin-note {
+  margin: 0;
+  font-size: var(--text-2xs);
+  line-height: 1.45;
+  color: var(--ink-3);
+}
+
+.twin-error {
+  color: var(--red);
+}
+
+.twin-link {
+  align-self: flex-start;
+  padding: 0;
+  border: 0;
+  background: none;
+  color: var(--accent);
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+}
+
+.twin-views {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+}
+
+.twin-views button,
+.twin-actions button {
+  min-height: 26px;
+  padding: 0 9px;
+  border: 0;
+  border-radius: var(--radius-xs);
+  background: rgba(255, 255, 255, 0.06);
+  box-shadow: inset 0 0 0 1px var(--line-2);
+  color: var(--ink);
+  font: inherit;
+  font-size: var(--text-2xs);
+  cursor: pointer;
+  transition: background 0.15s var(--ease);
+}
+
+.twin-views button:hover,
+.twin-actions button:hover {
+  background: rgba(255, 255, 255, 0.11);
+}
+
+.twin-saved {
+  display: inline-flex;
+}
+
+.twin-saved button:first-child {
+  border-radius: var(--radius-xs) 0 0 var(--radius-xs);
+}
+
+.twin-saved button:last-child {
+  padding: 0 7px;
+  border-radius: 0 var(--radius-xs) var(--radius-xs) 0;
+  color: var(--ink-3);
+}
+
+.twin-actions {
+  display: flex;
+  gap: 6px;
+}
+
+.twin-actions button {
+  flex: 1;
+}
+
+.twin-actions button[aria-pressed="true"] {
+  background: var(--accent-strong);
+  color: #fff;
+}
+
+.twin-rain {
+  position: absolute;
+  inset: 0;
+  z-index: 2;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+}

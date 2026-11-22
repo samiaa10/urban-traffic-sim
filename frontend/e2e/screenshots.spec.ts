@@ -139,6 +139,7 @@ test("emergency response command centre", async ({ page }) => {
   // Report at a real place: projected to the screen through the map
   const report = async (kind: string, latitude: number, longitude: number) => {
     await page.getByRole("region", { name: "Report an incident" }).getByRole("button", { name: kind }).click()
+    await page.locator(".command-stage").evaluate((element) => element.scrollIntoView({ block: "start" }))
     const point = await map.evaluate((element, at) => {
       const live = (element as unknown as { maplibre: {
         jumpTo(view: object): void; project(p: number[]): { x: number; y: number } } }).maplibre
@@ -193,4 +194,35 @@ test("landing and workspace", async ({ page }) => {
   await expect(page.getByRole("region", { name: "About NORWICH//SIM" })).toContainText("Road network")
   await page.waitForTimeout(2_500)
   await page.screenshot({ path: `${OUT}/landing.jpg`, type: "jpeg", quality: 84 })
+})
+
+test("digital twin: light, terrain and layers", async ({ page }) => {
+  test.setTimeout(180_000)
+  await page.goto("/")
+  await page.getByRole("button", { name: "Fold the introduction away" }).click()
+  await page.getByRole("button", { name: "3D", exact: true }).click()
+  const map = page.locator('[data-testid="map-3d"]')
+  await expect(map).toHaveAttribute("data-ready", "true", { timeout: 60_000 })
+  await page.getByRole("button", { name: "Digital twin", exact: true }).click()
+  const twin = page.getByRole("group", { name: "Digital twin" })
+  await twin.getByRole("slider", { name: "Time of day" }).fill("16")
+  await twin.getByRole("button", { name: "City overview" }).click()
+  await twin.getByLabel("Population density (Census 2021)").check()
+  await page.waitForTimeout(12_000)
+  const workspace = page.locator("#map")
+  await workspace.scrollIntoViewIfNeeded()
+  await workspace.screenshot({ path: `${OUT}/twin-population.jpg`, type: "jpeg", quality: 84 })
+
+  await twin.getByLabel("Population density (Census 2021)").uncheck()
+  await twin.getByLabel(/Emergency coverage/).check()
+  await twin.getByRole("slider", { name: "Time of day" }).fill("11")
+  await page.waitForTimeout(8_000)
+  await workspace.screenshot({ path: `${OUT}/twin-coverage.jpg`, type: "jpeg", quality: 84 })
+
+  // Street level at midday, with terrain and the live weather
+  await twin.getByLabel(/Emergency coverage/).uncheck()
+  await twin.getByRole("button", { name: "Castle and Cathedral" }).click()
+  await twin.getByRole("button", { name: "Close the digital twin panel" }).click()
+  await page.waitForTimeout(9_000)
+  await workspace.screenshot({ path: `${OUT}/twin-castle.jpg`, type: "jpeg", quality: 84 })
 })

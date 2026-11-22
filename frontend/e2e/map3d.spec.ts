@@ -119,3 +119,49 @@ test("the 3D map plans a route and draws the live simulation", async ({ page }) 
   await expect(page.locator(".leaflet-container")).toBeVisible()
   await expect(kpi(page, "Status")).toContainText("Running")
 })
+
+test("the digital twin adds terrain, the sun's light, live weather and analysis layers", async ({ page }) => {
+  test.setTimeout(120_000)
+  await page.goto("/")
+  await page.getByRole("button", { name: "3D", exact: true }).click()
+  await expect(map3d(page)).toHaveAttribute("data-ready", "true", { timeout: 30_000 })
+  await page.getByRole("button", { name: "Digital twin", exact: true }).click()
+  const twin = page.getByRole("group", { name: "Digital twin" })
+  await expect(twin).toBeVisible()
+
+  const state = () => map3d(page).evaluate((element) => {
+    type Map = { getTerrain(): unknown; getSky(): Record<string, unknown> | undefined; getPixelRatio(): number }
+    const map = (element as unknown as { maplibre: Map }).maplibre
+    return { terrain: Boolean(map.getTerrain()), sky: map.getSky()?.["sky-color"] ?? null, ratio: map.getPixelRatio() }
+  })
+
+  // The sky follows the time of day
+  await twin.getByRole("slider", { name: "Time of day" }).fill("12")
+  const noon = (await state()).sky
+  await twin.getByRole("slider", { name: "Time of day" }).fill("2")
+  await expect.poll(async () => (await state()).sky).not.toBe(noon)
+
+  // Weather from the backend (or its reason for having none)
+  await expect(twin.getByRole("region", { name: "Weather" })).toContainText(/Open-Meteo|unavailable/, { timeout: 20_000 })
+
+  // Population hexagons from the backend's census weights
+  await twin.getByLabel("Population density (Census 2021)").check()
+  await expect.poll(() => drawn(page, ["twin-population"]), { timeout: 30_000 }).toBeGreaterThan(20)
+
+  // A viewpoint moves the camera
+  const before = await centre(page)
+  await twin.getByRole("button", { name: "Station and Riverside" }).click()
+  await expect.poll(() => centre(page), { timeout: 10_000 }).not.toBe(before)
+
+  // Performance mode: no terrain, standard resolution
+  // Terrain, then performance mode (no terrain, standard resolution); this
+  // browser draws in software, so performance mode starts on
+  const lite = twin.getByLabel("Performance mode")
+  await lite.uncheck()
+  await twin.getByLabel("Terrain and hillshade").check()
+  await expect.poll(async () => (await state()).terrain).toBe(true)
+  await lite.check()
+  await expect.poll(async () => (await state()).terrain).toBe(false)
+  expect((await state()).ratio).toBe(1)
+  await twin.getByLabel("Terrain and hillshade").isDisabled()
+})

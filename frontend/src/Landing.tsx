@@ -71,13 +71,13 @@ export function Landing({
         </p>
         <div className="landing-actions">
           <button type="button" className="landing-primary" onClick={() => onOpen("command")}>
-            <Icon name="siren" size={15} /> Command centre
+            <Icon name="siren" size={15} /> Emergency operations
           </button>
           <button type="button" onClick={() => onOpen("3d")}>
-            <Icon name="route" size={15} /> 3D traffic
+            <Icon name="route" size={15} /> Live traffic
           </button>
           <button type="button" onClick={() => onOpen("plan")}>
-            <Icon name="stations" size={15} /> Station planning
+            <Icon name="stations" size={15} /> Where stations should go
           </button>
           {onAsk && (
             <button type="button" onClick={onAsk}>

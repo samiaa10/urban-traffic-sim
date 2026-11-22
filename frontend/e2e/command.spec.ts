@@ -16,6 +16,8 @@ async function drawn(page: Page, layers: string[]): Promise<number> {
 
 async function reportAt(page: Page, kind: string, x: number, y: number) {
   await page.getByRole("region", { name: "Report an incident" }).getByRole("button", { name: kind }).click()
+  // The whole map on screen (the page's landing band sits above it)
+  await page.locator(".command-stage").evaluate((element) => element.scrollIntoView({ block: "start" }))
   const box = await map3d(page).boundingBox()
   if (!box) throw new Error("No map")
   await page.mouse.click(box.x + box.width * x, box.y + box.height * y)

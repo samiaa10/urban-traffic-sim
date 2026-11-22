@@ -29,6 +29,8 @@
     "src/simulationHelpers.ts",
     "src/planning.ts",
     "src/planningLayers.ts",
-    "src/command.ts"
+    "src/command.ts",
+    "src/twin.ts",
+    "src/twinLayers.ts"
   ]
 }

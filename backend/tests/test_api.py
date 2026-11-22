@@ -1629,3 +1629,33 @@ def test_the_city_overview_describes_the_loaded_map(client, api):
     client.post("/simulation/start", params={"start": 0, "destination": 15})
     assert client.get("/city/overview").json()["live_runs"] == 1
     assert set(body["ai"]) == {"provider", "model", "available", "reason"}
+
+
+def test_live_weather_comes_from_open_meteo_and_says_when_it_cannot(client, monkeypatch):
+    import io
+    import json
+
+    from backend.api.routes import city
+
+    reading = {"current": {
+        "time": "2026-11-22T12:00", "temperature_2m": 6.1, "precipitation": 1.2, "rain": 1.1, "snowfall": 0.0,
+        "cloud_cover": 90, "visibility": 8000.0, "wind_speed_10m": 20.0, "wind_direction_10m": 230,
+        "weather_code": 61, "is_day": 1,
+    }}
+    weather = city.fetch_weather(opener=lambda url: io.BytesIO(json.dumps(reading).encode()))
+    assert weather["rain_mm"] == 1.1 and weather["is_day"] is True and weather["source"] == "Open-Meteo"
+    assert "latitude=52.6286&longitude=1.2925" in city.WEATHER_URL
+
+    monkeypatch.setattr(city, "_weather", {"at": 0.0, "value": None})
+
+    def unreachable(*args, **kwargs):
+        raise OSError("no network")
+
+    monkeypatch.setattr(city, "fetch_weather", unreachable)
+    response = client.get("/city/weather")
+    assert response.status_code == 503
+    assert "Open-Meteo" in response.json()["detail"]
+
+    # A reading already held is kept when Open-Meteo stops answering
+    monkeypatch.setattr(city, "_weather", {"at": 0.0, "value": weather})
+    assert client.get("/city/weather").json()["rain_mm"] == 1.1
