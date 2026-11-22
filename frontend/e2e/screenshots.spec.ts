@@ -100,3 +100,35 @@ test("scenario study", async ({ page }) => {
   await page.addStyleTag({ content: ".topbar { position: static !important; }" })
   await results.screenshot({ path: `${OUT}/scenario-study.png` })
 })
+
+test("emergency infrastructure planning in 3D", async ({ page }) => {
+  test.setTimeout(240_000)
+  const planningMap = page.locator('[data-testid="planning-map"]')
+  const settle = async () => {
+    await expect(page.getByText("Calculating on the road network…")).toHaveCount(0, { timeout: 60_000 })
+    await page.waitForTimeout(4_000)
+  }
+  await page.goto("/")
+  await page.getByRole("button", { name: "Plan" }).click()
+  await expect(planningMap).toHaveAttribute("data-ready", "true", { timeout: 30_000 })
+  await settle()
+  await page.addStyleTag({ content: ".topbar { position: static !important; }" })
+  const workspace = page.locator("#map")
+  await workspace.scrollIntoViewIfNeeded()
+  await workspace.screenshot({ path: `${OUT}/planning-optimised.jpg`, type: "jpeg", quality: 84 })
+
+  const views = page.getByRole("group", { name: "Layout shown" })
+  await views.getByRole("button", { name: "Existing" }).click()
+  await page.waitForTimeout(2_500)
+  await workspace.screenshot({ path: `${OUT}/planning-existing.jpg`, type: "jpeg", quality: 84 })
+
+  await views.getByRole("button", { name: "Difference" }).click()
+  await page.waitForTimeout(2_500)
+  await workspace.screenshot({ path: `${OUT}/planning-difference.jpg`, type: "jpeg", quality: 84 })
+
+  // A step of the optimisation: the most promising single sites
+  const next = page.getByRole("button", { name: "Next step" })
+  for (let i = 0; i < 3; i++) await next.click()
+  await page.waitForTimeout(3_000)
+  await workspace.screenshot({ path: `${OUT}/planning-step.jpg`, type: "jpeg", quality: 84 })
+})

@@ -26,6 +26,8 @@
     "src/mapData.ts",
     "src/vehicles3d.ts",
     "src/scenarios.ts",
-    "src/simulationHelpers.ts"
+    "src/simulationHelpers.ts",
+    "src/planning.ts",
+    "src/planningLayers.ts"
   ]
 }

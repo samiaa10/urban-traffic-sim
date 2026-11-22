@@ -1,4 +1,4 @@
-import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
+import { Suspense, lazy, useCallback, useEffect, useMemo, useRef, useState } from "react"
 import {
   MapContainer,
   TileLayer,
@@ -48,6 +48,8 @@ import { EvaluationSection } from "./EvaluationSection.tsx"
 import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
 import { ResiliencePanel } from "./ResiliencePanel.tsx"
+import { PlanningWorkspace } from "./PlanningWorkspace.tsx"
+import type { Plan } from "./planning.ts"
 import { EmergencyMonitor, IncidentMonitor, SimulationTimeline } from "./Operations.tsx"
 import {
   DEFAULT_SIGNALS,
@@ -102,14 +104,15 @@ type CongestionSegment = {
 // The 3D map (MapLibre) is only downloaded when someone switches to it
 const Map3D = lazy(() => import("./Map3D.tsx"))
 
-type MapView = "2d" | "3d"
+type MapView = "2d" | "3d" | "plan"
 const MAP_VIEW_KEY = "norwich-sim-map-view"
 
 // The last view chosen, remembered in this browser (2D if none, or if
 // storage is blocked)
 function savedMapView(): MapView {
   try {
-    return localStorage.getItem(MAP_VIEW_KEY) === "3d" ? "3d" : "2d"
+    const saved = localStorage.getItem(MAP_VIEW_KEY)
+    return saved === "3d" || saved === "plan" ? saved : "2d"
   } catch {
     return "2d"
   }
@@ -989,6 +992,17 @@ function App() {
     }
   }
 
+  // The planning view's data (GET /optimiser/plan); stable, so the
+  // workspace only asks again when its settings change
+  const fetchPlan = useCallback(async (query: string): Promise<Plan> => {
+    const response = await fetch(`${API_URL}${query}`)
+    const body = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(typeof body.detail === "string" ? body.detail : "Could not calculate the plan")
+    }
+    return body as Plan
+  }, [])
+
   // Pause and speed: from the live controls and the timeline alike
   function togglePause() {
     if (paused) {
@@ -1604,11 +1618,13 @@ function App() {
         <section className="map-card" id="map" aria-label="Norwich map">
           <div className="map-toolbar">
             <div>
-              <h2>Norwich road network</h2>
-              <p>OpenStreetMap road graph with A* routing</p>
+              <h2>{mapView === "plan" ? "Emergency infrastructure planning" : "Norwich road network"}</h2>
+              <p>{mapView === "plan"
+                ? "Road-network response times from existing and optimised stations"
+                : "OpenStreetMap road graph with A* routing"}</p>
             </div>
             <div className="map-view" role="group" aria-label="Map view">
-              {(["2d", "3d"] as const).map((view) => (
+              {(["2d", "3d", "plan"] as const).map((view) => (
                 <button
                   key={view}
                   type="button"
@@ -1616,20 +1632,22 @@ function App() {
                   aria-pressed={mapView === view}
                   onClick={() => chooseMapView(view)}
                 >
-                  {view.toUpperCase()}
+                  {view === "plan" ? "Plan" : view.toUpperCase()}
                 </button>
               ))}
             </div>
-            <div className="map-mode" aria-live="polite">
-              <span
-                className="swatch-dot"
-                style={{ background: nextClick.colour }}
-                aria-hidden="true"
-              />
-              <span>
-                Next click: <strong>{nextClick.label}</strong>
-              </span>
-            </div>
+            {mapView !== "plan" && (
+              <div className="map-mode" aria-live="polite">
+                <span
+                  className="swatch-dot"
+                  style={{ background: nextClick.colour }}
+                  aria-hidden="true"
+                />
+                <span>
+                  Next click: <strong>{nextClick.label}</strong>
+                </span>
+              </div>
+            )}
           </div>
 
           <div className="map-stage">
@@ -1646,7 +1664,15 @@ function App() {
               </div>
             )}
 
-            {mapView === "3d" ? (
+            {mapView === "plan" ? (
+              <PlanningWorkspace
+                fetchPlan={fetchPlan}
+                onFailed={(reason) => {
+                  chooseMapView("2d")
+                  setResult(`The planning map could not start (${reason}), so the 2D map is shown.`)
+                }}
+              />
+            ) : mapView === "3d" ? (
               <Suspense fallback={<div className="map map-loading">Loading the 3D map…</div>}>
                 <Map3D
                   data={mapData}
@@ -1875,17 +1901,19 @@ function App() {
             )}
 
             {/* LEGEND: congestion, plus whichever layers are on the map */}
-            <MapLegend
-              groups={[
-                { title: "Live congestion", entries: congestionLegend },
-                { title: "On the map", entries: layerLegend },
-                { title: "Building height", entries: buildingLegend },
-              ]}
-            />
+            {mapView !== "plan" && (
+              <MapLegend
+                groups={[
+                  { title: "Live congestion", entries: congestionLegend },
+                  { title: "On the map", entries: layerLegend },
+                  { title: "Building height", entries: buildingLegend },
+                ]}
+              />
+            )}
           </div>
 
           {/* TIMELINE: simulated time, playback and incidents as they happened */}
-          <SimulationTimeline
+          {mapView !== "plan" && <SimulationTimeline
             history={history}
             simulationTime={simulationTime}
             paused={paused}
@@ -1893,7 +1921,7 @@ function App() {
             speed={speed}
             onSpeed={changeSpeed}
             active={routeInfo !== null}
-          />
+          />}
         </section>
 
         {/* ---------------- MONITORING (right of the map) ---------------- */}

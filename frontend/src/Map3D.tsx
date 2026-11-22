@@ -7,15 +7,14 @@
 import { useEffect, useRef, useState } from "react"
 import { createPortal } from "react-dom"
 import maplibregl, {
-  type ExpressionSpecification,
   type GeoJSONSource,
   type Map as MapLibreMap,
   type MapLayerMouseEvent,
 } from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 
-import { BUILDINGS, COLOURS, LINE, MARKER, VEHICLE_3D } from "./mapStyles.ts"
-import { OPS_STYLE } from "./mapTheme.ts"
+import { COLOURS, LINE, MARKER, VEHICLE_3D } from "./mapStyles.ts"
+import { OPS_STYLE, buildingsLayer } from "./mapTheme.ts"
 import { VehicleGlide } from "./vehicles3d.ts"
 import {
   SOURCES,
@@ -46,8 +45,6 @@ const NORWICH_VIEW = {
 }
 
 const FONT = ["Noto Sans Bold"]
-// A few buildings come with no height at all; treat them as flat
-const HEIGHT: ExpressionSpecification = ["coalesce", ["get", "render_height"], 0]
 const STATION_LAYERS = ["stations-circle", "stations-label"]
 const VEHICLE_LAYERS = ["emergency-vehicles", "vehicle-bodies", "vehicles"]
 const ROAD_LAYERS = ["congestion", "routes", "routes-emergency", "closures", "hotspots"]
@@ -188,21 +185,7 @@ function addLayers(map: MapLibreMap) {
 
   // Buildings, extruded to their mapped height (OpenMapTiles' render_height:
   // the OSM height, or floors x 3.66 m, or a default when neither is mapped)
-  map.addLayer({
-    id: "buildings-3d", type: "fill-extrusion", source: "openmaptiles", "source-layer": "building",
-    minzoom: 13,
-    filter: ["!", ["has", "hide_3d"]],
-    paint: {
-      "fill-extrusion-color": [
-        "interpolate", ["linear"], HEIGHT,
-        ...BUILDINGS.flatMap((step) => [step.height, step.colour]),
-      ] as ExpressionSpecification,
-      "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 13, 0, 14.5, HEIGHT],
-      "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
-      "fill-extrusion-opacity": 0.92,
-      "fill-extrusion-vertical-gradient": true,
-    },
-  }, firstLabel)
+  map.addLayer(buildingsLayer(), firstLabel)
 
   // Vehicles as 3D bodies from zoom 15 (vehicles3d.ts), extruded in one
   // batched layer: understated grey for ordinary traffic, the service's

@@ -12,7 +12,9 @@
 // There is no terrain: OpenFreeMap has no elevation tiles, and Norwich is
 // low and flat (the map would gain little). No API key, as before.
 
-import type { ExpressionSpecification, StyleSpecification } from "maplibre-gl"
+import type { ExpressionSpecification, LayerSpecification, StyleSpecification } from "maplibre-gl"
+
+import { BUILDINGS } from "./mapStyles.ts"
 
 export const OPS = {
   background: "#0e151d",
@@ -149,4 +151,28 @@ export const OPS_STYLE: StyleSpecification = {
       paint: { "text-color": OPS.label, "text-halo-color": OPS.labelHalo, "text-halo-width": 1.2 },
     },
   ],
+}
+
+// A few buildings come with no height at all; treat them as flat
+const BUILDING_HEIGHT: ExpressionSpecification = ["coalesce", ["get", "render_height"], 0]
+
+// Buildings, extruded to their mapped height (OpenMapTiles' render_height:
+// the OSM height, or floors x 3.66 m, or a default when neither is mapped),
+// shared by the 3D map and the planning view
+export function buildingsLayer(opacity = 0.92): LayerSpecification {
+  return {
+    id: "buildings-3d", type: "fill-extrusion", source: "openmaptiles", "source-layer": "building",
+    minzoom: 13,
+    filter: ["!", ["has", "hide_3d"]],
+    paint: {
+      "fill-extrusion-color": [
+        "interpolate", ["linear"], BUILDING_HEIGHT,
+        ...BUILDINGS.flatMap((step) => [step.height, step.colour]),
+      ] as ExpressionSpecification,
+      "fill-extrusion-height": ["interpolate", ["linear"], ["zoom"], 13, 0, 14.5, BUILDING_HEIGHT],
+      "fill-extrusion-base": ["coalesce", ["get", "render_min_height"], 0],
+      "fill-extrusion-opacity": opacity,
+      "fill-extrusion-vertical-gradient": true,
+    },
+  }
 }
