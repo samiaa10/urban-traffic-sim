@@ -1523,3 +1523,25 @@ def test_congestion_can_include_each_roads_shape(running):
     shaped = running.get("/simulation/congestion", params={"geometry": True}).json()["congestion"][0]
     assert "path" not in plain
     assert shaped["path"][0] == [shaped["start"]["latitude"], shaped["start"]["longitude"]]
+
+
+# ------------------------------------------------------------
+# Planning: coverage on the map
+# ------------------------------------------------------------
+
+def test_the_planning_view_gets_coverage_for_every_hexagon(client):
+    body = client.get("/optimiser/plan", params={"service": "police", "stations": 2, "target_seconds": 120}).json()
+    assert body["service"] == "police" and body["target_seconds"] == 120
+    assert len(body["optimised"]) == 2 and body["candidates"]
+    cells = len(body["cells"])
+    assert cells > 0
+    for stage in body["stages"]:
+        assert len(stage["cells"]["seconds"]) == cells
+        assert 0 <= stage["summary"]["population_within_target_percent"] <= 100
+    assert body["cells"][0]["polygon"][0] == body["cells"][0]["polygon"][-1]
+
+
+def test_the_planning_view_checks_its_settings(client):
+    assert client.get("/optimiser/plan", params={"service": "lifeboat"}).status_code == 422
+    assert client.get("/optimiser/plan", params={"disruption": "volcano"}).status_code == 422
+    assert client.get("/optimiser/plan", params={"stations": 0}).status_code == 422

@@ -354,6 +354,35 @@ def optimise_station_group(
 
 
 # ------------------------------------------------------------
+# Planning: coverage on the map (optimiser/planning.py)
+# ------------------------------------------------------------
+
+@router.get("/optimiser/plan")
+def plan_stations(
+    service: str = Query("fire", description="ambulance, fire or police"),
+    stations: int = Query(3, ge=1, le=8, description="how many stations to place"),
+    target_seconds: Optional[float] = Query(None, gt=0, le=3600, description="default: the service's target"),
+    disruption: str = Query("none", description="none, flood (by the Wensum) or bridges (central bridges out)"),
+    seed: int = 1,
+    context: AppContext = Depends(get_context),
+):
+    """Existing and optimised station layouts for one service, with the
+    response time of every junction grouped into hexagons for the map, and
+    the optimiser's steps. Response time is road distance from the nearest
+    station divided by the service's speed, as the optimiser ranks
+    stations: no traffic. Existing stations are OpenStreetMap's."""
+
+    from backend.optimiser.planning import plan
+
+    try:
+        return plan(
+            context.graph, context.network, service, stations, target_seconds, disruption, seed,
+        )
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+
+
+# ------------------------------------------------------------
 # Saved results
 # ------------------------------------------------------------
 

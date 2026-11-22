@@ -1,0 +1,76 @@
+{
+ "source": "OpenStreetMap (ODbL) via the Overpass API",
+ "osm_timestamp": "2026-11-22T19:11:51Z",
+ "bounds": [
+  52.58,
+  1.2,
+  52.68,
+  1.37
+ ],
+ "stations": [
+  {
+   "service": "ambulance",
+   "name": "East Anglian Air Ambulance - Norwich Base",
+   "latitude": 52.6738678,
+   "longitude": 1.2691608,
+   "osm": "node/6855478875",
+   "excluded": "air ambulance base: aircraft, not road vehicles"
+  },
+  {
+   "service": "fire",
+   "name": "Diamond Jubilee Fire Station",
+   "latitude": 52.6156475,
+   "longitude": 1.3119313,
+   "osm": "way/361793389",
+   "excluded": null
+  },
+  {
+   "service": "fire",
+   "name": "North Earlham Fire Station",
+   "latitude": 52.6337373,
+   "longitude": 1.2562591,
+   "osm": "way/69382825",
+   "excluded": null
+  },
+  {
+   "service": "fire",
+   "name": "Sprowston Fire Station",
+   "latitude": 52.6523955,
+   "longitude": 1.3072644,
+   "osm": "way/1415449729",
+   "excluded": null
+  },
+  {
+   "service": "police",
+   "name": "British Transport Police Norwich",
+   "latitude": 52.6265787,
+   "longitude": 1.307522,
+   "osm": "node/2969607869",
+   "excluded": null
+  },
+  {
+   "service": "police",
+   "name": "Earlham Police Station",
+   "latitude": 52.629203,
+   "longitude": 1.2600633,
+   "osm": "way/113746954",
+   "excluded": null
+  },
+  {
+   "service": "police",
+   "name": "North Norfolk Police Station",
+   "latitude": 52.6679085,
+   "longitude": 1.2890385,
+   "osm": "way/147938074",
+   "excluded": null
+  },
+  {
+   "service": "police",
+   "name": "Norwich Police Station",
+   "latitude": 52.6283062,
+   "longitude": 1.2910202,
+   "osm": "way/119744293",
+   "excluded": null
+  }
+ ]
+}

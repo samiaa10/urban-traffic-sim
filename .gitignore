@@ -15,6 +15,7 @@ data/osm/*
 !data/osm/norwich_signals.json
 !data/osm/norwich_bridges.json
 !data/osm/norwich_road_geometry.json.gz
+!data/osm/norwich_emergency_stations.json
 !data/osm/README.md
 !data/osm/source/
 cache/
