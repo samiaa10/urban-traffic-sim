@@ -619,6 +619,12 @@ Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs` 
 | POST | `/emergency/create?latitude&longitude&emergency_type` | Create an emergency and dispatch the nearest available vehicle |
 | GET | `/emergency/status` | State, ETA, response time and reroutes for every emergency |
 | POST | `/emergency/block-ahead` | Close a road ahead of the ambulance and reroute it |
+| POST | `/command/start?vehicles_per_station&background_vehicles&seed` | Start a command centre run (`osm` model, not the default run): units at OpenStreetMap's fire and police stations and the optimiser's ambulance standby points, plus ordinary traffic. Returns its `simulation_id` and state ([command centre](COMMAND_CENTRE.md)) |
+| POST | `/command/fleet?vehicles_per_station` | Give an existing run a command centre and its fleet (409 if it has one) |
+| GET | `/command` | Incidents with units and timelines, units (state, incident, ETA, route), stations and response figures (409 without a command centre) |
+| POST | `/command/incidents?kind&latitude&longitude` | Report an incident (`medical`, `fire`, `crime`, `road_accident`, `flood`, `road_closure`): its road effect starts and its units are sent (or queued). 422 for an unknown kind or no road there |
+| POST | `/command/incidents/{incident_id}/resolve` | Stand units at the scene down and end the road effect (409 while a unit is on its way) |
+| GET | `/command/replay` | Every unit's recorded positions (one sample a simulated second while out) and every incident's timeline |
 | GET | `/optimiser/stations?candidates&scenarios&seed&target_seconds&speed&simulation_id&reuse` | Rank candidate station locations. `candidates` is optional (2 to 20 points written as `lat,lon;lat,lon`); leave it out to use the default spread of about 38 locations. Returns the ranked results and a plain-English explanation of the winner. 400 for bad candidates, `scenarios` outside 1 to 5000, or a `speed` or `target_seconds` that is not above 0 |
 | GET | `/optimiser/station-set?stations&candidates&scenarios&seed&target_seconds&speed&simulation_id&reuse` | Choose `stations` (1 to 10, default 3) stations that work well together. Same options as above. Returns the chosen stations in pick order, the set's average, worst case, coverage within the target and unreachable count, three baselines, and a plain-English explanation. 400 if more stations are asked for than there are distinct candidate junctions |
 
@@ -635,6 +641,7 @@ Both optimiser endpoints avoid the closed roads of the run named by `simulation_
 | `POST /station/create`, `POST /station/add-vehicle` | `POST .../stations`, `POST .../stations/add-vehicle` |
 | `POST /emergency/create`, `GET /emergency/status`, `POST /emergency/block-ahead` | `POST .../emergencies`, `GET .../emergencies/status`, `POST .../emergencies/block-ahead` |
 | `POST /traffic/surge`, `GET /traffic/status`, `POST /traffic/rerouting` | the same paths after `.../` |
+| `POST /command/fleet`, `GET /command`, `POST /command/incidents`, `POST /command/incidents/{id}/resolve`, `GET /command/replay` | the same paths after `.../` |
 
 **Runs** (Stage 3):
 

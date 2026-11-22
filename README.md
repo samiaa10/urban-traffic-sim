@@ -31,7 +31,8 @@ Measured on the real Norwich network (5,058 junctions, 10,980 roads); each figur
 | Resilience | a flood by the Wensum cut off 4% of junction pairs and left 39 trips with no route; closing one central bridge cost about 1 s a trip ([report](docs/RESILIENCE.md)) |
 | 3D map | every vehicle drawn on the real shape of its road; 60 frames a second with 4,000 vehicles on an M1 ([report](docs/OPERATIONS_VIEW.md)) |
 | Station planning (3D) | road-network response times for every junction, mapped in hexagons for the 3 OpenStreetMap fire stations against an optimised 3: 91.6% to 97.2% of residents within 4 minutes ([details](docs/PLANNING.md)) |
-| Tests | 947 backend tests (128 of them on a real PostgreSQL), 171 frontend logic tests, 118 interaction tests and 20 end-to-end tests in a real browser; 5 CI jobs on every push |
+| Command centre | incidents reported on the 3D map; units sent by road travel time from the 7 OpenStreetMap fire and police stations and 3 optimised ambulance standby points, tracked through live traffic, with timelines, response figures and replay ([details](docs/COMMAND_CENTRE.md)) |
+| Tests | 966 backend tests (129 of them on a real PostgreSQL), 183 frontend logic tests, 124 interaction tests and 21 end-to-end tests in a real browser; 5 CI jobs on every push |
 
 ## How it fits together
 
@@ -74,6 +75,8 @@ The full diagram, the data model and every design decision are in the [architect
 | **2D map.** The same simulation on the 2D map: 2,000 vehicles, a rush hour and a severe accident. | **Live traffic.** Vehicles driving, the share held up and average speed, as the simulation runs. |
 | ![Response times for an optimised fire station layout, in 3D](docs/screenshots/planning-optimised.jpg) | ![Time saved by the optimised layout against the existing stations](docs/screenshots/planning-difference.jpg) |
 | **Station planning.** Road-network response times across Norwich for an optimised fire station layout, as 3D hexagon columns among the buildings. | **Existing against optimised.** Time saved (blue) or lost (red) per hexagon by replacing the 3 mapped fire stations with the optimised 3. |
+| ![The emergency response command centre with four simultaneous incidents](docs/screenshots/command-centre.jpg) | ![Replay of the recorded response](docs/screenshots/command-replay.jpg) |
+| **Command centre.** Four incidents at once: units en route on their planned routes through live traffic, the fire's timeline, and the fleet's state. | **Replay.** The units' recorded positions played back, with the timeline's later events greyed out. |
 
 See the [demo guide](docs/DEMO.md) to try it yourself.
 
@@ -113,6 +116,7 @@ See the [demo guide](docs/DEMO.md) to try it yourself.
 
 - **Emergency station optimiser.** Ranks about 38 candidate station locations by average response time, worst case, and share of emergencies reached within a target time, using real road distances (not straight lines) and avoiding closed roads. The web interface shows the ten best as numbered markers on the map, a ranked table and a plain-English explanation of why #1 won. Also available from the command line and the API.
 - **Multiple-station optimiser.** Chooses 2 to 5 stations that work well *together*, where each emergency is answered by the nearest chosen station. It reports average and worst-case response, coverage within a target time (3, 4, 5 or 8 minutes) and how many emergencies no chosen station can reach, and compares the result with three baselines: the best single station, the top-ranked stations picked one by one, and random stations. Results appear as numbered navy markers, a comparison table and a plain-English summary.
+- **Emergency response command centre.** The map's **Command** view runs the simulation with a standing fleet and ordinary traffic. Incidents (medical, fire, crime, road accident, flood, road closure) are reported by clicking the 3D map. Each incident's response plan sends the free unit of each service that would arrive first by road (queued when none is free); units drive and re-plan in the simulation, work at the scene, then drive back. Every incident has a timeline from report to resolution, the figures (mean and worst response, share within target, units available) come from arrivals, and the units' recorded tracks can be replayed. Falls back to a 2D map without WebGL: see [`docs/COMMAND_CENTRE.md`](docs/COMMAND_CENTRE.md).
 - **3D station planning.** The map's **Plan** view shows the road-network response time of every junction, grouped into hexagons and drawn as 3D columns among the buildings, for the real OpenStreetMap stations and for the optimiser's layout, with their difference, underserved areas, disruptions (the Wensum flood, central bridges closed) and the optimiser's search played step by step. Constant speeds and no traffic, so it compares layouts rather than predicting real response times: see [`docs/PLANNING.md`](docs/PLANNING.md).
 - **The optimiser tested in traffic.** Its top sites (or station sets) are run as full traffic simulations at several demand levels and seeds, all facing the same trips and emergencies, plus a run without emergencies to measure the response's effect on other traffic. The report ranks them by what really happened, with 95% intervals, the gap to the optimiser's estimate for the same emergencies, and Kendall's tau between the two orders ([results](docs/optimiser_evaluation.md)).
 - **Saved optimiser results.** Every optimiser answer is saved and can be listed and fetched again (`/optimiser/runs`); `reuse=true` answers an identical request from the database in about 6 ms instead of computing it again (about 750 ms).
@@ -306,14 +310,14 @@ The tests use small hand-built road networks (`backend/tests/helpers.py`, and a 
 
 Tests that load the real Norwich map, and the station-set search, need `numpy` (in `requirements.txt`). `backend/tests/test_api.py` and `test_sessions.py` test the HTTP endpoints through FastAPI's `TestClient`, so they need `fastapi` and `httpx` (both in `requirements.txt`); if either is missing those files are skipped and everything else still runs. The checks of `render.yaml`, `docker-compose.yml` and the CI workflow need `pyyaml` and are skipped without it.
 
-**Database tests.** `backend/tests/db/` (129 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
+**Database tests.** `backend/tests/db/` (130 tests) runs against a real PostgreSQL named by `TEST_DATABASE_URL`. The database is wiped at the start, so use a separate one whose name contains `test`:
 
 ```bash
 createdb norwich_sim_test
 TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
 ```
 
-Without `TEST_DATABASE_URL` they are skipped: **819 tests pass and 128 are skipped**; with it, **all 947 run** (counted on 2026-11-22). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+Without `TEST_DATABASE_URL` they are skipped: **837 tests pass and 129 are skipped**; with it, **all 966 run** (counted on 2026-11-22). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
 
 What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 
@@ -344,7 +348,7 @@ E2E_DATABASE_URL=postgresql://norwich:norwich@localhost:5432/norwich_sim_e2e_tes
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 171) and the interaction tests (`npm run test:ui`, 118), as separate steps;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 183) and the interaction tests (`npm run test:ui`, 124), as separate steps;
 - the end-to-end tests (`npm run test:e2e`) in Chromium against the backend installed from `requirements-deploy.txt`, with a PostgreSQL 16 service container;
 - a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
