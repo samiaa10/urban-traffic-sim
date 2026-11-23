@@ -232,7 +232,7 @@ test("city analyst, scenario builder and insights", async ({ page }) => {
   await page.goto("/")
   await page.getByRole("button", { name: "Analyst", exact: true }).click()
   const analyst = page.getByRole("dialog", { name: "City Analyst" })
-  await analyst.getByRole("button", { name: "Which emergency station locations would improve fire coverage?" }).click()
+  await analyst.getByRole("button", { name: "Where should we add a fire station, and what are the trade-offs?" }).click()
   await expect(analyst.getByText("Calculated (built-in rules)")).toBeVisible({ timeout: 60_000 })
   await analyst.getByText(/calculation used/).click()
   await page.waitForTimeout(800)

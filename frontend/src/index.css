@@ -4272,3 +4272,147 @@ body {
   color: var(--ink-3);
   line-height: 1.45;
 }
+
+/* ---------------- 16. Local AI: facts and explanations ---------------- */
+
+.analyst-facts,
+.analyst-explanation {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+}
+
+.analyst-facts {
+  background: rgba(63, 181, 151, 0.06);
+  box-shadow: inset 2px 0 0 var(--teal);
+}
+
+.analyst-explanation {
+  background: rgba(106, 168, 232, 0.07);
+  box-shadow: inset 2px 0 0 var(--accent);
+}
+
+.analyst-facts h4,
+.analyst-explanation h4 {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  margin: 0 0 6px;
+  font-size: var(--text-2xs);
+  font-weight: var(--weight-semibold);
+  color: var(--ink-3);
+}
+
+.analyst-facts h4 .analyst-badge,
+.analyst-explanation h4 .analyst-badge {
+  margin: 0;
+}
+
+.analyst-fact + .analyst-fact {
+  margin-top: 8px;
+}
+
+.analyst-fact strong {
+  display: block;
+  margin-bottom: 2px;
+  font-size: var(--text-xs);
+  color: var(--heading);
+}
+
+.analyst-facts p,
+.analyst-explanation p {
+  margin: 0 0 4px;
+  line-height: 1.5;
+}
+
+.scenario-intent {
+  margin: 2px 0 0;
+  font-size: var(--text-xs);
+  line-height: 1.5;
+  color: var(--ink-2);
+}
+
+.insight-ai {
+  margin-top: var(--gap);
+}
+
+.insight-ai-answer {
+  margin-top: 10px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  background: rgba(106, 168, 232, 0.07);
+  box-shadow: inset 2px 0 0 var(--accent);
+  font-size: var(--text-sm);
+  line-height: 1.55;
+}
+
+.insight-ai-answer p {
+  margin: 6px 0 0;
+}
+
+/* The local model's progress while it answers */
+.analyst-progress {
+  margin-top: 8px;
+  padding: 10px 12px;
+  border-radius: var(--radius-sm);
+  background: rgba(106, 168, 232, 0.05);
+  font-size: var(--text-xs);
+  color: var(--ink-3);
+}
+
+.analyst-progress ol {
+  margin: 0 0 6px;
+  padding: 0;
+  list-style: none;
+}
+
+.analyst-progress li {
+  position: relative;
+  padding: 2px 0 2px 18px;
+}
+
+.analyst-progress li::before {
+  content: "";
+  position: absolute;
+  left: 2px;
+  top: 7px;
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  border: 1px solid var(--ink-3);
+}
+
+.analyst-progress li.is-done {
+  color: var(--ink-2);
+}
+
+.analyst-progress li.is-done::before {
+  border-color: var(--teal);
+  background: var(--teal);
+}
+
+.analyst-progress li.is-active {
+  color: var(--heading);
+}
+
+.analyst-progress li.is-active::before {
+  border-color: var(--accent);
+  background: var(--accent);
+  animation: pulse 1.2s ease-in-out infinite;
+}
+
+.analyst-progress small {
+  font-variant-numeric: tabular-nums;
+}
+
+.analyst-pending {
+  margin: 0;
+  color: var(--ink-3);
+  font-style: italic;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .analyst-progress li.is-active::before {
+    animation: none;
+  }
+}

@@ -6,12 +6,22 @@ import { API_URL } from "./config.ts"
 
 export type Source = { tool: string; input: Record<string, unknown>; provenance: "calculated"; result: Record<string, unknown> }
 
+export type Fact = { tool: string; text: string }
+
 export type Answer = {
   answer: string
   mode: "ai" | "rules"
   model: string | null
   sources: Source[]
   notice: string | null
+  // The calculated facts (templates over the results: exact) and, with a
+  // local model, its explanation of them (checked: every figure in it
+  // comes from a calculation, or it is withheld and explanation_note says why)
+  facts?: Fact[]
+  explanation?: string | null
+  explanation_note?: string | null
+  // A scenario the user asked to simulate: proposed, not run
+  proposal?: Proposal | null
 }
 
 export type Status = {
@@ -19,18 +29,28 @@ export type Status = {
   model: string | null
   available: boolean
   reason: string | null
+  local?: boolean
   fallback: string
   capabilities: { name: string; description: string }[]
 }
 
 export const EXAMPLES = [
-  "Which areas have the worst emergency response coverage?",
-  "Where are the biggest traffic bottlenecks?",
-  "What would happen if the central bridges closed?",
-  "Which emergency station locations would improve fire coverage?",
+  "Which areas have the worst emergency response coverage, and why?",
+  "What would happen if two major bridges closed?",
+  "Find the areas most vulnerable to flooding.",
+  "How could we improve ambulance response times?",
+  "Where should we add a fire station, and what are the trade-offs?",
   "Why did this simulation perform poorly?",
-  "Which scenario produced the best results?",
 ]
+
+// Who answers, in a few words, for the analyst's header
+export function modeLabel(status: Status | null): { text: string; ai: boolean } {
+  if (status === null) return { text: "Connecting…", ai: false }
+  if (status.available && status.local) return { text: `Local AI: ${status.model} (Ollama, on this machine)`, ai: true }
+  if (status.available) return { text: `AI: ${status.model}`, ai: true }
+  if (status.provider === "ollama") return { text: `Local AI unavailable (${status.reason ?? "Ollama not running"}): built-in rules`, ai: false }
+  return { text: "No AI model on this server: built-in rules", ai: false }
+}
 
 export const TOOL_LABELS: Record<string, string> = {
   city_overview: "City model figures",
@@ -38,6 +58,8 @@ export const TOOL_LABELS: Record<string, string> = {
   recommend_station: "Best extra station",
   critical_roads: "Roads trips depend on",
   closure_impact: "Road closure impact",
+  station_plan: "Station layout plan",
+  flood_vulnerability: "Flood vulnerability",
   live_bottlenecks: "Live bottlenecks",
   run_report: "Simulation report",
   scenario_results: "Scenario study ranking",
@@ -47,6 +69,13 @@ export const TOOL_LABELS: Record<string, string> = {
 export function provenanceOf(answer: Answer): { label: string; detail: string; tone: "ai" | "calc" } {
   const count = answer.sources.length
   const calculations = `${count} calculation${count === 1 ? "" : "s"}`
+  if (answer.mode === "ai" && answer.facts) {
+    return {
+      label: `Calculated facts, explained by ${answer.model ?? "the local model"}`,
+      detail: `The local model chose ${calculations}; the facts are the calculations' own results, and the explanation is checked against them.`,
+      tone: "ai",
+    }
+  }
   if (answer.mode === "ai") {
     return {
       label: "AI-written from calculated results",
@@ -94,6 +123,65 @@ export function ask(question: string, simulationId: string | null, history: { ro
   return post<Answer>("/intelligence/ask", { question, simulation_id: simulationId, history: history.slice(-12) })
 }
 
+// What a local model is doing while it answers (POST /intelligence/ask/stream)
+export type Stage = "planning" | "calculated" | "proposing" | "explaining" | "done"
+
+export type StageEvent = { stage: Stage; answer?: Answer & { pending?: boolean } }
+
+export const STAGE_TEXT: Record<Exclude<Stage, "done">, string> = {
+  planning: "Reading the question and choosing the calculations",
+  calculated: "Calculated",
+  proposing: "Drafting a scenario for you to check",
+  explaining: "Writing an explanation of the calculated facts",
+}
+
+// The answer, streamed: onStage hears each stage (and the calculated facts
+// as soon as they exist, before the model explains them). Falls back to a
+// plain JSON answer from a server that does not stream.
+export async function askStream(
+  question: string,
+  simulationId: string | null,
+  history: { role: "user" | "assistant"; content: string }[],
+  onStage: (event: StageEvent) => void,
+): Promise<Answer> {
+  const response = await fetch(`${API_URL}/intelligence/ask/stream`, {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question, simulation_id: simulationId, history: history.slice(-12) }),
+  })
+  if (response.status === 404 || response.status === 405) return ask(question, simulationId, history)
+  const streamed = (response.headers?.get?.("Content-Type") ?? "").includes("ndjson") && response.body
+  if (!response.ok || !streamed) {
+    const data = await response.json().catch(() => ({}))
+    if (!response.ok) {
+      throw new Error(typeof data.detail === "string" ? data.detail : `Request failed (${response.status})`)
+    }
+    return data as Answer
+  }
+  const reader = response.body!.getReader()
+  const decoder = new TextDecoder()
+  let buffered = ""
+  let final: Answer | null = null
+  const read = (line: string) => {
+    if (!line.trim()) return
+    const event = JSON.parse(line) as StageEvent | { stage: "error"; detail: string }
+    if (event.stage === "error") throw new Error((event as { detail: string }).detail)
+    if (event.stage === "done" && event.answer) final = event.answer
+    onStage(event as StageEvent)
+  }
+  for (;;) {
+    const { value, done } = await reader.read()
+    buffered += decoder.decode(value ?? new Uint8Array(), { stream: !done })
+    const lines = buffered.split("\n")
+    buffered = lines.pop() ?? ""
+    lines.forEach(read)
+    if (done) break
+  }
+  read(buffered)
+  if (!final) throw new Error("The answer stopped before it was finished. Try again.")
+  return final
+}
+
 // ------------------------------------------------
 // Scenarios from ordinary language
 // ------------------------------------------------
@@ -106,6 +194,8 @@ export type Proposal = {
   mode: "ai" | "rules"
   model: string | null
   notice: string | null
+  // The model's description of what will be simulated (checked like answers)
+  explanation?: string | null
 }
 
 export type ScenarioResult = {

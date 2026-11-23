@@ -37,7 +37,9 @@ export const CHOSEN_STATION = MARKER.chosenStation
 
 // What one endpoint answers. status defaults to 200; unreadable makes the
 // body impossible to parse as JSON.
-export type Reply = { status?: number; body?: unknown; unreadable?: boolean }
+// `lines`: a streamed reply (newline-delimited JSON), one chunk per line;
+// with `until`, the last line waits for it
+export type Reply = { status?: number; body?: unknown; unreadable?: boolean; lines?: unknown[]; until?: Promise<unknown> }
 
 export type FakeRequest = {
   method: string
@@ -59,6 +61,24 @@ export type Backend = Record<string, Answer>
 
 function fakeResponse(reply: Reply): Response {
   const status = reply.status ?? 200
+
+  if (reply.lines) {
+    const chunks = reply.lines.map((line) => new TextEncoder().encode(JSON.stringify(line) + "\n"))
+    return {
+      ok: status >= 200 && status < 300,
+      status,
+      headers: new Headers({ "Content-Type": "application/x-ndjson" }),
+      body: new ReadableStream({
+        async start(controller) {
+          chunks.slice(0, -1).forEach((chunk) => controller.enqueue(chunk))
+          await reply.until
+          controller.enqueue(chunks[chunks.length - 1])
+          controller.close()
+        },
+      }),
+      json: async () => { throw new SyntaxError("A streamed reply") },
+    } as unknown as Response
+  }
 
   return {
     ok: status >= 200 && status < 300,

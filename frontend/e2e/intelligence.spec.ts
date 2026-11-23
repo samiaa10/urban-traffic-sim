@@ -9,9 +9,9 @@ test("the analyst answers from calculations and says who wrote the answer", asyn
   await page.goto("/")
   await page.getByRole("button", { name: "Analyst", exact: true }).click()
   const analyst = page.getByRole("dialog", { name: "City Analyst" })
-  await expect(analyst).toContainText("Built-in rules (no AI model configured)")
+  await expect(analyst).toContainText("No AI model on this server: built-in rules")
 
-  await analyst.getByRole("button", { name: "Which areas have the worst emergency response coverage?" }).click()
+  await analyst.getByRole("button", { name: "Which areas have the worst emergency response coverage, and why?" }).click()
   await expect(analyst.getByText("Calculated (built-in rules)")).toBeVisible({ timeout: 60_000 })
   await expect(analyst).toContainText(/% of residents are within 4 min/)
   await analyst.getByText(/1 calculation used/).click()
