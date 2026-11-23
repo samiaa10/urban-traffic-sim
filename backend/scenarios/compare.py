@@ -306,7 +306,90 @@ def spec_differences(spec_a, spec_b):
     if b.get("seed") != a.get("seed"):
         notes.append("a different random seed (different trips)")
 
+    # Disruptions beyond closures and accidents
+    for kind, describe in (("floods", _flood_text), ("failures", _failure_text)):
+        only_b = [x for x in b.get(kind) or [] if x not in (a.get(kind) or [])]
+        only_a = [x for x in a.get(kind) or [] if x not in (b.get(kind) or [])]
+        notes += [describe(x) for x in only_b]
+        notes += [describe(x, absent=True) for x in only_a]
+
+    if _signals_text(b.get("signals")) != _signals_text(a.get("signals")):
+        notes.append(f"{_signals_text(b.get('signals'))} instead of {_signals_text(a.get('signals'))}")
+    elif (b.get("signals") or None) != (a.get("signals") or None):
+        notes.append("traffic signals set up differently")
+
+    groups_a, groups_b = _groups(a.get("emergencies")), _groups(b.get("emergencies"))
+    if groups_a != groups_b:
+        count_a = sum(g.get("count", 0) for g in groups_a)
+        count_b = sum(g.get("count", 0) for g in groups_b)
+        notes.append(f"{count_b} emergencies instead of {count_a}" if count_a != count_b
+                     else "emergencies set up differently")
+
+    if b.get("max_seconds", 3600) != a.get("max_seconds", 3600):
+        notes.append(f"a time limit of {b.get('max_seconds', 3600) / 60:.0f} min instead of "
+                     f"{a.get('max_seconds', 3600) / 60:.0f} min")
+
+    # Anything else that differs is named, never passed over: two scenarios
+    # are only called the same when their settings are
+    if not notes:
+        other = sorted(k for k in set(_normalised(a)) | set(_normalised(b))
+                       if _normalised(a).get(k) != _normalised(b).get(k))
+        if other:
+            notes.append("different " + ", ".join(k.replace("_", " ") for k in other) + " settings")
+
     return notes
+
+
+def _minutes(seconds):
+    return f"{seconds / 60:.0f}"
+
+
+def _flood_text(flood, absent=False):
+    area = flood.get("area")
+    where = (f"every road within {area['radius_metres']:.0f} m of a point" if area else "")
+    roads = flood.get("roads") or []
+    if roads:
+        where = (where + " and " if where else "") + f"{len(roads)} road{'s' if len(roads) != 1 else ''}"
+    start = flood.get("start_at", 0)
+    return (f"{'no' if absent else 'a'} flood ({flood.get('severity', 'closed')}) over {where}, from minute "
+            f"{_minutes(start)} for {_minutes(flood.get('duration_seconds', 1800))} min")
+
+
+def _failure_text(failure, absent=False):
+    names = failure.get("names")
+    what = ("the bridges on " + ", ".join(names)) if names else "every bridge" + (" in an area" if failure.get("area") else "")
+    end = failure.get("end_at")
+    when = f"from minute {_minutes(failure.get('start_at', 0))}" + (f" to minute {_minutes(end)}" if end else " to the end")
+    return f"{what} in use throughout (the other closes them {when})" if absent else f"{what} out of use {when}"
+
+
+def _signals_text(signals):
+    if not signals or signals.get("controller", "fixed") == "none":
+        return "no traffic signals"
+    kind = "adaptive" if signals.get("controller") == "adaptive" else "fixed-time"
+    return f"{kind} traffic signals" + (" with emergency priority" if signals.get("emergency_priority") else "")
+
+
+def _groups(emergencies):
+    if emergencies is None:
+        return []
+    groups = emergencies if isinstance(emergencies, list) else [emergencies]
+    return [g for g in groups if g.get("count", 0)]
+
+
+def _normalised(spec):
+    """A spec with its defaults filled in, without what does not change how
+    it runs (its name, and whether accessibility was also measured)."""
+    from backend.scenarios.spec import ScenarioSpec
+
+    try:
+        full = ScenarioSpec.model_validate(spec).model_dump(mode="json")
+    except Exception:  # noqa: BLE001 - a partial or older spec: its settings over the defaults
+        full = {**ScenarioSpec().model_dump(mode="json"), **spec}
+    full["traffic_model"] = full.get("traffic_model") or "simple"
+    for key in ("name", "resilience"):
+        full.pop(key, None)
+    return full
 
 
 def explain(items, metric=DEFAULT_METRIC, road_name=None):
