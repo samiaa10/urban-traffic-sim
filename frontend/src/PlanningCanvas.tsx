@@ -5,7 +5,8 @@
 // layout's real values to the next.
 
 import { useEffect, useRef } from "react"
-import maplibregl, { type Map as MapLibreMap } from "maplibre-gl"
+import maplibregl from "./maplibre.ts"
+import { type Map as MapLibreMap } from "maplibre-gl"
 import "maplibre-gl/dist/maplibre-gl.css"
 
 import type { FeatureCollection } from "./mapData.ts"

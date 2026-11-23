@@ -126,6 +126,17 @@ def run_checks():
     index = request("GET", "/", base=SITE)
     check("NORWICH//SIM" in index, "the frontend is served")
 
+    # The 3D map's worker: browsers only run it as a module worker when it
+    # is served as JavaScript (the build saves it as .js: vite.config.ts)
+    assets = compose("exec", "-T", "frontend", "ls", "/usr/share/nginx/html/assets", capture=True).split()
+    workers = [name for name in assets if name.startswith("maplibre-gl-worker") and name.endswith(".js")]
+    check(len(workers) == 1, "the 3D map's worker is in the build")
+    head = urllib.request.Request(f"{SITE}/assets/{workers[0]}", method="HEAD")
+    with urllib.request.urlopen(head, timeout=30) as response:
+        served_as = response.headers.get("Content-Type", "")
+    check(served_as.startswith(("application/javascript", "text/javascript")),
+          f"the worker is served as JavaScript ({served_as})")
+
     migrate = compose("ps", "--all", "--quiet", "migrate", capture=True).split()
     exit_code = subprocess.run(
         ["docker", "inspect", "--format", "{{.State.ExitCode}}", migrate[0]],
