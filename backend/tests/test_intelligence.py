@@ -339,3 +339,117 @@ def test_the_model_proposes_only_through_the_tool(norwich):
     bad = {"title": "x", "notes": "", "actions": [{"type": "flood", "place": "Narnia"}]}
     with pytest.raises(scenarios.ScenarioError, match="unknown place"):
         scenarios.plan("flood", norwich, provider=ScriptedProvider([tool_reply("propose_scenario", bad)]))
+
+
+# ------------------------------------------------------------
+# A free local model (Ollama)
+# ------------------------------------------------------------
+
+from backend.intelligence.providers import OllamaProvider  # noqa: E402
+
+
+class FakeOllama:
+    """Plays Ollama's /api/chat: records each request, answers in turn."""
+
+    def __init__(self, answers):
+        self.answers = list(answers)
+        self.requests = []
+
+    def __call__(self, url, body, timeout):
+        self.requests.append({"url": url, "body": body, "timeout": timeout})
+        answer = self.answers.pop(0)
+        if isinstance(answer, Exception):
+            raise answer
+        return answer
+
+
+def ollama_says(content="", calls=()):
+    return {"message": {"role": "assistant", "content": content,
+                        "tool_calls": [{"function": {"name": n, "arguments": a}} for n, a in calls]},
+            "done_reason": "stop", "prompt_eval_count": 300, "eval_count": 40}
+
+
+def test_ollama_is_chosen_from_the_environment(monkeypatch):
+    monkeypatch.setenv("AI_PROVIDER", "ollama")
+    monkeypatch.delenv("AI_MODEL", raising=False)
+    monkeypatch.delenv("OLLAMA_BASE_URL", raising=False)
+    provider = providers._environment_provider()
+    assert isinstance(provider, OllamaProvider)
+    assert (provider.base_url, provider.model, provider.timeout) == ("http://localhost:11434", "llama3.2:3b", 120.0)
+    monkeypatch.setenv("OLLAMA_BASE_URL", "http://studio.local:11434/")
+    monkeypatch.setenv("AI_MODEL", "qwen3:4b")
+    provider = providers._environment_provider()
+    assert (provider.base_url, provider.model) == ("http://studio.local:11434", "qwen3:4b")
+    assert provider.status()["provider"] == "ollama"
+
+
+def test_ollama_gets_the_tools_and_the_conversation_in_its_own_format():
+    fake = FakeOllama([ollama_says(calls=[("critical_roads", {})])])
+    provider = OllamaProvider(post=fake)
+    reply = provider.respond("Be careful.", [{"role": "user", "content": "Which roads matter?"}], TOOLS)
+    sent = fake.requests[0]
+    assert sent["url"] == "http://localhost:11434/api/chat" and sent["body"]["stream"] is False
+    assert sent["body"]["messages"] == [{"role": "system", "content": "Be careful."},
+                                        {"role": "user", "content": "Which roads matter?"}]
+    tool = sent["body"]["tools"][0]
+    assert tool["type"] == "function" and tool["function"]["name"] == TOOLS[0]["name"]
+    assert tool["function"]["parameters"] == TOOLS[0]["input_schema"]
+    assert reply.stop_reason == "tool_use" and reply.tool_calls[0].name == "critical_roads"
+    assert reply.usage == {"input_tokens": 300, "output_tokens": 40}
+
+
+def test_tool_results_go_back_to_ollama_as_tool_messages():
+    assistant = [{"type": "text", "text": "Let me check."},
+                 {"type": "tool_use", "id": "ollama-1-0", "name": "coverage_gaps", "input": {"service": "fire"}}]
+    results = [{"type": "tool_result", "tool_use_id": "ollama-1-0", "content": '{"x": 1}'},
+               {"type": "tool_result", "tool_use_id": "ollama-1-0", "content": "bad service", "is_error": True}]
+    converted = OllamaProvider.to_ollama("s", [
+        {"role": "user", "content": "q"}, {"role": "assistant", "content": assistant}, {"role": "user", "content": results},
+    ])
+    assert converted[2] == {"role": "assistant", "content": "Let me check.",
+                            "tool_calls": [{"function": {"name": "coverage_gaps", "arguments": {"service": "fire"}}}]}
+    assert converted[3] == {"role": "tool", "content": '{"x": 1}', "tool_name": "coverage_gaps"}
+    assert converted[4]["content"] == "Error: bad service"
+
+
+def test_arguments_sent_as_text_are_read_and_unreadable_ones_are_caught(norwich):
+    fake = FakeOllama([
+        {"message": {"content": "", "tool_calls": [{"function": {"name": "coverage_gaps",
+            "arguments": '{"service": "police", "target_minutes": 4, "disruption": "none"}'}}]}},
+        {"message": {"content": "", "tool_calls": [{"function": {"name": "coverage_gaps", "arguments": "{oops"}}]}},
+        ollama_says("Police cover is good."),
+    ])
+    out = analyst.answer("Police cover?", norwich, provider=OllamaProvider(post=fake))
+    assert out["mode"] == "ai" and out["model"] == "llama3.2:3b"
+    assert [s["input"]["service"] for s in out["sources"]] == ["police"]
+    # The unreadable call was refused by validation and the model told so
+    refused = fake.requests[2]["body"]["messages"][-1]
+    assert refused["role"] == "tool" and refused["content"].startswith("Error: unknown argument")
+
+
+def test_without_ollama_running_the_rules_answer(norwich):
+    import urllib.error
+
+    down = OllamaProvider(post=FakeOllama([urllib.error.URLError("connection refused")]))
+    out = analyst.answer("Which roads do trips depend on most?", norwich, provider=down)
+    assert out["mode"] == "rules"
+    assert "Ollama is not running at http://localhost:11434" in out["notice"]
+    missing = OllamaProvider(post=FakeOllama([urllib.error.HTTPError("u", 404, "not found", {}, None)]))
+    with pytest.raises(ProviderError, match="ollama pull llama3.2:3b"):
+        missing.respond("s", [{"role": "user", "content": "q"}], [])
+    slow = OllamaProvider(post=FakeOllama([TimeoutError()]))
+    with pytest.raises(ProviderError, match="took too long"):
+        slow.respond("s", [{"role": "user", "content": "q"}], [])
+    with pytest.raises(ProviderError, match="Ollama: model is loading"):
+        OllamaProvider(post=FakeOllama([{"error": "model is loading"}])).respond("s", [], [])
+
+
+def test_a_local_model_proposes_scenarios_through_the_same_checks(norwich):
+    proposal = {"title": "Bridges", "notes": "", "actions": [{"type": "close_bridges"}]}
+    fake = FakeOllama([ollama_says(calls=[("propose_scenario", proposal)])])
+    out = scenarios.plan("Shut the bridges", norwich, provider=OllamaProvider(post=fake))
+    assert out["mode"] == "ai" and out["model"] == "llama3.2:3b"
+    assert out["summary"][-1].startswith("Close the central bridges")
+    bad = {"title": "x", "notes": "", "actions": [{"type": "flood", "place": "Narnia"}]}
+    with pytest.raises(scenarios.ScenarioError, match="unknown place"):
+        scenarios.plan("flood", norwich, provider=OllamaProvider(post=FakeOllama([ollama_says(calls=[("propose_scenario", bad)])])))

@@ -27,11 +27,12 @@ the frontend, and no key is ever sent to the browser.
 
 | Variable | Meaning | Default |
 |---|---|---|
-| `AI_PROVIDER` | `anthropic` or `none` | `anthropic` if `ANTHROPIC_API_KEY` is set, otherwise `none` |
+| `AI_PROVIDER` | `anthropic`, `ollama` or `none` | `anthropic` if `ANTHROPIC_API_KEY` is set, otherwise `none` |
 | `ANTHROPIC_API_KEY` | API key for the Anthropic provider | (unset: built-in rules) |
-| `AI_MODEL` | Model id | `claude-opus-5-5` |
+| `OLLAMA_BASE_URL` | Where Ollama runs (the `ollama` provider) | `http://localhost:11434` |
+| `AI_MODEL` | Model id | `claude-opus-5-5`; with Ollama, `llama3.2:3b` |
 | `AI_EFFORT` | `low`, `medium` or `high` | `medium` |
-| `AI_TIMEOUT_SECONDS` | Per request (the SDK retries twice) | `60` |
+| `AI_TIMEOUT_SECONDS` | Per request (the Anthropic SDK retries twice) | `60`; with Ollama, `120` |
 | `AI_MAX_REQUESTS_PER_MINUTE` | For the whole server | `20` |
 
 On Render, add `ANTHROPIC_API_KEY` to the `norwich-sim-api` service's
@@ -45,6 +46,45 @@ happened and answers with the built-in rules instead. Another vendor can be
 added by implementing `Provider.respond` (a system prompt, a conversation
 in block format and tool schemas in; text and tool calls out). Nothing else
 needs to change.
+
+### A free local model (Ollama)
+
+Ollama runs an open model on your own computer, with no key and no cost.
+The analyst then uses that model in place of Claude, through Ollama's chat
+API with tool calling (`OllamaProvider`). It gets the same tools, the same
+validation and the same fallback to the built-in rules.
+
+1. Install Ollama from ollama.com and start it.
+2. Pull a model that can call tools. `llama3.2:3b` (about 2 GB) runs on an
+   8 GB laptop; on a bigger machine, a larger tool model answers better.
+
+   ```bash
+   ollama pull llama3.2:3b
+   ```
+
+3. Start the backend with the provider chosen:
+
+   ```bash
+   AI_PROVIDER=ollama .venv/bin/python -m uvicorn backend.api.main:app --port 8000
+   ```
+
+   Add `AI_MODEL=...` for another model, and `OLLAMA_BASE_URL=...` if Ollama
+   runs on another computer.
+
+The analyst's header then reads **AI: llama3.2:3b**, and answers are
+labelled **AI-written from calculated results**. If Ollama is not running,
+or the model has not been pulled, each answer falls back to the built-in
+rules and says why (for example "Ollama is not running at
+http://localhost:11434", or "run: ollama pull llama3.2:3b").
+
+Limits of a local model:
+- It only works where the backend runs on a machine with Ollama. Render's
+  free plan cannot host a model, so the live site stays on the built-in
+  rules.
+- Small models follow the tool instructions less reliably than large ones.
+  They may call a tool with wrong arguments (validation refuses it and tells
+  the model) or answer without calling one.
+- On a laptop, an answer can take tens of seconds.
 
 **Not verified here:** no request has been made to a real provider while
 building this. The provider adapter is tested against a stand-in client,

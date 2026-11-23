@@ -14,10 +14,15 @@ provider's adapter translates to and from it.
 Configuration (backend environment variables only; nothing reaches the
 frontend):
 
-    AI_PROVIDER                 "anthropic" or "none". Default: "anthropic"
-                                when ANTHROPIC_API_KEY is set, else "none".
+    AI_PROVIDER                 "anthropic", "ollama" or "none". Default:
+                                "anthropic" when ANTHROPIC_API_KEY is set,
+                                else "none".
     ANTHROPIC_API_KEY           the key for the Anthropic provider.
-    AI_MODEL                    model id (default claude-opus-5-5).
+    OLLAMA_BASE_URL             where Ollama runs (default
+                                http://localhost:11434): a free model on your
+                                own machine, no key.
+    AI_MODEL                    model id (default claude-opus-5-5, or
+                                llama3.2:3b with Ollama).
     AI_EFFORT                   low / medium / high (default medium).
     AI_TIMEOUT_SECONDS          per request (default 60).
     AI_MAX_REQUESTS_PER_MINUTE  for the whole server (default 20).
@@ -41,6 +46,9 @@ DEFAULT_MODEL = "claude-opus-5-5"
 DEFAULT_EFFORT = "medium"
 DEFAULT_TIMEOUT = 60.0
 DEFAULT_RATE = 20
+DEFAULT_OLLAMA_URL = "http://localhost:11434"
+# Small enough for an 8 GB laptop, and able to call tools
+DEFAULT_OLLAMA_MODEL = "llama3.2:3b"
 MAX_TOKENS = 16000
 
 # Refusals: the API retries the request on a fallback model itself
@@ -175,6 +183,116 @@ class AnthropicProvider(Provider):
         return Reply(text, calls, response.stop_reason, list(response.content), usage)
 
 
+class OllamaProvider(Provider):
+    """A model running locally in Ollama (free, no key), through its chat
+    API with tool calling. The conversation's blocks are translated to
+    Ollama's messages and back; tool calls come back as ToolCalls exactly
+    as from any other provider, so the same validation applies."""
+
+    name = "ollama"
+
+    def __init__(self, base_url=DEFAULT_OLLAMA_URL, model=DEFAULT_OLLAMA_MODEL, timeout=DEFAULT_TIMEOUT,
+                 limiter=None, post=None):
+        self.base_url = base_url.rstrip("/")
+        self.model = model
+        self.timeout = timeout
+        self.limiter = limiter or RateLimiter(DEFAULT_RATE)
+        self.post = post or self._post
+        self.available = True
+        self.reason = None
+
+    def _post(self, url, body, timeout):
+        import json
+        import urllib.request
+
+        request = urllib.request.Request(
+            url, data=json.dumps(body).encode(), headers={"Content-Type": "application/json"}, method="POST",
+        )
+        with urllib.request.urlopen(request, timeout=timeout) as response:
+            return json.load(response)
+
+    @staticmethod
+    def to_ollama(system, messages):
+        """The conversation in Ollama's message format."""
+        out = [{"role": "system", "content": system}]
+        names = {}   # tool_use id -> tool name (Ollama's tool messages name the tool)
+        for message in messages:
+            role, content = message["role"], message["content"]
+            if isinstance(content, str):
+                out.append({"role": role, "content": content})
+                continue
+            if role == "assistant":
+                text = "".join(b.get("text", "") for b in content if b.get("type") == "text")
+                calls = []
+                for block in content:
+                    if block.get("type") == "tool_use":
+                        names[block["id"]] = block["name"]
+                        calls.append({"function": {"name": block["name"], "arguments": block["input"]}})
+                entry = {"role": "assistant", "content": text}
+                if calls:
+                    entry["tool_calls"] = calls
+                out.append(entry)
+                continue
+            for block in content:
+                if block.get("type") == "tool_result":
+                    result = block.get("content", "")
+                    if block.get("is_error"):
+                        result = f"Error: {result}"
+                    out.append({"role": "tool", "content": result, "tool_name": names.get(block.get("tool_use_id"), "")})
+                elif block.get("type") == "text":
+                    out.append({"role": role, "content": block["text"]})
+        return out
+
+    def respond(self, system, messages, tools):
+        import json
+        import socket
+        import urllib.error
+
+        self.limiter.acquire()
+        body = {
+            "model": self.model,
+            "messages": self.to_ollama(system, messages),
+            "tools": [{"type": "function", "function": {
+                "name": t["name"], "description": t["description"], "parameters": t["input_schema"],
+            }} for t in tools],
+            "stream": False,
+        }
+        try:
+            data = self.post(f"{self.base_url}/api/chat", body, self.timeout)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise ProviderError(f"Ollama has no model {self.model} (run: ollama pull {self.model})") from None
+            raise ProviderError(f"Ollama returned an error ({error.code})", retryable=error.code >= 500) from None
+        except (socket.timeout, TimeoutError):
+            raise ProviderError("The local model took too long to answer", retryable=True) from None
+        except (urllib.error.URLError, ConnectionError, OSError):
+            raise ProviderError(f"Ollama is not running at {self.base_url}", retryable=True) from None
+        except ValueError:
+            raise ProviderError("Ollama sent an answer that could not be read") from None
+
+        if not isinstance(data, dict) or "error" in data:
+            message = data.get("error") if isinstance(data, dict) else None
+            raise ProviderError(f"Ollama: {message}" if message else "Ollama sent no answer")
+        message = data.get("message") or {}
+        text = message.get("content") or ""
+        calls, content = [], ([{"type": "text", "text": text}] if text else [])
+        for i, call in enumerate(message.get("tool_calls") or []):
+            function = call.get("function") or {}
+            arguments = function.get("arguments") or {}
+            if isinstance(arguments, str):
+                try:
+                    arguments = json.loads(arguments)
+                except ValueError:
+                    arguments = {"_unreadable": arguments}
+            if not isinstance(arguments, dict):
+                arguments = {"_unreadable": arguments}
+            ident = f"ollama-{len(messages)}-{i}"
+            calls.append(ToolCall(ident, function.get("name", ""), arguments))
+            content.append({"type": "tool_use", "id": ident, "name": function.get("name", ""), "input": arguments})
+        usage = {"input_tokens": data.get("prompt_eval_count"), "output_tokens": data.get("eval_count")}
+        return Reply(text, calls, "tool_use" if calls else (data.get("done_reason") or "stop"), content, usage)
+
+
 _provider = None
 _provider_lock = threading.Lock()
 
@@ -186,8 +304,19 @@ def _environment_provider():
         choice = "anthropic" if key else "none"
     if choice == "none":
         return NoProvider()
+    if choice == "ollama":
+        try:
+            timeout = float(os.environ.get("AI_TIMEOUT_SECONDS", 120))
+            rate = int(os.environ.get("AI_MAX_REQUESTS_PER_MINUTE", DEFAULT_RATE))
+        except ValueError:
+            return NoProvider("AI_TIMEOUT_SECONDS or AI_MAX_REQUESTS_PER_MINUTE is not a number")
+        return OllamaProvider(
+            os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).strip() or DEFAULT_OLLAMA_URL,
+            os.environ.get("AI_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL,
+            timeout=timeout, limiter=RateLimiter(max(1, rate)),
+        )
     if choice != "anthropic":
-        return NoProvider(f"Unknown AI_PROVIDER {choice!r} (supported: anthropic, none)")
+        return NoProvider(f"Unknown AI_PROVIDER {choice!r} (supported: anthropic, ollama, none)")
     if not key:
         return NoProvider("AI_PROVIDER is anthropic but ANTHROPIC_API_KEY is not set")
     try:
