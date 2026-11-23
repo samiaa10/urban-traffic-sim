@@ -34,7 +34,7 @@ Measured on the real Norwich network (5,058 junctions, 10,980 roads); each figur
 | Command centre | incidents reported on the 3D map; units sent by road travel time from the 7 OpenStreetMap fire and police stations and 3 optimised ambulance standby points, tracked through live traffic, with timelines, response figures and replay ([details](docs/COMMAND_CENTRE.md)) |
 | City Analyst | questions about coverage, bottlenecks, closures, station sites, live runs and saved studies, answered from 8 read-only calculations; scenarios described in words, proposed, confirmed, then run on the engine; works without an AI provider ([details](docs/AI.md)) |
 | Digital twin | the sun over Norwich at any hour, live Open-Meteo weather, open terrain data, census population and coverage in 3D, viewpoints and fly-over, automatic performance mode ([details](docs/DIGITAL_TWIN.md)) |
-| Tests | 966 backend tests (129 of them on a real PostgreSQL), 183 frontend logic tests, 124 interaction tests and 21 end-to-end tests in a real browser; 5 CI jobs on every push |
+| Tests | 998 backend tests (129 of them on a real PostgreSQL), 197 frontend logic tests, 134 interaction tests and 25 end-to-end tests in a real browser; 5 CI jobs on every push |
 
 ## How it fits together
 
@@ -323,7 +323,7 @@ createdb norwich_sim_test
 TEST_DATABASE_URL=postgresql://<user>:<password>@localhost:5432/norwich_sim_test python -m pytest backend/tests -v
 ```
 
-Without `TEST_DATABASE_URL` they are skipped: **837 tests pass and 129 are skipped**; with it, **all 966 run** (counted on 2026-11-22). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
+Without `TEST_DATABASE_URL` they are skipped: **869 tests pass and 129 are skipped**; with it, **all 998 run** (counted on 2026-11-23). Setting `REQUIRE_DATABASE_TESTS=1` (as CI does) makes a missing database a failure instead of a skip.
 
 What they cover: Dijkstra/A\* agreement, the travel-time router against a reference Dijkstra with random slowdowns, landmark bounds, accidents (speed, capacity, expiry), real road lengths, dynamic rerouting (event-driven and routine, thresholds, cooldown, damping against an undamped policy, reacting before moving), fleets, surges, the demand model, a combined scenario checked every simulated second (fleet + surge + accident + closure and reopening), road closures, rerouting, vehicles slowing in traffic and the longer journey times that result, emergency dispatch and response time, the road-ahead closure scenario, the single- and multiple-station optimiser (including a check against trying every possible set of stations), the congestion benchmark's logic, and every API endpoint: normal use, missing simulation, unknown junctions, bad or missing parameters, one-way roads, closed roads and unreachable places. Stage 3 added: runs kept apart (closures, accidents, fleets, time, emergencies), the per-run endpoints answering exactly like the originals, overlapping requests for one run all applied once, the live-run limit, and the Docker files and CI workflow agreeing with the code. The database tests cover the migrations (upgrade, downgrade, upgrade again, models matching), every rule the database enforces, a run's whole saved history through the API, restarts (live runs come back `interrupted` with their history), a database failing at start and mid-run, zero SQL statements on quiet steps, and saved optimiser results coming back identical.
 
@@ -354,7 +354,7 @@ E2E_DATABASE_URL=postgresql://norwich:norwich@localhost:5432/norwich_sim_e2e_tes
 CI (`.github/workflows/tests.yml`) runs:
 
 - the backend tests on Python 3.11 and 3.12, each with a PostgreSQL 16 service container, after `alembic upgrade head` and `alembic check` (models and migrations agree), with every database test required to run;
-- for the frontend: lint, build, the logic tests (`npm run test:unit`, 183) and the interaction tests (`npm run test:ui`, 124), as separate steps;
+- for the frontend: lint, build, the logic tests (`npm run test:unit`, 197) and the interaction tests (`npm run test:ui`, 134), as separate steps;
 - the end-to-end tests (`npm run test:e2e`) in Chromium against the backend installed from `requirements-deploy.txt`, with a PostgreSQL 16 service container;
 - a Docker job: builds both images, starts the Compose stack and runs `scripts/compose_smoke_test.py` (including a scenario study run by the worker processes).
 
