@@ -289,21 +289,28 @@ def plan(text, context, provider=None):
         raise ScenarioError("Describe the scenario in at most 600 characters")
     provider = provider or get_provider()
     notice = None
-    raw, mode, model = None, "rules", None
+    proposal, mode, model = None, "rules", None
     if provider.available:
         try:
             reply = provider.respond(PLANNER_SYSTEM, [{"role": "user", "content": text}], [PROPOSE_TOOL])
             call = next((c for c in reply.tool_calls if c.name == "propose_scenario"), None)
             if call is None:
-                raise ScenarioError(reply.text.strip() or "The AI model could not turn that into a supported scenario")
-            raw, mode, model = call.input, "ai", provider.model
+                notice = (f"The AI model ({provider.model}) gave no proposal"
+                          + (f" (it said: {reply.text.strip()[:160]})" if reply.text.strip() else "")
+                          + ", so the built-in rules read the request.")
+            else:
+                try:
+                    proposal = validate(call.input, context.graph, context.network)
+                    mode, model = "ai", provider.model
+                except ScenarioError as error:
+                    notice = (f"The AI model's proposal was not valid ({error}), so the built-in rules "
+                              "read the request.")
         except ProviderError as error:
             notice = f"The AI model could not answer ({error.reason}), so the built-in rules read the request."
     else:
         notice = "No AI model is configured, so the built-in rules read the request (docs/AI.md)."
-    if raw is None:
-        raw = rule_plan(text, context.graph)
-    proposal = validate(raw, context.graph, context.network)
+    if proposal is None:
+        proposal = validate(rule_plan(text, context.graph), context.graph, context.network)
     return plain({
         "proposal": proposal,
         "summary": [describe(a) for a in proposal["actions"]],

@@ -77,6 +77,38 @@ or the model has not been pulled, each answer falls back to the built-in
 rules and says why (for example "Ollama is not running at
 http://localhost:11434", or "run: ollama pull llama3.2:3b").
 
+**Tried for real (2026-11-23, `llama3.2:3b` on an 8 GB Apple M1, six
+example questions and four example scenarios):**
+- Each answer took 5 to 26 s.
+- Before the checks below were added, the model sometimes answered without
+  running any calculation and **invented figures**, for example roads and
+  waiting times that no calculation produced. It also wrote its scenario
+  "tool calls" as malformed text.
+- With the checks, every answer was either backed by a calculation or
+  replaced by the rules' answer with a notice:
+  - **Questions:** 3 of 6 were answered by the model, with calculations
+    behind them, though not always well chosen (it checked fire station
+    sites with the bridges closed). The other 3 were replaced because it ran
+    no calculation.
+  - **Scenarios:** all 4 were read by the rules, because the model's
+    proposals were not valid.
+
+So a 3B model mostly hands over to the rules. A larger tool-calling model
+(on a machine with more memory) or the Anthropic provider is needed for the
+AI to add much.
+
+**Checks that apply to every provider:**
+- An AI answer is passed on only if it ran at least one calculation, and
+  every figure in it comes from those results (or the question). Small whole
+  numbers are allowed, and so are rounded values and seconds written as
+  minutes. Otherwise the built-in rules answer, with a notice naming the
+  unsupported figures.
+- A scenario proposal that is missing or invalid is replaced by the rules'
+  reading of the request, also with a notice.
+- These checks catch invented numbers, not every wrong statement. An AI
+  answer can still describe correct figures badly, and its label says it
+  was AI-written.
+
 Limits of a local model:
 - It only works where the backend runs on a machine with Ollama. Render's
   free plan cannot host a model, so the live site stays on the built-in

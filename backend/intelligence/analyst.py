@@ -187,6 +187,61 @@ def rule_answer(tool, result):
             "a bridge closure, live bottlenecks, why a simulation performed as it did, or saved scenario studies.")
 
 
+NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
+
+
+def _numbers(value, out):
+    """Every number in a calculation's result (values, and figures inside its text)."""
+    if isinstance(value, bool) or value is None:
+        return out
+    if isinstance(value, (int, float)):
+        out.add(float(value))
+    elif isinstance(value, str):
+        for match in NUMBER.findall(value):
+            try:
+                out.add(float(match.replace(",", "")))
+            except ValueError:
+                pass
+    elif isinstance(value, dict):
+        for item in value.values():
+            _numbers(item, out)
+    elif isinstance(value, (list, tuple)):
+        for item in value:
+            _numbers(item, out)
+    return out
+
+
+def _matches(figure, value):
+    """A figure written from a value: as it is, rounded, or seconds as minutes."""
+    for candidate in (value, value / 60):
+        for places in (0, 1, 2):
+            if abs(round(candidate, places) - figure) < 1e-9:
+                return True
+    return False
+
+
+def ungrounded_figures(text, sources, question=""):
+    """Figures in an answer that no calculation produced (small whole
+    numbers, which also number lists, are allowed). Empty when every figure
+    comes from a tool result or the question."""
+    allowed = set()
+    for source in sources:
+        _numbers(source["result"], allowed)
+        _numbers(source["input"], allowed)
+    _numbers(question, allowed)
+    bad = []
+    for match in NUMBER.findall(text):
+        try:
+            figure = float(match.replace(",", ""))
+        except ValueError:
+            continue
+        if figure.is_integer() and 0 <= figure <= 10:
+            continue
+        if not any(_matches(figure, value) for value in allowed):
+            bad.append(match)
+    return bad
+
+
 def _source(tool, arguments, result):
     return {"tool": tool, "input": arguments, "provenance": "calculated", "result": result}
 
@@ -204,7 +259,19 @@ def answer(question, context, simulation_id=None, history=None, provider=None):
 
     if provider.available:
         try:
-            return _ask_model(question, toolbox, provider, history or [])
+            result = _ask_model(question, toolbox, provider, history or [])
+            bad = ungrounded_figures(result["answer"], result["sources"], question)
+            if result["sources"] and not bad:
+                return result
+            # Never pass on an answer no calculation backs: the rules answer instead
+            if not result["sources"]:
+                notice = ("The AI model answered without running any calculation, so its answer was "
+                          "replaced by the built-in rules' answer.")
+            else:
+                shown = ", ".join(bad[:4]) + ("…" if len(bad) > 4 else "")
+                notice = (f"The AI model's answer gave figures no calculation produced ({shown}), so it was "
+                          "replaced by the built-in rules' answer.")
+            logger.info("AI analyst answer rejected: %s", notice)
         except ProviderError as error:
             notice = f"The AI model could not answer ({error.reason}), so this answer comes from the built-in rules."
             logger.info("AI analyst fell back to rules: %s", error.reason)

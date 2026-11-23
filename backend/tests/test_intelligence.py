@@ -208,7 +208,8 @@ def test_a_bad_tool_call_goes_back_to_the_model_as_an_error(norwich):
     out = analyst.answer("Lifeboat cover?", norwich, provider=provider)
     result = provider.calls[1]["messages"][-1]["content"][0]
     assert result["is_error"] is True and "service must be one of" in result["content"]
-    assert out["sources"] == []
+    # No calculation succeeded, so the model's answer is not passed on
+    assert out["mode"] == "rules" and "without running any calculation" in out["notice"]
 
 
 def test_the_rules_answer_when_the_provider_fails(norwich):
@@ -332,13 +333,15 @@ def test_the_model_proposes_only_through_the_tool(norwich):
     assert [t["name"] for t in tools] == ["propose_scenario"]
     places = tools[0]["input_schema"]["properties"]["actions"]["items"]["properties"]["place"]["enum"]
     assert "the city centre" in places
-    # A model that declines in words: its explanation, nothing proposed
-    with pytest.raises(scenarios.ScenarioError, match="cannot simulate earthquakes"):
+    # A model that declines in words: the rules read the request, and say
+    # what they cannot simulate
+    with pytest.raises(scenarios.ScenarioError, match="nothing they can simulate"):
         scenarios.plan("Earthquake", norwich, provider=ScriptedProvider([text_reply("I cannot simulate earthquakes.")]))
-    # An invented place from a model is refused like any other
+    # An invented place from a model is refused; the rules read the request instead
     bad = {"title": "x", "notes": "", "actions": [{"type": "flood", "place": "Narnia"}]}
-    with pytest.raises(scenarios.ScenarioError, match="unknown place"):
-        scenarios.plan("flood", norwich, provider=ScriptedProvider([tool_reply("propose_scenario", bad)]))
+    out = scenarios.plan("flood in the city centre", norwich, provider=ScriptedProvider([tool_reply("propose_scenario", bad)]))
+    assert out["mode"] == "rules" and "not valid (unknown place 'Narnia')" in out["notice"]
+    assert [a["type"] for a in out["proposal"]["actions"]] == ["traffic", "flood"]
 
 
 # ------------------------------------------------------------
@@ -450,6 +453,44 @@ def test_a_local_model_proposes_scenarios_through_the_same_checks(norwich):
     out = scenarios.plan("Shut the bridges", norwich, provider=OllamaProvider(post=fake))
     assert out["mode"] == "ai" and out["model"] == "llama3.2:3b"
     assert out["summary"][-1].startswith("Close the central bridges")
-    bad = {"title": "x", "notes": "", "actions": [{"type": "flood", "place": "Narnia"}]}
-    with pytest.raises(scenarios.ScenarioError, match="unknown place"):
-        scenarios.plan("flood", norwich, provider=OllamaProvider(post=FakeOllama([ollama_says(calls=[("propose_scenario", bad)])])))
+    # A small model that writes its "tool call" as text gives no proposal: the rules read it
+    garbled = '{"name": "propose_scenario", "parameters": {"actions": "[{\\"type\\": \\"close_bridges\\"}"}}'
+    out = scenarios.plan("Close a major bridge", norwich, provider=OllamaProvider(post=FakeOllama([ollama_says(garbled)])))
+    assert out["mode"] == "rules" and "gave no proposal" in out["notice"]
+    assert out["summary"][-1].startswith("Close the central bridges")
+
+
+# ------------------------------------------------------------
+# Never passing on a figure no calculation produced
+# ------------------------------------------------------------
+
+def test_figures_must_come_from_the_calculations():
+    sources = [{"tool": "coverage_gaps", "input": {"target_minutes": 4},
+                "result": {"summary": {"population_within_target_percent": 91.6254, "mean_seconds": 150.4},
+                           "method": "Census 2021", "worst": [{"residents_beyond_target": 1081}]}}]
+    assert analysis_ok("91.6% of residents within 4 minutes; 1,081 beyond, mean 2.5 min (Census 2021)", sources)
+    assert analyst.ungrounded_figures("A 30% drop and 43 seconds of waiting", sources) == ["30", "43"]
+    assert analyst.ungrounded_figures("Three areas, 2 of them central", []) == []
+    assert analyst.ungrounded_figures("Fire cover is 97.7%", []) == ["97.7"]
+
+
+def analysis_ok(text, sources):
+    return analyst.ungrounded_figures(text, sources) == []
+
+
+def test_an_answer_with_invented_figures_is_replaced_by_the_rules(norwich):
+    provider = ScriptedProvider([
+        tool_reply("critical_roads", {}),
+        text_reply("The worst junction is St Edmunds Road, with 43 seconds of waiting."),
+    ])
+    out = analyst.answer("Where are the biggest traffic bottlenecks?", norwich, provider=provider)
+    assert out["mode"] == "rules" and out["sources"][0]["tool"] == "critical_roads"
+    assert "figures no calculation produced (43)" in out["notice"]
+    assert "St Edmunds" not in out["answer"]
+
+
+def test_an_answer_with_no_calculation_behind_it_is_replaced(norwich):
+    provider = ScriptedProvider([text_reply("Stations should be near population centres.")])
+    out = analyst.answer("Which emergency station locations would improve fire coverage?", norwich, provider=provider)
+    assert out["mode"] == "rules" and "without running any calculation" in out["notice"]
+    assert out["sources"][0]["tool"] == "recommend_station"
