@@ -230,6 +230,10 @@ def test_the_rules_answer_when_the_provider_fails(norwich):
     ("Which emergency station locations would improve coverage?", "recommend_station"),
     ("Why did this simulation perform poorly?", "run_report"),
     ("Which scenario produced the best results?", "scenario_results"),
+    ("Where is fire cover weakest?", "coverage_gaps"),
+    ("Is the north of the city well covered by police?", "coverage_gaps"),
+    ("How long does it take an ambulance to reach Bowthorpe?", "coverage_gaps"),
+    ("Which roads are the weakest links?", "critical_roads"),
 ])
 def test_the_rules_route_each_kind_of_question(norwich, question, tool):
     assert analyst.choose_tool(question, norwich.graph, has_run=False)[0] == tool
@@ -300,6 +304,15 @@ def test_the_rules_turn_requests_into_supported_actions(norwich, text, types):
     raw = scenarios.rule_plan(text, norwich.graph)
     checked = scenarios.validate(raw, norwich.graph, norwich.network)
     assert [a["type"] for a in checked["actions"]] == types
+
+
+def test_the_rules_read_the_direction_of_a_rush_hour(norwich):
+    def direction(text):
+        return next(a for a in scenarios.rule_plan(text, norwich.graph)["actions"] if a["type"] == "surge")["direction"]
+
+    assert direction("An evening rush hour into the city centre") == "inbound"
+    assert direction("An evening rush hour") == "outbound"
+    assert direction("A morning rush hour") == "inbound"
 
 
 def test_the_rules_say_when_nothing_can_be_simulated(norwich):
@@ -379,11 +392,14 @@ def test_ollama_is_chosen_from_the_environment(monkeypatch):
     provider = providers._environment_provider()
     assert isinstance(provider, OllamaProvider)
     assert (provider.base_url, provider.model, provider.timeout) == ("http://localhost:11434", "llama3.2:3b", 120.0)
+    # Only an Ollama on this machine, unless explicitly allowed
     monkeypatch.setenv("OLLAMA_BASE_URL", "http://studio.local:11434/")
     monkeypatch.setenv("AI_MODEL", "qwen3:4b")
+    refused = providers._environment_provider()
+    assert isinstance(refused, NoProvider) and "must be on this machine" in refused.reason
+    monkeypatch.setenv("OLLAMA_ALLOW_REMOTE", "1")
     provider = providers._environment_provider()
     assert (provider.base_url, provider.model) == ("http://studio.local:11434", "qwen3:4b")
-    assert provider.status()["provider"] == "ollama"
 
 
 def test_ollama_gets_the_tools_and_the_conversation_in_its_own_format():
@@ -415,49 +431,347 @@ def test_tool_results_go_back_to_ollama_as_tool_messages():
     assert converted[4]["content"] == "Error: bad service"
 
 
-def test_arguments_sent_as_text_are_read_and_unreadable_ones_are_caught(norwich):
-    fake = FakeOllama([
-        {"message": {"content": "", "tool_calls": [{"function": {"name": "coverage_gaps",
-            "arguments": '{"service": "police", "target_minutes": 4, "disruption": "none"}'}}]}},
-        {"message": {"content": "", "tool_calls": [{"function": {"name": "coverage_gaps", "arguments": "{oops"}}]}},
-        ollama_says("Police cover is good."),
-    ])
-    out = analyst.answer("Police cover?", norwich, provider=OllamaProvider(post=fake))
-    assert out["mode"] == "ai" and out["model"] == "llama3.2:3b"
-    assert [s["input"]["service"] for s in out["sources"]] == ["police"]
-    # The unreadable call was refused by validation and the model told so
-    refused = fake.requests[2]["body"]["messages"][-1]
-    assert refused["role"] == "tool" and refused["content"].startswith("Error: unknown argument")
+def tags(*models):
+    """Plays Ollama's /api/tags: which models are downloaded."""
+    return lambda url, timeout: {"models": [{"name": m, "model": m} for m in models]}
 
 
-def test_without_ollama_running_the_rules_answer(norwich):
+def down(url, timeout):
     import urllib.error
 
-    down = OllamaProvider(post=FakeOllama([urllib.error.URLError("connection refused")]))
-    out = analyst.answer("Which roads do trips depend on most?", norwich, provider=down)
-    assert out["mode"] == "rules"
-    assert "Ollama is not running at http://localhost:11434" in out["notice"]
-    missing = OllamaProvider(post=FakeOllama([urllib.error.HTTPError("u", 404, "not found", {}, None)]))
-    with pytest.raises(ProviderError, match="ollama pull llama3.2:3b"):
-        missing.respond("s", [{"role": "user", "content": "q"}], [])
-    slow = OllamaProvider(post=FakeOllama([TimeoutError()]))
-    with pytest.raises(ProviderError, match="took too long"):
-        slow.respond("s", [{"role": "user", "content": "q"}], [])
-    with pytest.raises(ProviderError, match="Ollama: model is loading"):
-        OllamaProvider(post=FakeOllama([{"error": "model is loading"}])).respond("s", [], [])
+    raise urllib.error.URLError("connection refused")
 
 
-def test_a_local_model_proposes_scenarios_through_the_same_checks(norwich):
-    proposal = {"title": "Bridges", "notes": "", "actions": [{"type": "close_bridges"}]}
-    fake = FakeOllama([ollama_says(calls=[("propose_scenario", proposal)])])
-    out = scenarios.plan("Shut the bridges", norwich, provider=OllamaProvider(post=fake))
+def local(answers, model="llama3.2:3b", **kwargs):
+    """An Ollama provider on a fake Ollama that has the model."""
+    fake = FakeOllama(answers)
+    return OllamaProvider(model=model, post=fake, get=tags(model), **kwargs), fake
+
+
+def structured(value):
+    import json
+
+    return {"message": {"role": "assistant", "content": json.dumps(value)}, "done_reason": "stop"}
+
+
+def calc(tool, **fields):
+    return {"tool": tool, "service": "fire", "target_minutes": 0, "stations": 3, "roads": [],
+            "central_bridges": False, "disruption": "none", **fields}
+
+
+def planned(*calculations, intent="answer", scenario="", reply=""):
+    return structured({"intent": intent, "calculations": list(calculations), "scenario": scenario, "reply": reply})
+
+
+def test_the_status_says_whether_the_local_model_is_really_there():
+    assert OllamaProvider(get=tags("llama3.2:3b")).status() == {
+        "provider": "ollama", "model": "llama3.2:3b", "available": True, "reason": None, "local": True}
+    missing = OllamaProvider(model="qwen3:4b", get=tags("llama3.2:3b")).status()
+    assert missing["available"] is False and "ollama pull qwen3:4b" in missing["reason"]
+    assert "Ollama is not running" in OllamaProvider(get=down).status()["reason"]
+
+
+def test_the_local_model_plans_the_calculations_and_explains_the_facts(norwich):
+    provider, fake = local([
+        planned(calc("coverage_gaps", target_minutes=4), calc("recommend_station", target_minutes=4)),
+        ollama_says("Bowthorpe is the weakest area, and one new station near it would lift cover from 91.6% to 97.7%."),
+    ])
+    out = analyst.answer("Where is fire cover weakest, and what would one new station do?", norwich, provider=provider)
     assert out["mode"] == "ai" and out["model"] == "llama3.2:3b"
-    assert out["summary"][-1].startswith("Close the central bridges")
-    # A small model that writes its "tool call" as text gives no proposal: the rules read it
-    garbled = '{"name": "propose_scenario", "parameters": {"actions": "[{\\"type\\": \\"close_bridges\\"}"}}'
-    out = scenarios.plan("Close a major bridge", norwich, provider=OllamaProvider(post=FakeOllama([ollama_says(garbled)])))
-    assert out["mode"] == "rules" and "gave no proposal" in out["notice"]
-    assert out["summary"][-1].startswith("Close the central bridges")
+    assert [s["tool"] for s in out["sources"]] == ["coverage_gaps", "recommend_station"]
+    # The facts are the calculations' own write-ups, exact
+    assert out["facts"][0]["text"] == analyst.rule_answer("coverage_gaps", out["sources"][0]["result"])
+    assert "97.7%" in out["facts"][1]["text"]
+    assert out["explanation"].startswith("Bowthorpe is the weakest") and out["explanation_note"] is None
+    # The plan was held to the schema; tools offered only by name
+    first = fake.requests[0]["body"]
+    assert first["format"]["properties"]["calculations"]["items"]["properties"]["tool"]["enum"][0] == "coverage_gaps"
+    assert first["options"]["temperature"] == 0 and first["keep_alive"] == "15m" and "tools" not in first
+    assert "CALCULATED FACTS" in fake.requests[1]["body"]["messages"][-1]["content"]
+
+
+def test_the_facts_are_shown_before_the_model_explains_them(norwich):
+    provider, fake = local([
+        planned(calc("coverage_gaps", target_minutes=4)),
+        ollama_says("Bowthorpe is the weakest area."),
+    ])
+    events = []
+    for event in analyst.answer_stream("Where is fire cover weakest?", norwich, provider=provider):
+        events.append((event["stage"], len(fake.requests)))
+        if event["stage"] == "calculated":
+            early = event["answer"]
+    # The facts arrive after the plan (one model call) and before the explanation (the second)
+    assert events == [("planning", 0), ("calculated", 1), ("explaining", 1), ("done", 2)]
+    assert early["pending"] is True and early["explanation"] is None
+    assert early["facts"][0]["tool"] == "coverage_gaps"
+
+    # A proposal is drafted between the facts and the explanation
+    proposal = {"supported": True, "title": "Flood", "notes": "", "explanation": "Roads near Riverside close.",
+                "actions": [{"type": "flood", "place": "Riverside"}]}
+    provider, _ = local([planned(calc("flood_vulnerability"), intent="simulate", scenario="A flood at Riverside"),
+                         structured(proposal), ollama_says("Riverside floods.")])
+    stages = [e["stage"] for e in analyst.answer_stream("Simulate a flood at Riverside", norwich, provider=provider)]
+    assert stages == ["planning", "calculated", "proposing", "explaining", "done"]
+
+    # Without the model: only the rules' answer
+    provider = OllamaProvider(get=down)
+    assert [e["stage"] for e in analyst.answer_stream("Where is fire cover weakest?", norwich, provider=provider)] == ["done"]
+
+
+def test_an_explanation_with_invented_figures_is_retried_then_withheld(norwich):
+    provider, fake = local([
+        planned(calc("critical_roads")),
+        ollama_says("Dereham Road carries 987% of trips."),
+        ollama_says("It carries 988% of them."),
+    ])
+    out = analyst.answer("Which roads matter most?", norwich, provider=provider)
+    assert out["mode"] == "ai" and out["explanation"] is None
+    assert "figures or roads no calculation produced (988)" in out["explanation_note"]
+    assert "figures or roads that are not in the facts (987)" in fake.requests[2]["body"]["messages"][-1]["content"]
+    # The facts still stand
+    assert out["facts"][0]["tool"] == "critical_roads" and "Dereham Road" in out["facts"][0]["text"]
+
+    provider, _ = local([planned(calc("critical_roads")), ollama_says("Dereham Road carries 987%."),
+                         ollama_says("Dereham Road carries the most trips.")])
+    assert analyst.answer("Which roads matter most?", norwich, provider=provider)["explanation"] == \
+        "Dereham Road carries the most trips."
+
+
+def test_a_sentence_with_an_invented_figure_is_removed_without_asking_again(norwich):
+    provider, fake = local([
+        planned(calc("critical_roads")),
+        ollama_says("Dereham Road carries the most trips. It handles 987 lorries a day. "
+                    "Closing it would push trips onto other roads. Planners could simulate that closure."),
+    ])
+    out = analyst.answer("Which roads matter most?", norwich, provider=provider)
+    assert len(fake.requests) == 2   # no second explanation was needed
+    assert out["explanation"] == ("Dereham Road carries the most trips. Closing it would push trips onto other roads. "
+                                  "Planners could simulate that closure.")
+    assert out["explanation_note"] == "1 sentence of the explanation used figures or roads no calculation produced (987) and was removed."
+    assert "987" not in out["answer"]
+
+
+def test_a_calculated_figure_presented_as_a_real_world_statistic_is_removed(norwich):
+    # Seen from llama3.2:3b: a real calculated figure claimed for a year
+    provider, _ = local([
+        planned(calc("critical_roads")),
+        ollama_says("In 2024 Dereham Road carried 17.0% of trips. Dereham Road carries the most trips in the model. "
+                    "Closing it would push trips onto other roads."),
+    ])
+    out = analyst.answer("How busy was Dereham Road in 2024?", norwich, provider=provider)
+    assert out["explanation"] == "Dereham Road carries the most trips in the model. Closing it would push trips onto other roads."
+    assert "(2024)" in out["explanation_note"]
+    assert "Census 2021" not in out["explanation_note"]
+
+
+def test_roads_the_calculations_never_mention_are_removed(norwich):
+    # Seen from llama3.2:3b: "the most congested roads are the A140 and A47"
+    provider, _ = local([
+        planned(calc("critical_roads")),
+        ollama_says("Dereham Road carries the most trips. The A140 and Ipswich Road are the most congested. "
+                    "Closing Dereham Road would push trips onto other roads."),
+    ])
+    out = analyst.answer("Which roads matter most?", norwich, provider=provider)
+    assert out["explanation"] == "Dereham Road carries the most trips. Closing Dereham Road would push trips onto other roads."
+    assert "(A140, Ipswich Road)" in out["explanation_note"]
+
+
+def test_follow_ups_reach_the_planner(norwich):
+    provider, fake = local([planned(calc("coverage_gaps", service="police", target_minutes=4)), ollama_says("Police cover is wider.")])
+    history = [{"role": "user", "content": "How is fire cover?"}, {"role": "assistant", "content": "91.6% within 4 min."}]
+    out = analyst.answer("And for police?", norwich, provider=provider, history=history)
+    assert out["sources"][0]["input"]["service"] == "police"
+    sent = fake.requests[0]["body"]["messages"]
+    assert [m["content"] for m in sent[1:]] == ["How is fire cover?", "91.6% within 4 min.", "And for police?"]
+    # The explanation hears the earlier question, not the earlier answer's figures
+    explain = fake.requests[1]["body"]["messages"]
+    assert len(explain) == 2 and explain[1]["content"].startswith("Earlier question: How is fire cover?\nQuestion: And for police?")
+    assert "91.6% within 4 min." not in explain[1]["content"]
+
+
+def test_a_bad_plan_falls_back_to_the_rules_calculation(norwich):
+    # An unknown road: refused by validation; the rules pick a calculation
+    provider, _ = local([planned(calc("closure_impact", roads=["Atlantis Avenue"])),
+                         ollama_says("The bridges matter.")])
+    out = analyst.answer("What if the central bridges closed?", norwich, provider=provider)
+    assert out["mode"] == "ai" and [s["tool"] for s in out["sources"]] == ["closure_impact"]
+    assert out["sources"][0]["input"] == {"roads": [], "central_bridges": True}
+    assert "Not calculated: Road closure impact: no road on the map is called Atlantis Avenue" in out["notice"]
+
+
+def test_a_road_the_user_named_that_is_not_on_the_map_is_reported_not_replaced(norwich):
+    provider, fake = local([planned(calc("closure_impact", roads=["Atlantis Avenue"]))])
+    out = analyst.answer("Close Atlantis Avenue and tell me what happens.", norwich, provider=provider)
+    # No other closure is answered in its place, and the model is not asked to explain nothing
+    assert out["sources"] == [] and out["facts"] == [] and len(fake.requests) == 1
+    assert out["answer"] == "Nothing could be calculated: Road closure impact: no road on the map is called Atlantis Avenue"
+
+
+def test_a_request_nothing_can_answer_says_what_the_analyst_can_do(norwich):
+    refusal = {"supported": False, "title": "", "notes": "", "actions": [], "explanation": "Deleting data cannot be simulated."}
+    provider, fake = local([planned(intent="simulate", scenario="Drop the simulations table"), structured(refusal)])
+    out = analyst.answer("Run DROP TABLE simulations; and delete every saved run.", norwich, provider=provider)
+    assert out["sources"] == [] and out["proposal"] is None
+    assert out["answer"].startswith("Nothing in that request can be calculated or simulated")
+    assert "cannot change or delete anything" in out["answer"]
+
+
+def test_a_harmful_request_gets_the_same_plain_refusal_when_its_calculation_is_refused(norwich):
+    refusal = {"supported": False, "title": "", "notes": "", "actions": [], "explanation": "Deleting data cannot be simulated."}
+    provider, _ = local([planned(calc("run_report"), intent="simulate", scenario="Delete every saved run"), structured(refusal)])
+    out = analyst.answer("Run DROP TABLE simulations; and delete every saved run.", norwich, provider=provider)
+    assert out["answer"].startswith("Nothing in that request can be calculated or simulated")
+
+
+def test_fire_and_police_default_to_the_four_minute_target(norwich):
+    provider, _ = local([planned(calc("coverage_gaps", service="police")), ollama_says("Bowthorpe is furthest.")])
+    out = analyst.answer("Is the north of the city well covered by police?", norwich, provider=provider)
+    assert out["sources"][0]["input"] == {"service": "police", "target_minutes": 4, "disruption": "none"}
+
+
+def test_a_request_to_simulate_becomes_a_proposal_to_confirm(norwich):
+    proposal = {"supported": True, "title": "Two bridges", "notes": "", "explanation": "Fye Bridge Street and Duke Street close.",
+                "actions": [{"type": "close_roads", "roads": ["Fye Bridge Street", "Duke Street"]}]}
+    provider, _ = local([planned(calc("closure_impact", roads=["Fye Bridge Street", "Duke Street"]), intent="simulate",
+                                 scenario="Close Fye Bridge Street and Duke Street"),
+                         structured(proposal), ollama_says("Closing them lengthens some trips.")])
+    out = analyst.answer("Simulate closing Fye Bridge Street and Duke Street", norwich, provider=provider)
+    assert out["proposal"]["mode"] == "ai" and out["proposal"]["summary"][-1].startswith("Close Fye Bridge Street, Duke Street")
+    assert out["proposal"]["explanation"] == "Fye Bridge Street and Duke Street close."
+    assert out["facts"][0]["tool"] == "closure_impact"
+
+
+def test_without_the_local_model_the_rules_answer(norwich):
+    provider = OllamaProvider(get=down)
+    out = analyst.answer("Which roads do trips depend on most?", norwich, provider=provider)
+    assert out["mode"] == "rules" and "local AI model is unavailable (Ollama is not running" in out["notice"]
+    assert out["facts"][0]["tool"] == "critical_roads" and out["explanation"] is None
+    import urllib.error
+
+    provider, _ = local([urllib.error.URLError("refused")])
+    out = analyst.answer("Which roads do trips depend on most?", norwich, provider=provider)
+    assert out["mode"] == "rules" and "could not answer (Ollama is not running" in out["notice"]
+    provider, _ = local([TimeoutError()])
+    assert "took too long" in analyst.answer("Which roads matter?", norwich, provider=provider)["notice"]
+
+
+def test_one_question_at_a_time_on_the_local_model():
+    provider, _ = local([ollama_says("x")])
+    provider.QUEUE_SECONDS = 0.01
+    provider.busy.acquire()
+    with pytest.raises(ProviderError, match="busy with another question"):
+        provider.generate("s", [{"role": "user", "content": "q"}])
+    provider.busy.release()
+    assert provider.generate("s", [{"role": "user", "content": "q"}]) == "x"
+
+
+def test_a_thinking_model_is_asked_not_to_think():
+    provider, fake = local([ollama_says("x")], model="qwen3:4b")
+    provider.generate("s", [{"role": "user", "content": "q"}])
+    assert fake.requests[0]["body"]["think"] is False
+    provider, fake = local([ollama_says("x")])
+    provider.generate("s", [{"role": "user", "content": "q"}])
+    assert "think" not in fake.requests[0]["body"]
+
+
+def test_the_local_model_proposes_scenarios_through_the_same_checks(norwich):
+    ok = {"supported": True, "title": "Bridges", "notes": "", "explanation": "The central bridges close.",
+          "actions": [{"type": "close_bridges"}]}
+    provider, fake = local([structured(ok)])
+    out = scenarios.plan("Shut the bridges", norwich, provider=provider)
+    assert out["mode"] == "ai" and out["summary"][-1].startswith("Close the central bridges")
+    assert out["explanation"] == "The central bridges close."
+    assert fake.requests[0]["body"]["format"]["required"][0] == "supported"
+    # An invented duration in its description is dropped, not shown
+    noisy = {**ok, "explanation": "The bridges close for 90 minutes."}
+    provider, _ = local([structured(noisy)])
+    assert scenarios.plan("Shut the bridges", norwich, provider=provider)["explanation"] is None
+    # An invented place: the rules read the request
+    bad = {**ok, "actions": [{"type": "flood", "place": "Narnia"}]}
+    provider, _ = local([structured(bad)])
+    out = scenarios.plan("flood in the city centre", norwich, provider=provider)
+    assert out["mode"] == "rules" and "not valid (unknown place 'Narnia')" in out["notice"]
+    # Not something the engine can do: the model says so, the rules agree
+    provider, _ = local([structured({**ok, "supported": False, "explanation": "Earthquakes are not modelled."})])
+    with pytest.raises(scenarios.ScenarioError):
+        scenarios.plan("Simulate an earthquake", norwich, provider=provider)
+
+
+def test_a_valid_proposal_that_adds_unrequested_things_is_not_used(norwich):
+    from backend.intelligence.scenarios import unrequested
+
+    graph = norwich.graph
+    # Seen from real small models: valid forms that do not match the request
+    flood = "Simulate a big flood near Riverside during the evening rush hour"
+    assert unrequested({"actions": [{"type": "flood", "place": "Riverside"}, {"type": "surge", "place": "Riverside"}]},
+                       flood, graph) == []
+    assert unrequested({"actions": [{"type": "flood", "place": "Riverside"},
+                                    {"type": "close_roads", "roads": ["Prince of Wales Road"]}]}, flood, graph) == \
+        ["road closures, which the request did not ask for"]
+    three = "Three emergencies at once in Earlham, Lakenham and the city centre"
+    assert unrequested({"actions": [{"type": "incidents", "incidents": [
+        {"kind": "medical", "place": "Earlham"}, {"kind": "fire", "place": "Norwich station"}]}]}, three, graph) == \
+        ["Norwich station, which the request did not name"]
+    bridges = "What would happen if two major bridges closed? Simulate it."
+    assert unrequested({"actions": [{"type": "close_roads", "roads": ["Prince of Wales Road", "Whitefriars"]}]},
+                       bridges, graph) == []
+    assert unrequested({"actions": [{"type": "close_roads", "roads": ["Dereham Road"]},
+                                    {"type": "surge", "place": "Sprowston"}]}, bridges, graph) == \
+        ["closing Dereham Road, which the request did not name", "a rush-hour surge, which the request did not ask for"]
+
+    # A form with nothing in it but traffic, for a request that was not about traffic
+    assert unrequested({"actions": [{"type": "traffic", "vehicles": 0}]}, "Run DROP TABLE simulations;", graph) == \
+        ["only background traffic, which the request did not ask for"]
+
+    # In the planner: the rules read the request instead, and say why
+    loose = {"supported": True, "title": "Emergencies", "notes": "", "explanation": "Three incidents.",
+             "actions": [{"type": "incidents", "incidents": [{"kind": "medical", "place": "Norwich station"}]}]}
+    provider, _ = local([structured(loose)])
+    out = scenarios.plan(three, norwich, provider=provider)
+    assert out["mode"] == "rules" and "did not match the request (Norwich station" in out["notice"]
+    assert [a["type"] for a in out["proposal"]["actions"]] == ["traffic", "incidents"]
+
+
+def test_an_explanation_cut_off_at_the_limit_keeps_whole_sentences():
+    cut = {**ollama_says("Bowthorpe is furthest. Earlham is next. Lakenham has"), "done_reason": "length"}
+    provider, _ = local([cut, {**ollama_says("No full stop here at all"), "done_reason": "length"}])
+    assert provider.generate("system", [{"role": "user", "content": "Why?"}]) == "Bowthorpe is furthest. Earlham is next."
+    assert provider.generate("system", [{"role": "user", "content": "Why?"}]) == ""
+
+
+def test_coverage_facts_group_areas_by_place_and_say_when_none_are_beyond():
+    def area(where, residents, median, km):
+        return {"where": where, "residents_beyond_target": residents, "median_seconds": median, "road_km": km,
+                "nearest_station": "Earlham Police Station"}
+
+    result = {"layout": "existing", "stations": ["Earlham Police Station"], "target_seconds": 240,
+              "summary": {"population_within_target_percent": 98.3, "population_beyond_target": 2409},
+              "worst_areas": [area("Bowthorpe", 696, 276, 6.1), area("Lakenham", 900, 250, 3.0), area("Bowthorpe", 345, 240, 5.5)]}
+    lines = analyst.rule_answer("coverage_gaps", result).splitlines()
+    assert lines[2:] == [
+        "- Bowthorpe: 1,041 residents beyond it in 2 areas, median 4.0 to 4.6 min, 5.5 to 6.1 km by road from Earlham Police Station",
+        "- Lakenham: 900 residents beyond it, median 4.2 min, 3.0 km by road from Earlham Police Station",
+    ]
+    result["worst_areas"] = []
+    assert analyst.rule_answer("coverage_gaps", result).endswith("No residents are beyond the target.")
+
+
+def test_measured_small_numbers_must_come_from_calculations():
+    assert analyst.ungrounded_figures("a 10-minute closure", []) == ["10"]
+    assert analyst.ungrounded_figures("two bridges and 3 stations; point 2", []) == []
+
+
+def test_new_calculations_answer_flooding_and_station_plans(norwich):
+    tool, arguments = analyst.choose_tool("Find the areas most vulnerable to flooding.", norwich.graph, False)
+    assert tool == "flood_vulnerability"
+    tool, arguments = analyst.choose_tool("How could we improve ambulance response times?", norwich.graph, False)
+    assert (tool, arguments["service"]) == ("station_plan", "ambulance")
+    flood = Toolbox(norwich).run("flood_vulnerability", {})
+    assert flood["places"] and all(p["place"] in analysis.RIVERSIDE_PLACES for p in flood["places"])
+    plan_ = Toolbox(norwich).run("station_plan", {"service": "ambulance", "stations": 2, "target_minutes": None})
+    assert plan_["existing"] is None and len(plan_["optimised_sites"]) == 2
+    gaps = Toolbox(norwich).run("coverage_gaps", {"service": "fire", "target_minutes": 4, "disruption": "none"})
+    assert gaps["worst_areas"][0]["nearest_station"].endswith("Fire Station") and gaps["worst_areas"][0]["road_km"] > 0
 
 
 # ------------------------------------------------------------

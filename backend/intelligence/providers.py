@@ -191,15 +191,119 @@ class OllamaProvider(Provider):
 
     name = "ollama"
 
+    # A local model answers one request at a time (it shares the machine
+    # with the simulation); others wait up to QUEUE_SECONDS, then fall back
+    QUEUE_SECONDS = 60
+    CONTEXT_TOKENS = 8192
+    KEEP_ALIVE = "15m"
+
     def __init__(self, base_url=DEFAULT_OLLAMA_URL, model=DEFAULT_OLLAMA_MODEL, timeout=DEFAULT_TIMEOUT,
-                 limiter=None, post=None):
+                 limiter=None, post=None, get=None):
         self.base_url = base_url.rstrip("/")
         self.model = model
         self.timeout = timeout
         self.limiter = limiter or RateLimiter(DEFAULT_RATE)
         self.post = post or self._post
+        self.get = get or self._get
         self.available = True
         self.reason = None
+        self.busy = threading.BoundedSemaphore(1)
+        self._checked = None   # (when, available, reason) once checked
+
+    # Planning (structured), writing (text) and tool calls all supported
+    supports_structured = True
+
+    def _get(self, url, timeout):
+        import json
+        import urllib.request
+
+        with urllib.request.urlopen(url, timeout=timeout) as response:
+            return json.load(response)
+
+    def check(self):
+        """Whether Ollama answers and has the model: (available, reason),
+        cached for 15 s so the status endpoint stays fast."""
+        if self._checked is not None and time.monotonic() - self._checked[0] < 15:
+            return self._checked[1], self._checked[2]
+        try:
+            tags = self.get(f"{self.base_url}/api/tags", 2)
+            names = {m.get("name") for m in tags.get("models", [])} | {m.get("model") for m in tags.get("models", [])}
+            wanted = self.model if ":" in self.model else f"{self.model}:latest"
+            ok = wanted in names or self.model in names
+            reason = None if ok else f"The model {self.model} is not downloaded (run: ollama pull {self.model})"
+        except Exception:
+            ok, reason = False, f"Ollama is not running at {self.base_url}"
+        self._checked = (time.monotonic(), ok, reason)
+        return ok, reason
+
+    def status(self):
+        ok, reason = self.check()
+        return {"provider": self.name, "model": self.model, "available": ok, "reason": reason, "local": True}
+
+    def _options(self, temperature, max_tokens):
+        options = {"temperature": temperature, "num_ctx": self.CONTEXT_TOKENS, "num_predict": max_tokens}
+        body = {"model": self.model, "stream": False, "keep_alive": self.KEEP_ALIVE, "options": options}
+        # Thinking models answer faster and keep to the format without it
+        if self.model.split(":")[0] in ("qwen3", "deepseek-r1", "gpt-oss"):
+            body["think"] = False
+        return body
+
+    def _chat(self, body):
+        """One request to /api/chat, one at a time, with errors as ProviderError."""
+        import socket
+        import urllib.error
+
+        self.limiter.acquire()
+        if not self.busy.acquire(timeout=self.QUEUE_SECONDS):
+            raise ProviderError("The local model is busy with another question", retryable=True)
+        try:
+            data = self.post(f"{self.base_url}/api/chat", body, self.timeout)
+        except urllib.error.HTTPError as error:
+            if error.code == 404:
+                raise ProviderError(f"Ollama has no model {self.model} (run: ollama pull {self.model})") from None
+            raise ProviderError(f"Ollama returned an error ({error.code})", retryable=error.code >= 500) from None
+        except (socket.timeout, TimeoutError):
+            raise ProviderError("The local model took too long to answer", retryable=True) from None
+        except (urllib.error.URLError, ConnectionError, OSError):
+            raise ProviderError(f"Ollama is not running at {self.base_url}", retryable=True) from None
+        except ValueError:
+            raise ProviderError("Ollama sent an answer that could not be read") from None
+        finally:
+            self.busy.release()
+        if not isinstance(data, dict) or "error" in data:
+            message = data.get("error") if isinstance(data, dict) else None
+            raise ProviderError(f"Ollama: {message}" if message else "Ollama sent no answer")
+        return data
+
+    def structured(self, system, messages, schema, max_tokens=600):
+        """A JSON object matching `schema`: Ollama constrains the model's
+        output to the schema, which small models follow far more reliably
+        than free-form tool calls."""
+        import json
+
+        body = {**self._options(0, max_tokens), "messages": self.to_ollama(system, messages), "format": schema}
+        data = self._chat(body)
+        text = (data.get("message") or {}).get("content") or ""
+        try:
+            value = json.loads(text)
+        except ValueError:
+            raise ProviderError("The local model's answer was not valid JSON") from None
+        if not isinstance(value, dict):
+            raise ProviderError("The local model's answer was not a JSON object")
+        return value
+
+    def generate(self, system, messages, max_tokens=500, temperature=0.2):
+        """Plain text from the model (the explanation step)."""
+        body = {**self._options(temperature, max_tokens), "messages": self.to_ollama(system, messages)}
+        data = self._chat(body)
+        text = ((data.get("message") or {}).get("content") or "").strip()
+        if data.get("done_reason") == "length":
+            # Cut off at the token limit: keep the whole sentences only
+            import re
+
+            ends = [m.end() for m in re.finditer(r"[.!?](?=\s|$)", text)]
+            text = text[:ends[-1]] if ends else ""
+        return text
 
     def _post(self, url, body, timeout):
         import json
@@ -245,34 +349,15 @@ class OllamaProvider(Provider):
 
     def respond(self, system, messages, tools):
         import json
-        import socket
-        import urllib.error
 
-        self.limiter.acquire()
         body = {
-            "model": self.model,
+            **self._options(0.2, 1000),
             "messages": self.to_ollama(system, messages),
             "tools": [{"type": "function", "function": {
                 "name": t["name"], "description": t["description"], "parameters": t["input_schema"],
             }} for t in tools],
-            "stream": False,
         }
-        try:
-            data = self.post(f"{self.base_url}/api/chat", body, self.timeout)
-        except urllib.error.HTTPError as error:
-            if error.code == 404:
-                raise ProviderError(f"Ollama has no model {self.model} (run: ollama pull {self.model})") from None
-            raise ProviderError(f"Ollama returned an error ({error.code})", retryable=error.code >= 500) from None
-        except (socket.timeout, TimeoutError):
-            raise ProviderError("The local model took too long to answer", retryable=True) from None
-        except (urllib.error.URLError, ConnectionError, OSError):
-            raise ProviderError(f"Ollama is not running at {self.base_url}", retryable=True) from None
-        except ValueError:
-            raise ProviderError("Ollama sent an answer that could not be read") from None
-
-        if not isinstance(data, dict) or "error" in data:
-            message = data.get("error") if isinstance(data, dict) else None
-            raise ProviderError(f"Ollama: {message}" if message else "Ollama sent no answer")
+        data = self._chat(body)
         message = data.get("message") or {}
         text = message.get("content") or ""
         calls, content = [], ([{"type": "text", "text": text}] if text else [])
@@ -297,6 +382,12 @@ _provider = None
 _provider_lock = threading.Lock()
 
 
+def _local(url):
+    from urllib.parse import urlparse
+
+    return (urlparse(url).hostname or "") in ("localhost", "127.0.0.1", "::1")
+
+
 def _environment_provider():
     choice = os.environ.get("AI_PROVIDER", "").strip().lower()
     key = os.environ.get("ANTHROPIC_API_KEY", "").strip()
@@ -310,8 +401,12 @@ def _environment_provider():
             rate = int(os.environ.get("AI_MAX_REQUESTS_PER_MINUTE", DEFAULT_RATE))
         except ValueError:
             return NoProvider("AI_TIMEOUT_SECONDS or AI_MAX_REQUESTS_PER_MINUTE is not a number")
+        base = os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).strip() or DEFAULT_OLLAMA_URL
+        if not _local(base) and os.environ.get("OLLAMA_ALLOW_REMOTE") != "1":
+            return NoProvider("OLLAMA_BASE_URL must be on this machine (localhost); set OLLAMA_ALLOW_REMOTE=1 "
+                              "only for an Ollama you run privately")
         return OllamaProvider(
-            os.environ.get("OLLAMA_BASE_URL", DEFAULT_OLLAMA_URL).strip() or DEFAULT_OLLAMA_URL,
+            base,
             os.environ.get("AI_MODEL", DEFAULT_OLLAMA_MODEL).strip() or DEFAULT_OLLAMA_MODEL,
             timeout=timeout, limiter=RateLimiter(max(1, rate)),
         )

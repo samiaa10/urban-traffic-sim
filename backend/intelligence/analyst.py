@@ -41,6 +41,19 @@ emergency response times or real traffic.
 - If a tool returns an error, say what could not be calculated and why.
 - Be concise: a short answer first, then the key figures as a brief list. British English. No headings."""
 
+TOOL_TITLES = {
+    "city_overview": "City model figures",
+    "coverage_gaps": "Emergency coverage gaps",
+    "recommend_station": "Best extra station",
+    "station_plan": "Station layout plan",
+    "critical_roads": "Roads trips depend on",
+    "closure_impact": "Road closure impact",
+    "flood_vulnerability": "Flood vulnerability",
+    "live_bottlenecks": "Live bottlenecks",
+    "run_report": "Simulation report",
+    "scenario_results": "Scenario study ranking",
+}
+
 SERVICE_WORDS = {
     "ambulance": ("ambulance", "medical", "paramedic"),
     "police": ("police", "crime"),
@@ -93,6 +106,11 @@ def roads_in(question, graph):
 def choose_tool(question, graph, has_run):
     """The built-in rules: which calculation a question asks for."""
     q = question.lower()
+    if re.search(r"flood", q) and re.search(r"vulnerab|most at risk|where|which areas|worst", q):
+        return "flood_vulnerability", {}
+    if re.search(r"improve|better|faster|reduce", q) and re.search(r"response", q) and not re.search(r"new station|extra station", q):
+        return "station_plan", {"service": _service(question) if re.search(r"fire|police", q) else "ambulance",
+                                "stations": 3, "target_minutes": _minutes(question)}
     if re.search(r"\bscenario|\bstud(y|ies)|which .* (best|worst) result", q):
         return "scenario_results", {"study_id": None}
     if re.search(r"\bbridge|\bclos(e|ed|ing|ure)\b|what (would|happens) if", q):
@@ -102,7 +120,8 @@ def choose_tool(question, graph, has_run):
         return "closure_impact", {"roads": [], "central_bridges": True}
     if re.search(r"new station|extra station|where should|which (emergency )?station location|improve (emergency )?coverage|add(ing)? a station", q):
         return "recommend_station", {"service": _service(question), "target_minutes": _minutes(question) or 4, "disruption": "none"}
-    if re.search(r"coverage|response time|worst (areas|served)|underserved|slowest (areas|response)", q):
+    if re.search(r"coverage|\bcover(ed)?\b|response time|worst (areas|served)|underserved|slowest (areas|response)"
+                 r"|(take|takes|long) .*\bto (reach|get to)\b", q):
         return "coverage_gaps", {"service": _service(question), "target_minutes": _minutes(question) or 4, "disruption": "none"}
     if re.search(r"why|poor(ly)?|explain|perform|went wrong|summar", q):
         return "run_report", {"simulation_id": None}
@@ -117,6 +136,27 @@ def _minutes_text(seconds):
     return "-" if seconds is None else f"{seconds / 60:.1f} min"
 
 
+def _areas_by_place(areas, key="residents_beyond_target"):
+    """Areas (hexagons) grouped by the place they are named after, in the
+    order of their worst area."""
+    groups = {}
+    for area in areas:
+        groups.setdefault(area["where"], []).append(area)
+    if key == "residents":
+        return list(groups.items())
+    return sorted(groups.items(), key=lambda item: -sum(a[key] for a in item[1]))
+
+
+def _range(values, text):
+    low, high = text(min(values)), text(max(values))
+    if low == high:
+        return low
+    for unit in (" min", " km"):
+        if low.endswith(unit) and high.endswith(unit) and low.count(" ") == 1:
+            return f"{low[:-len(unit)]} to {high}"
+    return f"{low} to {high}"
+
+
 def rule_answer(tool, result):
     """A plain answer written from a calculation's result."""
     if tool == "coverage_gaps":
@@ -125,10 +165,33 @@ def rule_answer(tool, result):
             f"From the {result['layout']} ({', '.join(result['stations']) or 'none'}), "
             f"{s['population_within_target_percent']:.1f}% of residents are within {result['target_seconds'] / 60:.0f} min "
             f"by road ({round(s['population_beyond_target']):,} beyond it).",
-            "The areas with the most residents beyond the target:",
         ]
-        lines += [f"- {a['where']}: {a['residents_beyond_target']:,} residents, median {_minutes_text(a['median_seconds'])}"
-                  for a in result["worst_areas"]]
+        areas = _areas_by_place(result["worst_areas"])
+        if not areas:
+            lines.append("No residents are beyond the target.")
+            slowest = result.get("slowest_areas") or []
+            if slowest:
+                lines.append("The places it takes longest to reach:")
+                for place, rows in _areas_by_place(slowest, key="residents"):
+                    medians = [a["median_seconds"] for a in rows]
+                    text = f"- {place}: median {_range(medians, _minutes_text)}"
+                    kms = [a["road_km"] for a in rows if a.get("road_km")]
+                    stations = sorted({a["nearest_station"] for a in rows if a.get("nearest_station")})
+                    if kms and len(stations) == 1:
+                        text += f", {_range(kms, lambda v: f'{v} km')} by road from {stations[0]}"
+                    lines.append(text)
+            return "\n".join(lines)
+        lines.append("The places with the most residents beyond the target:")
+        for place, rows in areas:
+            residents = sum(a["residents_beyond_target"] for a in rows)
+            medians = [a["median_seconds"] for a in rows]
+            text = f"- {place}: {residents:,} residents beyond it" + (f" in {len(rows)} areas" if len(rows) > 1 else "")
+            text += f", median {_range(medians, _minutes_text)}"
+            kms = [a["road_km"] for a in rows if a.get("road_km")]
+            stations = sorted({a["nearest_station"] for a in rows if a.get("nearest_station")})
+            if kms and len(stations) == 1:
+                text += f", {_range(kms, lambda v: f'{v} km')} by road from {stations[0]}"
+            lines.append(text)
         return "\n".join(lines)
     if tool == "recommend_station":
         best = result["best"][0]
@@ -139,8 +202,35 @@ def rule_answer(tool, result):
             head += f", up from {before['population_within_target_percent']:.1f}% ({best['residents_brought_within_target']:,} more residents)."
         else:
             head += "."
-        rest = [f"- {o['where']}: {o['population_within_target_percent']:.1f}% within target" for o in result["best"][1:]]
-        return "\n".join([head, "Next best:"] + rest if rest else [head])
+        # Sites that would sit next to the best one add nothing to compare
+        rest = [f"- {o['where']}: {o['population_within_target_percent']:.1f}% within target"
+                for o in result["best"][1:] if o["where"] != best["where"]]
+        lines = [head, "Next best:"] + rest if rest else [head]
+        mean_best = result.get("best_for_mean_response")
+        if mean_best and not result.get("same_site_best_for_both"):
+            lines.append(f"For the lowest average response instead, the best site is {mean_best['where']} "
+                         f"(mean {_minutes_text(mean_best['mean_seconds'])}).")
+        return "\n".join(lines)
+    if tool == "station_plan":
+        target = result["target_seconds"] / 60
+        lines = []
+        if result["existing"]:
+            lines.append(f"The existing {result['service']} stations ({', '.join(result['existing_stations'])}) reach "
+                         f"{result['existing']['population_within_target_percent']:.1f}% of residents within {target:.0f} min.")
+        else:
+            lines.append(f"OpenStreetMap maps no road {result['service']} station in Norwich, so there is no existing layout to compare.")
+        lines.append(f"The optimiser's best {len(result['optimised_sites'])} sites ({'; '.join(result['optimised_sites'])}) reach "
+                     f"{result['optimised']['population_within_target_percent']:.1f}% within {target:.0f} min, mean "
+                     f"{_minutes_text(result['optimised']['mean_seconds'])}, out of {result['sets_compared']:,} sets compared.")
+        lines += [f"- With {step['stations']} station{'s' if step['stations'] > 1 else ''}: mean {_minutes_text(step['mean_seconds'])}, "
+                  f"{step['population_within_target_percent']:.1f}% within target" for step in result["each_added_station"]]
+        return "\n".join(lines)
+    if tool == "flood_vulnerability":
+        lines = [f"Closing every road within {result['radius_metres']} m of each riverside place in turn, the worst for trips across the city:"]
+        lines += [f"- {r['place']}: {r['roads_flooded']} roads, {r['trips_cut_off']} trip{'' if r['trips_cut_off'] == 1 else 's'} cut off, "
+                  f"{r['trips_longer_percent']}% longer by {r['mean_extra_seconds']:.0f} s on average" for r in result["places"][:5]]
+        lines.append("The map has no elevation or river data, so this ranks the effect of closures, not the chance of flooding.")
+        return "\n".join(lines)
     if tool == "critical_roads":
         lines = [f"Of {result['trips_sampled']} trips drawn where people live, these roads carry the most, and closing each costs its trips:"]
         lines += [f"- {r['road']} ({r['where']}): {r['trips_using_it_percent']}% of trips, +{r['mean_extra_seconds_if_closed']:.0f} s on average if closed"
@@ -188,6 +278,8 @@ def rule_answer(tool, result):
 
 
 NUMBER = re.compile(r"(?<![\w.])-?\d[\d,]*(?:\.\d+)?")
+UNIT = re.compile(r"\s?-?\s?(%|per ?cent|min\b|mins\b|minutes?\b|s\b|secs?\b|seconds?\b|m\b|metres?\b|km\b|"
+                  r"kilomet|hours?\b|vehicles?\b|residents?\b|people\b|trips?\b|roads?\b)", re.IGNORECASE)
 
 
 def _numbers(value, out):
@@ -230,12 +322,17 @@ def ungrounded_figures(text, sources, question=""):
         _numbers(source["input"], allowed)
     _numbers(question, allowed)
     bad = []
-    for match in NUMBER.findall(text):
+    for found in NUMBER.finditer(text):
+        match = found.group()
         try:
             figure = float(match.replace(",", ""))
         except ValueError:
             continue
-        if figure.is_integer() and 0 <= figure <= 10:
+        # Small whole numbers also number lists and count things ("two
+        # bridges"); with a unit after them they are measurements and must
+        # come from a calculation like any other
+        measured = UNIT.match(text, found.end()) is not None
+        if figure.is_integer() and 0 <= figure <= 10 and not measured:
             continue
         if not any(_matches(figure, value) for value in allowed):
             bad.append(match)
@@ -247,7 +344,19 @@ def _source(tool, arguments, result):
 
 
 def answer(question, context, simulation_id=None, history=None, provider=None):
-    """{"answer", "mode": "ai" or "rules", "model", "sources", "notice"}."""
+    """{"answer", "mode": "ai" or "rules", "model", "sources", "facts",
+    "explanation", "proposal", "notice"}."""
+    final = None
+    for event in answer_stream(question, context, simulation_id, history, provider):
+        if event["stage"] == "done":
+            final = event["answer"]
+    return final
+
+
+def answer_stream(question, context, simulation_id=None, history=None, provider=None):
+    """The answer in stages (assistant.steps for a local model); the last
+    event is always {"stage": "done", "answer"}. Raises ValueError for an
+    unusable question before anything is yielded."""
     question = (question or "").strip()
     if not question:
         raise ValueError("Ask a question")
@@ -257,12 +366,28 @@ def answer(question, context, simulation_id=None, history=None, provider=None):
     provider = provider or get_provider()
     notice = None
 
-    if provider.available:
+    if provider.available and getattr(provider, "supports_structured", False):
+        # A local model (Ollama): plan, calculate, explain, check (assistant.py)
+        ok, reason = provider.check()
+        if ok:
+            from backend.intelligence import assistant
+
+            try:
+                yield from assistant.steps(question, context, provider, simulation_id, history)
+                return
+            except ProviderError as error:
+                notice = (f"The local AI model could not answer ({error.reason}), so this answer comes from "
+                          "the built-in rules.")
+                logger.info("Local AI fell back to rules: %s", error.reason)
+        else:
+            notice = f"The local AI model is unavailable ({reason}), so this answer comes from the built-in rules."
+    elif provider.available:
         try:
             result = _ask_model(question, toolbox, provider, history or [])
             bad = ungrounded_figures(result["answer"], result["sources"], question)
             if result["sources"] and not bad:
-                return result
+                yield {"stage": "done", "answer": result}
+                return
             # Never pass on an answer no calculation backs: the rules answer instead
             if not result["sources"]:
                 notice = ("The AI model answered without running any calculation, so its answer was "
@@ -283,14 +408,20 @@ def answer(question, context, simulation_id=None, history=None, provider=None):
     try:
         result = toolbox.run(tool, arguments)
     except ToolError as error:
-        return {"answer": f"That could not be calculated: {error}.", "mode": "rules", "model": None,
-                "sources": [], "notice": notice}
+        yield {"stage": "done", "answer": {
+            "answer": f"That could not be calculated: {error}.", "mode": "rules", "model": None,
+            "sources": [], "facts": [], "explanation": None, "explanation_note": None, "proposal": None,
+            "notice": notice}}
+        return
     text = rule_answer(tool, result)
     if tool == "critical_roads" and not has_run and re.search(r"bottleneck|congest|jam|busiest", question.lower()):
         text = ("No live simulation is running, so these are the network's structural bottlenecks: the roads "
                 "most trips depend on at free-flow speed. Start a simulation to see live congestion.\n" + text)
-    return {"answer": text, "mode": "rules", "model": None,
-            "sources": [_source(tool, arguments, result)], "notice": notice}
+    yield {"stage": "done", "answer": {
+        "answer": text, "mode": "rules", "model": None,
+        "sources": [_source(tool, arguments, result)],
+        "facts": [{"tool": tool, "text": text}], "explanation": None, "explanation_note": None, "proposal": None,
+        "notice": notice}}
 
 
 def _ask_model(question, toolbox, provider, history):

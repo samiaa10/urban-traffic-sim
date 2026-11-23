@@ -42,6 +42,23 @@ TOOLS = [
         "input_schema": _object({"service": SERVICE, "target_minutes": MINUTES, "disruption": DISRUPTION}),
     },
     {
+        "name": "station_plan",
+        "description": "The optimiser's best layout of a number of stations for a service, against the existing "
+                       "stations (OpenStreetMap maps no road ambulance station), and what each added station gives. "
+                       "For questions about improving a service's response times.",
+        "input_schema": _object({
+            "service": SERVICE,
+            "stations": {"type": "integer", "minimum": 1, "maximum": 8},
+            "target_minutes": MINUTES,
+        }),
+    },
+    {
+        "name": "flood_vulnerability",
+        "description": "Which riverside places (Wensum and Yare) would hurt trips across the city most if flooded: "
+                       "every road near each place closed in turn. Closures, not a hydrological model.",
+        "input_schema": _object({}),
+    },
+    {
         "name": "critical_roads",
         "description": "The roads most trips across Norwich depend on (trips drawn where people live), and what "
                        "closing each one costs those trips. Free-flow speeds.",
@@ -97,6 +114,10 @@ def _check(value, schema, path):
             raise ToolError(f"{path} is too long")
         return
     if "boolean" in kinds and isinstance(value, bool):
+        return
+    if "integer" in kinds and isinstance(value, int) and not isinstance(value, bool):
+        if value < schema.get("minimum", float("-inf")) or value > schema.get("maximum", float("inf")):
+            raise ToolError(f"{path} is out of range")
         return
     if "number" in kinds and isinstance(value, (int, float)) and not isinstance(value, bool):
         if value < schema.get("minimum", float("-inf")) or value > schema.get("maximum", float("inf")):
@@ -164,6 +185,10 @@ class Toolbox:
                 result = analysis.recommend_station(graph, network, arguments["service"], arguments["target_minutes"], arguments["disruption"])
             elif name == "critical_roads":
                 result = analysis.critical_roads(graph, network)
+            elif name == "station_plan":
+                result = analysis.station_plan(graph, network, arguments["service"], arguments["stations"], arguments["target_minutes"])
+            elif name == "flood_vulnerability":
+                result = analysis.flood_vulnerability(graph, network)
             elif name == "closure_impact":
                 result = analysis.closure_impact(graph, network, roads=arguments["roads"], bridges=arguments["central_bridges"])
             elif name == "live_bottlenecks":

@@ -125,11 +125,13 @@ def coverage_gaps(graph, network, service="fire", target_minutes=None, disruptio
     existing = next((s for s in result["stages"] if s["label"] == "existing"), None)
     layout = "existing" if existing else "optimised standby sites"
     stage = existing or result["stages"][-1]
-    cells = []
+    cells, reached = [], []
     for i, cell in enumerate(result["cells"]):
         beyond = stage["cells"]["beyond_people"][i]
         seconds = stage["cells"]["seconds"][i]
         if beyond <= 0 and seconds is not None:
+            if seconds and (cell.get("population") or 0) > 0:
+                reached.append((seconds, i))
             continue
         lat, lon = _centre(cell["polygon"])
         cells.append({
@@ -137,6 +139,16 @@ def coverage_gaps(graph, network, service="fire", target_minutes=None, disruptio
             "residents_beyond_target": round(beyond), "median_seconds": seconds,
         })
     cells.sort(key=lambda c: (-c["residents_beyond_target"], -(c["median_seconds"] or 1e9)))
+    worst = cells[:top]
+    # With everyone within the target, the places it takes longest to reach
+    # still say where cover is weakest
+    slowest = []
+    if not worst:
+        for seconds, i in sorted(reached, reverse=True)[:top]:
+            lat, lon = _centre(result["cells"][i]["polygon"])
+            slowest.append({"where": describe_point(lat, lon), "latitude": round(lat, 5), "longitude": round(lon, 5),
+                            "residents": round(result["cells"][i]["population"]), "median_seconds": seconds})
+    _nearest_stations(graph, network, service, disruption, worst + slowest, result, existing is not None)
     return {
         "provenance": CALCULATED,
         "method": result["model"],
@@ -145,9 +157,39 @@ def coverage_gaps(graph, network, service="fire", target_minutes=None, disruptio
         "stations": [s["name"] for s in result["existing"]] if existing else
                     [describe_point(s["latitude"], s["longitude"]) for s in result["optimised"]],
         "summary": stage["summary"],
-        "worst_areas": cells[:top],
+        "worst_areas": worst,
+        "slowest_areas": slowest,
         "hexagons": len(result["cells"]),
     }
+
+
+def _nearest_stations(graph, network, service, disruption, areas, result, existing):
+    """Why each area is slow: the station that reaches its middle junction
+    soonest, and how far that is by road (adds nearest_station and
+    road_km to each area)."""
+    from backend.optimiser import station_optimiser as optimiser
+    from backend.simulation import dispatch
+
+    blocked = set()
+    if disruption != "none":
+        from backend.optimiser.planning import disruption_segments
+
+        blocked = set(disruption_segments(network, disruption))
+    if existing:
+        layout, _ = existing_layout(graph, blocked, service)
+        stations = [(s["name"], s["distances"]) for s in layout]
+    else:
+        stations = []
+        for site in result["optimised"]:
+            node = optimiser.snap_to_road(graph, site["latitude"], site["longitude"])
+            stations.append((f"standby site {describe_point(site['latitude'], site['longitude'])}",
+                             optimiser.shortest_distances(graph, node, blocked or None)))
+    for area in areas:
+        node = dispatch.nearest_junction(graph, area["latitude"], area["longitude"])
+        reach = [(maps.get(node, math.inf), name) for name, maps in stations]
+        metres, name = min(reach) if reach else (math.inf, None)
+        area["nearest_station"] = name
+        area["road_km"] = round(metres / 1000, 1) if math.isfinite(metres) else None
 
 
 def recommend_station(graph, network, service="fire", target_minutes=None, disruption="none", top=3):
@@ -177,7 +219,9 @@ def recommend_station(graph, network, service="fire", target_minutes=None, disru
             "population_within_target_percent": after["population_within_target_percent"],
             "residents_beyond_target": after["population_beyond_target"],
             "mean_seconds": after["mean_seconds"],
+            "worst_seconds": after["worst_seconds"],
         })
+    by_mean = min(options, key=lambda o: (o["mean_seconds"] or 1e9))
     options.sort(key=lambda o: (-o["population_within_target_percent"], o["mean_seconds"] or 1e9))
     for option in options:
         if before:
@@ -193,6 +237,10 @@ def recommend_station(graph, network, service="fire", target_minutes=None, disru
         "before": before,
         "candidates_tried": len(candidates),
         "best": options[:top],
+        # The trade-off: the site that brings most residents within the
+        # target is not always the one that lowers the average most
+        "best_for_mean_response": by_mean,
+        "same_site_best_for_both": by_mean is options[0],
     }
 
 
@@ -499,3 +547,82 @@ def scenario_results(context, study_id=None):
         "explanation": study.get("explanation") or [],
     }
 
+
+
+# ------------------------------------------------------------
+# Station layouts and flood vulnerability
+# ------------------------------------------------------------
+
+def station_plan(graph, network, service="ambulance", stations=3, target_minutes=None, disruption="none"):
+    """The optimiser's best layout of `stations` sites for a service, set
+    against the existing stations (none for ambulances in OpenStreetMap)."""
+    settings = _service(service)
+    if not 1 <= stations <= 8:
+        raise ValueError("stations must be between 1 and 8")
+    target = (target_minutes * 60) if target_minutes else settings.target_seconds
+    result = plan(graph, network, service, stations, target, disruption)
+    existing = next((s for s in result["stages"] if s["label"] == "existing"), None)
+    final = result["stages"][-1]
+    steps = [
+        {"stations": int(s["label"].split(":")[1]),
+         "population_within_target_percent": s["summary"]["population_within_target_percent"],
+         "mean_seconds": s["summary"]["mean_seconds"]}
+        for s in result["stages"] if s["label"].startswith("optimised")
+    ]
+    return plain({
+        "provenance": CALCULATED,
+        "method": result["model"] + "; the optimiser compared " + result["search"]["method"],
+        "service": service, "target_seconds": target, "disruption": disruption,
+        "existing_stations": [s["name"] for s in result["existing"]],
+        "existing": existing["summary"] if existing else None,
+        "optimised": final["summary"],
+        "optimised_sites": [describe_point(s["latitude"], s["longitude"]) for s in result["optimised"]],
+        "each_added_station": steps,
+        "sets_compared": result["search"]["possible_sets"],
+    })
+
+
+# Places by the rivers Wensum and Yare (approximate centres), where a flood
+# is plausible; the map has no elevation, so this is not a flood model
+RIVERSIDE_PLACES = ["the city centre", "Riverside", "Thorpe Hamlet", "Trowse", "Heigham", "Hellesdon",
+                    "Earlham", "Bowthorpe", "Lakenham"]
+
+
+@lru_cache(maxsize=2)
+def _flood_vulnerability(graph_id, graph, network, radius, trips, seed):
+    from backend.simulation.disruptions import segments_in_area
+
+    sample = _sample_trips(graph, network, trips, seed)
+    before = _trip_times(network, sample)
+    rows = []
+    for place in RIVERSIDE_PLACES:
+        lat, lon = PLACES[place]
+        flooded = set(segments_in_area(network, lat, lon, radius))
+        if not flooded:
+            continue
+        after = _trip_times(network, sample, blocked=flooded)
+        pairs = [(b[1], a[1]) for b, a in zip(before, after) if b[1] is not None]
+        longer = [a - b for b, a in pairs if a is not None and a - b > 0.5]
+        rows.append({
+            "place": place, "roads_flooded": len(flooded),
+            "trips_cut_off": sum(1 for _, a in pairs if a is None),
+            "trips_longer_percent": round(100 * len(longer) / max(1, len(pairs)), 1),
+            "mean_extra_seconds": round(sum(longer) / len(longer), 1) if longer else 0.0,
+        })
+    rows.sort(key=lambda r: (-r["trips_cut_off"], -r["trips_longer_percent"]))
+    return trips, rows
+
+
+def flood_vulnerability(graph, network, radius_metres=300, trips=200, seed=7):
+    """Which riverside places would hurt the network most if flooded: every
+    road within radius_metres of each place closed in turn, and the effect
+    on the same sampled trips."""
+    count, rows = _flood_vulnerability(id(graph), graph, network, radius_metres, trips, seed)
+    return plain({
+        "provenance": CALCULATED,
+        "method": (f"{len(rows)} places by the Wensum and Yare; every road within {radius_metres} m closed in turn; "
+                   f"{count} trips drawn in proportion to Census 2021 residents, fastest routes at free-flow "
+                   "speed. The map has no elevation or river data: these are closures, not a flood model"),
+        "radius_metres": radius_metres,
+        "places": rows,
+    })
