@@ -367,7 +367,11 @@ def run(proposal, context):
                 applied.append(describe(action))
             elif t == "incidents":
                 for item in action["incidents"]:
-                    _, outcomes = command.report(item["kind"], item["latitude"], item["longitude"], graph)
+                    try:
+                        _, outcomes = command.report(item["kind"], item["latitude"], item["longitude"], graph)
+                    except ValueError as error:
+                        applied.append(f"Not placed: {item['kind'].replace('_', ' ')} at {item['place']} ({error})")
+                        continue
                     for outcome in outcomes:
                         record_outcome(live, outcome)
                 applied.append(describe(action))

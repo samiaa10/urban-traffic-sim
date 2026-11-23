@@ -120,6 +120,9 @@ def validate(arguments, schema, path="input"):
     extra = set(arguments) - set(schema["properties"])
     if extra:
         raise ToolError(f"unknown argument(s): {', '.join(sorted(extra))}")
+    missing = [name for name in schema.get("required", []) if name not in arguments]
+    if missing:
+        raise ToolError(f"missing argument(s): {', '.join(missing)}")
     for name, sub in schema["properties"].items():
         _check(arguments.get(name), sub, f"{path}.{name}" if path != "input" else name)
 

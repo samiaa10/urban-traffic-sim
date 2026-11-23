@@ -9,6 +9,7 @@
 import { Suspense, lazy, useEffect, useMemo, useRef, useState } from "react"
 
 import { API_URL } from "./config.ts"
+import { setActiveRun } from "./activeRun.ts"
 import CommandMap2D from "./CommandMap2D.tsx"
 import {
   KINDS,
@@ -50,8 +51,10 @@ async function call<T>(path: string, method = "GET"): Promise<T> {
   return body as T
 }
 
-export function CommandCentre() {
-  const [runId, setRunId] = useState<string | null>(null)
+// attachTo: a run already set up with a command centre (a scenario the
+// analyst started), watched instead of starting a new one
+export function CommandCentre({ attachTo = null }: { attachTo?: string | null } = {}) {
+  const [runId, setRunId] = useState<string | null>(attachTo)
   const [starting, setStarting] = useState(false)
   const [settings, setSettings] = useState({ units: 2, traffic: 800 })
   const [state, setState] = useState<CommandState | null>(null)
@@ -147,6 +150,7 @@ export function CommandCentre() {
       )
       setState(started)
       setRunId(started.simulation_id)
+      setActiveRun(started.simulation_id)
       // The whole fleet in view to begin with
       setFocus({ key: "stations", positions: started.stations.map((s) => [s.longitude, s.latitude] as [number, number]), maxZoom: 14 })
       setMessage({ text: `Command centre open: ${started.units.length} units at ${started.stations.length} stations. Choose an incident type, then click the map.`, error: false })

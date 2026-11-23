@@ -106,8 +106,9 @@ def choose_tool(question, graph, has_run):
         return "coverage_gaps", {"service": _service(question), "target_minutes": _minutes(question) or 4, "disruption": "none"}
     if re.search(r"why|poor(ly)?|explain|perform|went wrong|summar", q):
         return "run_report", {"simulation_id": None}
-    if re.search(r"bottleneck|congest|jam|slow road|busiest|vulnerab|critical road|weak", q):
-        return ("live_bottlenecks", {"simulation_id": None}) if has_run and "vulnerab" not in q and "critical" not in q \
+    if re.search(r"bottleneck|congest|jam|slow road|busiest|vulnerab|critical road|weak|depend on|most used|important road", q):
+        structural = any(word in q for word in ("vulnerab", "critical", "depend on", "most used", "important"))
+        return ("live_bottlenecks", {"simulation_id": None}) if has_run and not structural \
             else ("critical_roads", {})
     return "city_overview", {}
 

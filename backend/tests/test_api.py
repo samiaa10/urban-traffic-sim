@@ -1659,3 +1659,45 @@ def test_live_weather_comes_from_open_meteo_and_says_when_it_cannot(client, monk
     # A reading already held is kept when Open-Meteo stops answering
     monkeypatch.setattr(city, "_weather", {"at": 0.0, "value": weather})
     assert client.get("/city/weather").json()["rain_mm"] == 1.1
+
+
+# ------------------------------------------------------------
+# The City Analyst and scenarios (no AI provider: the built-in rules)
+# ------------------------------------------------------------
+
+@pytest.fixture
+def no_ai(monkeypatch):
+    from backend.intelligence import providers
+
+    monkeypatch.setattr(providers, "_provider", providers.NoProvider())
+    yield
+    providers.set_provider(None)
+
+
+def test_the_analyst_answers_with_its_calculations(client, no_ai):
+    status = client.get("/intelligence/status").json()
+    assert status["available"] is False and len(status["capabilities"]) == 8
+    body = client.post("/intelligence/ask", json={"question": "Which roads do trips depend on most?"}).json()
+    assert body["mode"] == "rules" and body["sources"][0]["tool"] == "critical_roads"
+    assert body["sources"][0]["provenance"] == "calculated"
+    assert "No AI model is configured" in body["notice"]
+    assert client.post("/intelligence/ask", json={"question": ""}).status_code == 422
+    assert client.post("/intelligence/ask", json={"question": "x" * 1001}).status_code == 422
+
+
+def test_a_scenario_runs_only_once_confirmed(client, no_ai):
+    planned = client.post("/intelligence/scenario/plan", json={"text": "Simulate three simultaneous emergency incidents"})
+    assert planned.status_code == 200
+    proposal = planned.json()["proposal"]
+    assert [a["type"] for a in proposal["actions"]] == ["traffic", "incidents"]
+    assert client.post("/intelligence/scenario/run", json={"proposal": proposal}).status_code == 400
+    assert len(client.get("/simulations").json()["simulations"]) == 0
+    proposal["actions"][0]["vehicles"] = 20
+    started = client.post("/intelligence/scenario/run", json={"proposal": proposal, "confirm": True})
+    assert started.status_code == 201
+    run = started.json()["simulation_id"]
+    incidents = client.get(f"/simulations/{run}/command").json()["incidents"]
+    assert [i["kind"] for i in incidents] == ["medical", "fire", "road_accident"]
+    bad = {"actions": [{"type": "earthquake"}]}
+    assert client.post("/intelligence/scenario/run", json={"proposal": bad, "confirm": True}).status_code == 422
+    assert client.post("/intelligence/scenario/plan", json={"text": "an earthquake"}).status_code == 422

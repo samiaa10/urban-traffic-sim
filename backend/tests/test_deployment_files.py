@@ -63,10 +63,12 @@ def test_backend_installs_from_a_file_that_exists_and_stays_small(blueprint):
     # slow and large for no benefit, because the map is already downloaded.
     # The database packages (Stage 3) are imported by the backend whether
     # or not DATABASE_URL is set; psycopg[binary] ships prebuilt wheels,
-    # so nothing is compiled during the build.
+    # so nothing is compiled during the build. anthropic is the AI City
+    # Analyst's provider (pure Python; unused without ANTHROPIC_API_KEY).
     assert packages == {
         "fastapi", "uvicorn", "numpy",
         "sqlalchemy", "alembic", "psycopg[binary]",
+        "anthropic",
     }
 
 

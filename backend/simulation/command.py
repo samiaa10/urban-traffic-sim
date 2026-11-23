@@ -126,7 +126,12 @@ def nearest_road(graph, latitude, longitude):
     if node is None:
         return None
     here = graph.nodes[node]
+    # Roads leaving the junction, and (for one-way dead ends) roads into it
     neighbours = {other for other, _ in graph.get_neighbours(node) if other != node}
+    neighbours |= {
+        source for source, roads in graph.edges.items()
+        if source != node and any(target == node for target, _ in roads)
+    }
     if not neighbours:
         return None
 

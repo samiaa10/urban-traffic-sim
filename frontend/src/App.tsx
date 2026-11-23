@@ -49,8 +49,11 @@ import { LiveAnalytics } from "./LiveAnalytics.tsx"
 import { LiveControls } from "./LiveControls.tsx"
 import { ResiliencePanel } from "./ResiliencePanel.tsx"
 import { CommandCentre } from "./CommandCentre.tsx"
+import { AnalystDrawer } from "./AnalystDrawer.tsx"
+import { InsightsSection } from "./InsightsSection.tsx"
 import { Landing, StatusPill } from "./Landing.tsx"
 import { useOverview } from "./overview.ts"
+import { setActiveRun } from "./activeRun.ts"
 import { PlanningWorkspace } from "./PlanningWorkspace.tsx"
 import type { Plan } from "./planning.ts"
 import { EmergencyMonitor, IncidentMonitor, SimulationTimeline } from "./Operations.tsx"
@@ -281,6 +284,9 @@ function App() {
 
   // The city model's figures (landing band, status) and the analyst drawer
   const overview = useOverview()
+  const [analystOpen, setAnalystOpen] = useState(false)
+  // A run the scenario builder started, shown in the command centre
+  const [commandRun, setCommandRun] = useState<string | null>(null)
 
   // The planning and command views bring their own map, legend and controls
   const workspaceView = mapView === "plan" || mapView === "command"
@@ -541,6 +547,7 @@ function App() {
     setHistory([])
 
     simulationId.current = restarted.simulation_id
+    setActiveRun(restarted.simulation_id)
     void reapplySignals()
     setVehicles([
       {
@@ -638,6 +645,7 @@ function App() {
       // Later requests name this run, so they reach it even if another
       // run is started elsewhere
       simulationId.current = simulationIdFrom(simulationData)
+      setActiveRun(simulationId.current)
 
       // A new run starts without signals: give it the ones chosen
       await reapplySignals()
@@ -1258,6 +1266,10 @@ function App() {
             <Icon name="chart" size={16} />
             <span>Scenarios</span>
           </a>
+          <a href="#insights">
+            <Icon name="pulse" size={16} />
+            <span>Insights</span>
+          </a>
           <a href="#evaluation">
             <Icon name="stations" size={16} />
             <span>In traffic</span>
@@ -1267,6 +1279,10 @@ function App() {
             <span>History</span>
           </a>
           <StatusPill overview={overview} />
+          <button type="button" className="nav-analyst" onClick={() => setAnalystOpen(true)}>
+            <Icon name="chat" size={15} />
+            <span>Analyst</span>
+          </button>
           <a
             href="https://github.com/samiaa10/urban-traffic-sim"
             target="_blank"
@@ -1283,6 +1299,19 @@ function App() {
         overview={overview}
         onOpen={(view) => {
           chooseMapView(view)
+          document.getElementById("map")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
+        }}
+        onAsk={() => setAnalystOpen(true)}
+      />
+
+      <AnalystDrawer
+        open={analystOpen}
+        onClose={() => setAnalystOpen(false)}
+        onOpenRun={(id) => {
+          setCommandRun(id)
+          setActiveRun(id)
+          chooseMapView("command")
+          setAnalystOpen(false)
           document.getElementById("map")?.scrollIntoView?.({ behavior: "smooth", block: "start" })
         }}
       />
@@ -1686,7 +1715,7 @@ function App() {
             )}
 
             {mapView === "command" ? (
-              <CommandCentre />
+              <CommandCentre key={commandRun ?? "new"} attachTo={commandRun} />
             ) : mapView === "plan" ? (
               <PlanningWorkspace
                 fetchPlan={fetchPlan}
@@ -1996,6 +2025,9 @@ function App() {
           onShowOnMap={setScenarioOverlay}
           openStudy={studyToOpen}
         />
+
+        {/* ---------------- CITY INTELLIGENCE ---------------- */}
+        <InsightsSection />
 
         {/* ---------------- THE OPTIMISER TESTED IN TRAFFIC ---------------- */}
         <EvaluationSection />

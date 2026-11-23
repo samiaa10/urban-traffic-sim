@@ -61,6 +61,11 @@ services:
         value: "30"
       - key: LOG_FORMAT
         value: json
+      # Optional: the AI City Analyst's model (docs/AI.md). Render asks for the
+      # value; nothing is stored here. Left empty, the analyst uses its
+      # built-in rules.
+      - key: ANTHROPIC_API_KEY
+        sync: false
 
   # ---- Frontend: React + Vite, built to static files ----
   - type: web
