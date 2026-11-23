@@ -40,7 +40,7 @@ EXPENSIVE = [
     ("POST", re.compile(r"^/simulation/start$")),
     ("POST", re.compile(r"^/simulations$")),
     ("POST", re.compile(r"^/command/start$")),
-    ("POST", re.compile(r"^/intelligence/(ask|scenario/plan|scenario/run)$")),
+    ("POST", re.compile(r"^/intelligence/(ask|ask/stream|scenario/plan|scenario/run)$")),
     ("GET", re.compile(r"^/intelligence/insights$")),
     ("POST", re.compile(r"^/simulations/[^/]+/restart$")),
     ("POST", re.compile(r"^(/simulations/[^/]+)?(/simulation)?/fleet$")),

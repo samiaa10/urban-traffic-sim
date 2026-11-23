@@ -53,6 +53,8 @@ export default defineConfig({
         SCENARIO_WORKERS: "0",
         TRAFFIC_MODEL: "osm",
         LOG_LEVEL: "WARNING",
+        // The analyst's built-in rules, even where a local model is running
+        AI_PROVIDER: "none",
         ...(process.env.E2E_DATABASE_URL ? { DATABASE_URL: process.env.E2E_DATABASE_URL } : {}),
       },
     },

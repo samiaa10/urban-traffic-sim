@@ -1676,13 +1676,26 @@ def no_ai(monkeypatch):
 
 def test_the_analyst_answers_with_its_calculations(client, no_ai):
     status = client.get("/intelligence/status").json()
-    assert status["available"] is False and len(status["capabilities"]) == 8
+    assert status["available"] is False and len(status["capabilities"]) == 10
     body = client.post("/intelligence/ask", json={"question": "Which roads do trips depend on most?"}).json()
     assert body["mode"] == "rules" and body["sources"][0]["tool"] == "critical_roads"
     assert body["sources"][0]["provenance"] == "calculated"
     assert "No AI model is configured" in body["notice"]
     assert client.post("/intelligence/ask", json={"question": ""}).status_code == 422
     assert client.post("/intelligence/ask", json={"question": "x" * 1001}).status_code == 422
+
+
+def test_the_analyst_answer_can_be_streamed(client, no_ai):
+    import json
+
+    streamed = client.post("/intelligence/ask/stream", json={"question": "Which roads do trips depend on most?"})
+    assert streamed.status_code == 200 and streamed.headers["content-type"].startswith("application/x-ndjson")
+    events = [json.loads(line) for line in streamed.text.splitlines() if line.strip()]
+    # Without a model there is one stage: the rules' answer, the same as /ask gives
+    assert [e["stage"] for e in events] == ["done"]
+    plain = client.post("/intelligence/ask", json={"question": "Which roads do trips depend on most?"}).json()
+    assert events[0]["answer"]["facts"] == plain["facts"] and events[0]["answer"]["mode"] == "rules"
+    assert client.post("/intelligence/ask/stream", json={"question": "   "}).status_code == 422
 
 
 def test_a_scenario_runs_only_once_confirmed(client, no_ai):

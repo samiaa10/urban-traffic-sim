@@ -3,6 +3,7 @@
 configured AI provider when there is one, and through built-in rules when
 there is not; every figure comes from the backend's calculations."""
 
+import logging
 from typing import List, Literal, Optional
 
 from fastapi import APIRouter, Depends, HTTPException
@@ -13,6 +14,7 @@ from backend.api.routes.common import get_context
 
 
 router = APIRouter(tags=["Intelligence"])
+logger = logging.getLogger(__name__)
 
 
 class Turn(BaseModel):
@@ -54,6 +56,41 @@ def ask(body: Question, context: AppContext = Depends(get_context)):
         return answer(body.question, context, body.simulation_id, [t.model_dump() for t in body.history])
     except ValueError as error:
         raise HTTPException(status_code=422, detail=str(error)) from None
+
+
+@router.post("/intelligence/ask/stream")
+def ask_stream(body: Question, context: AppContext = Depends(get_context)):
+    """The same answer as /intelligence/ask, streamed as it is worked out
+    (newline-delimited JSON), so the website can show each stage of a
+    local model's answer: {"stage": "planning"}, {"stage": "calculated",
+    "answer"} (the calculated facts, before the model explains them),
+    {"stage": "proposing"}, {"stage": "explaining"}, and always last
+    {"stage": "done", "answer"}."""
+
+    import json
+
+    from fastapi.responses import StreamingResponse
+
+    from backend.intelligence.analysis import plain
+    from backend.intelligence.analyst import answer_stream
+
+    events = answer_stream(body.question, context, body.simulation_id, [t.model_dump() for t in body.history])
+    try:
+        first = next(events)
+    except ValueError as error:
+        raise HTTPException(status_code=422, detail=str(error)) from None
+
+    def lines():
+        yield json.dumps(plain(first)) + "\n"
+        try:
+            for event in events:
+                yield json.dumps(plain(event)) + "\n"
+        except Exception:  # noqa: BLE001 - the client must always get an ending
+            logger.exception("Streamed analyst answer failed")
+            yield json.dumps({"stage": "error", "detail": "The analyst failed while answering."}) + "\n"
+
+    return StreamingResponse(lines(), media_type="application/x-ndjson",
+                             headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"})
 
 
 @router.get("/intelligence/insights")

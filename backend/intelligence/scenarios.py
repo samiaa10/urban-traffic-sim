@@ -252,7 +252,7 @@ def rule_plan(text, graph):
         actions.append({"type": "flood", "place": place, "radius_metres": radius, "minutes": _duration(text, 45), "severity": "closed"})
         notes.append(f"flood of {radius} m radius at {place}, roads closed")
     if re.search(r"rush[- ]hour|surge|peak", q):
-        outbound = bool(re.search(r"evening|leav|out of|outbound|home", q))
+        outbound = bool(re.search(r"evening|leav|out of|outbound|home", q)) and not re.search(r"\binto\b|inbound|arriv", q)
         place = _place_in(text)
         actions.append({"type": "surge", "place": place, "direction": "outbound" if outbound else "inbound",
                         "radius_metres": 1200, "vehicles_per_minute": 150 if re.search(r"major|heavy|big", q) else 100,
@@ -280,8 +280,94 @@ def rule_plan(text, graph):
     return {"title": title[:1].upper() + title[1:], "notes": "Assumed: " + "; ".join(notes) if notes else "", "actions": actions}
 
 
+def structured_schema():
+    """The proposal form a local model fills in (Ollama holds it to this)."""
+    base = PROPOSE_TOOL["input_schema"]
+    return {
+        **base,
+        "required": ["supported", "title", "actions", "notes", "explanation"],
+        "properties": {
+            "supported": {"type": "boolean"},
+            **base["properties"],
+            "explanation": {"type": "string", "maxLength": 500},
+        },
+    }
+
+
+def structured_system(graph):
+    from backend.intelligence.assistant import bridge_roads
+
+    return PLANNER_SYSTEM.replace(
+        "by calling propose_scenario once.",
+        "by filling in the proposal form.",
+    ).replace(
+        "do not call the tool: say in one or two sentences what is not supported and what the closest supported "
+        "scenario would be.",
+        "set supported false and say in explanation what is not supported and the closest supported scenario.",
+    ) + f"""
+
+Bridge roads on the map: {", ".join(bridge_roads(id(graph), graph))}.
+For "two major bridges" pick two of these with close_roads. Use close_bridges for all the central bridges.
+In "explanation", tell the user in two or three sentences what will be simulated and why, using only the numbers in your actions. Places: {", ".join(PLACE_NAMES)}."""
+
+
+ASKED = {
+    "flood": r"flood|water|river|rain|storm",
+    "surge": r"rush|surge|peak|busy|crowd|event|match|concert|commut|evening|morning",
+    "close_roads": r"clos|block|shut|bridge|road ?works|outage|lose|lost|cut",
+    "close_bridges": r"bridge",
+    "incidents": r"emergenc|incident|fire|accident|crash|medical|ambulance|police|collision",
+}
+
+
+ACTION_NAMES = {"flood": "a flood", "surge": "a rush-hour surge", "close_roads": "road closures",
+                "close_bridges": "bridge closures", "incidents": "emergency incidents"}
+
+
+def _mentioned_places(text):
+    q = text.lower()
+    return {p for p in PLACE_NAMES if re.sub(r"^the ", "", p.lower()) in q}
+
+
+def unrequested(proposal, text, graph):
+    """What a model's (already valid) proposal adds that the request did not
+    ask for: an action of a kind the request never mentions, a road it did
+    not name (a bridge only when it asked about bridges), or a place other
+    than those it named. Small models fill a form validly but loosely; the
+    rules read the request instead when this is not empty."""
+    from backend.intelligence.analyst import roads_in
+    from backend.intelligence.assistant import bridge_roads
+
+    q = text.lower()
+    named = _mentioned_places(text)
+    asked_roads = {r.lower() for r in roads_in(text, graph)}
+    bridges = {b.lower() for b in bridge_roads(id(graph), graph)}
+    problems = []
+    for action in proposal.get("actions") or []:
+        kind = action.get("type")
+        if kind in ASKED and not re.search(ASKED[kind], q):
+            problems.append(f"{ACTION_NAMES[kind]}, which the request did not ask for")
+            continue
+        if kind == "close_roads":
+            for road in action.get("roads") or []:
+                lower = str(road).lower()
+                if lower not in asked_roads and not ("bridge" in q and lower in bridges):
+                    problems.append(f"closing {road}, which the request did not name")
+        places = [action.get("place")] if kind in ("flood", "surge") else \
+            [i.get("place") for i in action.get("incidents") or [] if isinstance(i, dict)] if kind == "incidents" else []
+        for place in places:
+            if place and named and place not in named:
+                problems.append(f"{place}, which the request did not name")
+    actions = [a for a in proposal.get("actions") or [] if isinstance(a, dict)]
+    if all(a.get("type") == "traffic" for a in actions) and not re.search(r"traffic|vehicle|car|congest|busy|drive", q):
+        problems.append("only background traffic, which the request did not ask for")
+    if sum(1 for a in proposal.get("actions") or [] if a.get("type") == "incidents") > 1:
+        problems.append("the incidents split across several actions")
+    return list(dict.fromkeys(problems))
+
+
 def plan(text, context, provider=None):
-    """{"proposal", "summary", "mode", "model", "notice"} or ScenarioError."""
+    """{"proposal", "summary", "mode", "model", "notice", "explanation"} or ScenarioError."""
     text = (text or "").strip()
     if not text:
         raise ScenarioError("Describe the scenario")
@@ -289,8 +375,36 @@ def plan(text, context, provider=None):
         raise ScenarioError("Describe the scenario in at most 600 characters")
     provider = provider or get_provider()
     notice = None
-    proposal, mode, model = None, "rules", None
-    if provider.available:
+    proposal, mode, model, explanation = None, "rules", None, None
+    if provider.available and getattr(provider, "supports_structured", False):
+        ok, reason = provider.check()
+        if not ok:
+            notice = f"The local AI model is unavailable ({reason}), so the built-in rules read the request."
+        else:
+            try:
+                value = provider.structured(structured_system(context.graph), [{"role": "user", "content": text}],
+                                            structured_schema(), max_tokens=700)
+                if value.get("supported") is False:
+                    notice = ("The local model says this cannot be simulated"
+                              + (f": {str(value.get('explanation'))[:200]}" if value.get("explanation") else "")
+                              + ". The built-in rules read the request.")
+                else:
+                    try:
+                        checked = validate(value, context.graph, context.network)
+                        unasked = unrequested(value, text, context.graph)
+                        if unasked:
+                            notice = ("The local model's proposal did not match the request ("
+                                      + "; ".join(unasked[:3]) + "), so the built-in rules read the request.")
+                        else:
+                            proposal = checked
+                            mode, model = "ai", provider.model
+                            explanation = _checked_explanation(value.get("explanation"), proposal, text)
+                    except ScenarioError as error:
+                        notice = (f"The local model's proposal was not valid ({error}), so the built-in rules "
+                                  "read the request.")
+            except ProviderError as error:
+                notice = f"The local AI model could not answer ({error.reason}), so the built-in rules read the request."
+    elif provider.available:
         try:
             reply = provider.respond(PLANNER_SYSTEM, [{"role": "user", "content": text}], [PROPOSE_TOOL])
             call = next((c for c in reply.tool_calls if c.name == "propose_scenario"), None)
@@ -314,8 +428,20 @@ def plan(text, context, provider=None):
     return plain({
         "proposal": proposal,
         "summary": [describe(a) for a in proposal["actions"]],
-        "mode": mode, "model": model, "notice": notice,
+        "mode": mode, "model": model, "notice": notice, "explanation": explanation,
     })
+
+
+def _checked_explanation(text, proposal, request):
+    """The model's description of the scenario, if every figure in it is in
+    the validated proposal or the request; otherwise none."""
+    from backend.intelligence.analyst import ungrounded_figures
+
+    text = (text or "").strip()
+    if not text:
+        return None
+    source = [{"tool": "proposal", "input": {}, "result": proposal}]
+    return None if ungrounded_figures(text, source, request) else text[:500]
 
 
 # ------------------------------------------------------------

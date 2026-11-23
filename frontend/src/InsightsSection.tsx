@@ -8,6 +8,11 @@ import { useState } from "react"
 
 import { activeRun } from "./activeRun.ts"
 import { API_URL } from "./config.ts"
+import { STAGE_TEXT, askStream, type Answer, type Stage, type Status } from "./intelligence.ts"
+
+const EXPLAIN_QUESTION =
+  "Explain why fire and police coverage is weakest where it is, which roads Norwich depends on most, " +
+  "and the trade-offs of adding one new fire station."
 
 type Area = { where: string; residents_beyond_target: number; median_seconds: number | null }
 type Coverage = {
@@ -44,6 +49,23 @@ export function InsightsSection() {
   const [data, setData] = useState<Insights | null>(null)
   const [busy, setBusy] = useState(false)
   const [error, setError] = useState("")
+  const [ai, setAi] = useState<Status | null>(null)
+  const [explained, setExplained] = useState<Answer | null>(null)
+  const [explaining, setExplaining] = useState(false)
+  const [stage, setStage] = useState<Stage | null>(null)
+
+  async function explain() {
+    setExplaining(true)
+    try {
+      setStage("planning")
+      setExplained(await askStream(EXPLAIN_QUESTION, activeRun(), [], (event) => setStage(event.stage)))
+    } catch (caught) {
+      setExplained({ answer: "", mode: "rules", model: null, sources: [], notice: caught instanceof Error ? caught.message : String(caught) })
+    } finally {
+      setExplaining(false)
+      setStage(null)
+    }
+  }
 
   async function load() {
     setBusy(true)
@@ -54,6 +76,8 @@ export function InsightsSection() {
       const body = await response.json().catch(() => ({}))
       if (!response.ok) throw new Error(typeof body.detail === "string" ? body.detail : "The analysis failed")
       setData(body as Insights)
+      // Whether a real AI model can explain the findings here
+      fetch(`${API_URL}/intelligence/status`).then((r) => (r.ok ? r.json() : null)).then((s) => setAi(s)).catch(() => setAi(null))
     } catch (caught) {
       setError(caught instanceof Error ? caught.message : String(caught))
     } finally {
@@ -77,6 +101,33 @@ export function InsightsSection() {
         </button>
       </div>
       {error && <p className="analyst-error" role="alert">{error}</p>}
+      {data && (
+        <div className="insight-ai" aria-label="AI explanation of the findings">
+          {ai?.available ? (
+            <>
+              <button type="button" className="btn" onClick={() => void explain()} disabled={explaining} aria-busy={explaining}>
+                {explaining
+                  ? `${stage && stage !== "done" && stage !== "calculated" ? STAGE_TEXT[stage] : "Running the calculations"}…`
+                  : `Explain these findings with ${ai.model}`}
+              </button>
+              {explained && (
+                <div className="insight-ai-answer">
+                  {explained.explanation ? (
+                    <><span className="analyst-badge analyst-badge--ai">AI-generated · {explained.model}</span><p>{explained.explanation}</p></>
+                  ) : (
+                    <p className="analyst-notice">{explained.explanation_note ?? explained.notice ?? "No explanation was given."}</p>
+                  )}
+                </div>
+              )}
+            </>
+          ) : (
+            <p className="insight-method">
+              No AI model is available on this server{ai?.reason ? ` (${ai.reason})` : ""}, so these findings are not
+              explained by AI. Run NORWICH//SIM locally with Ollama for AI explanations (docs/AI.md).
+            </p>
+          )}
+        </div>
+      )}
 
       {data && (
         <div className="insights-grid">

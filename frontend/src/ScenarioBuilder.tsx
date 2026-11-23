@@ -78,6 +78,7 @@ export function ScenarioBuilder({ onOpenRun }: { onOpenRun: (simulationId: strin
           <ol>
             {proposal.summary.map((line) => <li key={line}>{line}</li>)}
           </ol>
+          {proposal.explanation && <p className="scenario-intent"><b>AI-generated:</b> {proposal.explanation}</p>}
           {proposal.proposal.notes && <p className="analyst-notice">{proposal.proposal.notes}</p>}
           {proposal.notice && <p className="analyst-notice">{proposal.notice}</p>}
           <p className="scenario-check">Nothing has run yet. Check the actions, then run them on the simulation engine.</p>
