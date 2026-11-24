@@ -1,4 +1,4 @@
-// The opening band: what NORWICH//SIM is, the city model it runs (real
+// The opening band: what the Norwich Urban Traffic Simulator is, the city model it runs (real
 // figures from GET /city/overview: the road network, the census, the
 // mapped stations), and a way into each part. It can be folded away; the
 // choice is remembered.
@@ -60,7 +60,7 @@ export function Landing({
     : []
 
   return (
-    <section className="landing" aria-label="About NORWICH//SIM">
+    <section className="landing" aria-label="About the Norwich Urban Traffic Simulator">
       <div className="landing-copy">
         <span className="landing-eyebrow">Norwich, UK · Live digital twin</span>
         <h2>Norwich's roads, traffic and emergency cover, simulated live.</h2>

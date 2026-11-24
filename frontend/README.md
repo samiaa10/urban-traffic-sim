@@ -1,6 +1,6 @@
-# NORWICH//SIM frontend
+# Norwich Urban Traffic Simulator frontend
 
-The map interface for NORWICH//SIM, built with React, TypeScript, Vite and Leaflet (via `react-leaflet`).
+The map interface for the Norwich Urban Traffic Simulator, built with React, TypeScript, Vite and Leaflet (via `react-leaflet`).
 
 It needs the backend running. See the [main README](../README.md) for the full setup, including generating the Norwich road-network data the backend depends on.
 

@@ -23,7 +23,7 @@ def root():
     """The API's name and that it is online."""
 
     return {
-        "name": "NORWICH//SIM",
+        "name": "Norwich Urban Traffic Simulator",
         "status": "online"
     }
 

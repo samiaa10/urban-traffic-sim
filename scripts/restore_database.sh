@@ -3,7 +3,7 @@
 #
 #   scripts/restore_database.sh BACKUP_FILE [DATABASE_URL] --yes
 #
-# DATABASE_URL defaults to $DATABASE_URL. This REPLACES the NORWICH//SIM
+# DATABASE_URL defaults to $DATABASE_URL. This REPLACES the Norwich Urban Traffic Simulator
 # tables in that database with the backup's (other tables are left
 # alone), so it asks for --yes. Stop the backend first, then run
 # `alembic upgrade head` afterwards, which brings a backup made before a
@@ -29,7 +29,7 @@ if [[ ! -f "$file" ]]; then
     exit 2
 fi
 if [[ "$confirmed" != 1 ]]; then
-    echo "This replaces the NORWICH//SIM tables in the target database. Add --yes to go ahead." >&2
+    echo "This replaces the Norwich Urban Traffic Simulator tables in the target database. Add --yes to go ahead." >&2
     exit 2
 fi
 url="${url/postgresql+psycopg:\/\//postgresql://}"

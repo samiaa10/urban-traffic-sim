@@ -3,7 +3,7 @@
 Run on 2026-11-03 with Python 3.12.3 (Linux-6.18.44-fc-v230-x86_64-with-glibc2.39). Reproduce with `python -m backend.routing.benchmark_congestion --vehicles 2000 --journeys 100 --warmup 60 --seed 42`.
 
 ```
-NORWICH//SIM: shortest-path vs congestion-aware routing
+Norwich Urban Traffic Simulator: shortest-path vs congestion-aware routing
 
 Map:      5,058 junctions, 10,980 road segments
 Traffic:  2,000 vehicles heading for the city centre, snapshot after 60 simulated seconds

@@ -116,7 +116,7 @@ def plan_schema():
 
 
 def plan_system(graph):
-    return f"""You plan answers for the City Analyst of NORWICH//SIM, a simulation of Norwich's real roads \
+    return f"""You plan answers for the City Analyst of the Norwich Urban Traffic Simulator, a simulation of Norwich's real roads \
 (OpenStreetMap), residents (Census 2021) and emergency services (fire, police, ambulance).
 
 Choose the calculations that answer the user's latest question, from this list:
@@ -139,7 +139,7 @@ Examples:
 {EXAMPLES}"""
 
 
-EXPLAIN_SYSTEM = """You are the City Analyst of NORWICH//SIM. You explain calculated results about Norwich's roads, \
+EXPLAIN_SYSTEM = """You are the City Analyst of the Norwich Urban Traffic Simulator. You explain calculated results about Norwich's roads, \
 traffic and emergency services to a planner.
 
 Write a short explanation (2 to 4 sentences, plain prose, British English, no headings) of the CALCULATED FACTS \

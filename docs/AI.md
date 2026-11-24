@@ -1,6 +1,6 @@
 # AI City Analyst, scenarios from words, and city intelligence
 
-NORWICH//SIM can answer questions about Norwich and its simulations, turn a
+The Norwich Urban Traffic Simulator can answer questions about Norwich and its simulations, turn a
 plain-language description into a scenario, and gather its analyses into
 one panel. All of these work **without an AI provider**. Built-in rules then
 choose the calculation and write the answer from a template. With a
@@ -52,7 +52,7 @@ needs to change.
 
 The analyst can run entirely on your own computer with a free open model in
 [Ollama](https://ollama.com): no API key, no account, no cost, and nothing
-leaves the machine. This is how NORWICH//SIM is meant to be AI-powered.
+leaves the machine. This is how the Norwich Urban Traffic Simulator is meant to be AI-powered.
 
 **Start it** (Ollama installed once from ollama.com):
 
@@ -205,7 +205,7 @@ as a finding in itself.
   then get the built-in rules. Each request times out after 120 s.
 - **The live website on Render** cannot run a model (its free plan has
   512 MB of memory and no GPU), so it always uses the built-in rules and
-  says so in the analyst's header. The AI works when NORWICH//SIM runs
+  says so in the analyst's header. The AI works when the Norwich Urban Traffic Simulator runs
   locally; hosting a model for the public site has not been looked into
   here.
 

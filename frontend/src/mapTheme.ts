@@ -50,7 +50,7 @@ const isClass = (classes: string[]): ExpressionSpecification =>
 
 export const OPS_STYLE: StyleSpecification = {
   version: 8,
-  name: "NORWICH//SIM operations",
+  name: "Norwich Urban Traffic Simulator operations",
   glyphs: "https://tiles.openfreemap.org/fonts/{fontstack}/{range}.pbf",
   sources: {
     openmaptiles: { type: "vector", url: "https://tiles.openfreemap.org/planet" },

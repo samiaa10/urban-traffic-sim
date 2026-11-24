@@ -165,7 +165,7 @@ def create_app(
             database.dispose()
 
     app = FastAPI(
-        title="NORWICH//SIM API",
+        title="Norwich Urban Traffic Simulator API",
         description=API_DESCRIPTION,
         version="1.0.0",
         openapi_tags=API_TAGS,

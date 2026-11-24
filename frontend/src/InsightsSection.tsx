@@ -123,7 +123,7 @@ export function InsightsSection() {
           ) : (
             <p className="insight-method">
               No AI model is available on this server{ai?.reason ? ` (${ai.reason})` : ""}, so these findings are not
-              explained by AI. Run NORWICH//SIM locally with Ollama for AI explanations (docs/AI.md).
+              explained by AI. Run the Norwich Urban Traffic Simulator locally with Ollama for AI explanations (docs/AI.md).
             </p>
           )}
         </div>

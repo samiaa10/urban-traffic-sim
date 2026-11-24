@@ -332,7 +332,7 @@ def format_report(summary, traffic_stats, settings, graph_info):
         ).rstrip()
 
     lines = [
-        "NORWICH//SIM: shortest-path vs congestion-aware routing",
+        "Norwich Urban Traffic Simulator: shortest-path vs congestion-aware routing",
         "",
         f"Map:      {graph_info['nodes']:,} junctions, {graph_info['edges']:,} road segments",
         f"Traffic:  {settings['vehicles']:,} vehicles heading for the city centre, "

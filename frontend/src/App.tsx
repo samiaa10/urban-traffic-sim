@@ -1242,10 +1242,8 @@ function App() {
         <div className="brand">
           <Logo />
           <div>
-            <h1>
-              NORWICH<span className="slashes">//</span>SIM
-            </h1>
-            <p>Urban Traffic Simulation &amp; Optimisation Platform</p>
+            <h1><span>Norwich Urban</span> <span>Traffic Simulator</span></h1>
+            <p>Traffic, disruption and emergency response on real roads</p>
           </div>
         </div>
 

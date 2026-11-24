@@ -1,6 +1,6 @@
 # Operations view: redesign
 
-A redesign of NORWICH//SIM's dashboard and 3D map towards a transport-operations and digital-twin interface:
+A redesign of the Norwich Urban Traffic Simulator's dashboard and 3D map towards a transport-operations and digital-twin interface:
 - a dark, restrained theme;
 - a map-first layout with live monitoring beside the map and a timeline under it;
 - a basemap built from real map data;

@@ -1,4 +1,4 @@
-/* NORWICH//SIM interface styles
+/* Norwich Urban Traffic Simulator interface styles
    1. Design tokens   2. Base   3. Layout   4. Controls
    5. Panel content   6. Optimiser results   7. Map   8. Scenario analysis
    9. Responsive / motion
@@ -217,11 +217,6 @@ a {
   letter-spacing: 0.06em;
   line-height: 1.1;
   color: #fff;
-}
-
-.brand h1 .slashes {
-  color: var(--teal-light);
-  margin: 0 1px;
 }
 
 .brand p {
@@ -3231,13 +3226,58 @@ body {
 
 .brand h1 {
   font-size: 15px;
-  letter-spacing: 0.09em;
+  letter-spacing: 0.01em;
 }
 
 .brand p {
   color: var(--ink-3);
   font-size: var(--text-2xs);
   letter-spacing: 0.01em;
+}
+
+/* The name on one line where there is room, the subtitle only on wide
+   screens, and the name on two lines below that */
+.brand {
+  flex-shrink: 0;
+}
+
+.brand h1 {
+  white-space: nowrap;
+}
+
+@media (max-width: 1500px) {
+  .brand p {
+    display: none;
+  }
+}
+
+/* Below this the menu's labels no longer fit beside the name: icons only
+   (hidden visually only, so each link keeps its name for screen readers), as on phones */
+@media (max-width: 1180px) {
+  .nav a span {
+    display: inline;
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+    white-space: nowrap;
+  }
+
+  .nav a {
+    padding: 0 10px;
+  }
+}
+
+@media (max-width: 1280px) {
+  .brand h1 {
+    font-size: 13px;
+    line-height: 1.2;
+  }
+
+  .brand h1 span {
+    display: block;
+  }
 }
 
 .nav a {

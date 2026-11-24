@@ -1,4 +1,4 @@
-# The NORWICH//SIM backend (FastAPI). Build from the repository root:
+# The Norwich Urban Traffic Simulator backend (FastAPI). Build from the repository root:
 #
 #     docker build -f backend/Dockerfile -t norwich-sim-backend .
 #

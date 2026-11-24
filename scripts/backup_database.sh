@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Back up the NORWICH//SIM database to one file.
+# Back up the Norwich Urban Traffic Simulator database to one file.
 #
 #   scripts/backup_database.sh [DATABASE_URL] [OUTPUT_FILE]
 #

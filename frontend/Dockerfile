@@ -1,4 +1,4 @@
-# The NORWICH//SIM frontend: built by Vite, served by nginx. Build from
+# The Norwich Urban Traffic Simulator frontend: built by Vite, served by nginx. Build from
 # the frontend folder:
 #
 #     docker build -t norwich-sim-frontend frontend

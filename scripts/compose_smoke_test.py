@@ -124,7 +124,7 @@ def run_checks():
     check(page.get("status") == "online", "the API answers through nginx")
 
     index = request("GET", "/", base=SITE)
-    check("NORWICH//SIM" in index, "the frontend is served")
+    check("Norwich Urban Traffic Simulator" in index, "the frontend is served")
 
     # The 3D map's worker: browsers only run it as a module worker when it
     # is served as JavaScript (the build saves it as .js: vite.config.ts)

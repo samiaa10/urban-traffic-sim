@@ -191,7 +191,7 @@ test("emergency response command centre", async ({ page }) => {
 
 test("landing and workspace", async ({ page }) => {
   await page.goto("/")
-  await expect(page.getByRole("region", { name: "About NORWICH//SIM" })).toContainText("Road network")
+  await expect(page.getByRole("region", { name: "About the Norwich Urban Traffic Simulator" })).toContainText("Road network")
   await page.waitForTimeout(2_500)
   await page.screenshot({ path: `${OUT}/landing.jpg`, type: "jpeg", quality: 84 })
 })

@@ -1,4 +1,4 @@
-# Presenting NORWICH//SIM
+# Presenting the Norwich Urban Traffic Simulator
 
 Material for a demo video, a CV and LinkedIn. Every number here comes from a report in this repository (linked); re-check them if the code changes.
 
@@ -8,7 +8,7 @@ Record at 1440 x 1000 or larger, with the backend and website running locally (o
 
 | Time | On screen | Say |
 |---|---|---|
-| 0:00 | The website, empty map of Norwich | **"This is NORWICH//SIM: a traffic simulation of Norwich's real road network, 5,000 junctions from OpenStreetMap, with a Python backend and a React map."** |
+| 0:00 | The website, empty map of Norwich | **"This is the Norwich Urban Traffic Simulator: a traffic simulation of Norwich's real road network, 5,000 junctions from OpenStreetMap, with a Python backend and a React map."** |
 | 0:10 | Click two points across the city, *Calculate Route* | **"A\* finds the fastest route using each road's speed limit; the simulation starts straight away."** |
 | 0:25 | *Live controls*: 2,000 vehicles, *Start a rush hour*, speed 5x | **"Now 2,000 cars and a rush hour into the centre. Roads turn amber and red as they fill up, and the charts below track how many cars are held up."** |
 | 0:50 | *Add an accident*, click a busy road; scroll to *Live traffic* | **"A severe accident cuts the road's capacity. Cars whose routes used it re-plan around it; without rerouting, in the benchmark only 1 of 137 cars got through, with it all 137 did."** |
@@ -32,7 +32,7 @@ Pick three or four; each is backed by a report in `docs/`.
 
 ## LinkedIn project entry
 
-**NORWICH//SIM: urban traffic simulation and optimisation**
+**Norwich Urban Traffic Simulator: traffic, disruption and emergency response**
 
 A traffic simulation of Norwich built on its real road network from OpenStreetMap. Thousands of vehicles drive real roads at their speed limits, congestion builds as roads fill, and vehicles reroute around accidents and closures. Ambulances, fire engines and police cars are dispatched by road, and an optimiser decides where their stations should go, then tests that answer in full traffic simulations. A scenario engine runs hundreds of what-if simulations in the background and explains which did best and why.
 

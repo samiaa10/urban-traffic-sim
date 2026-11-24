@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Start NORWICH//SIM's backend with the local AI analyst (Ollama, free, on
+# Start the Norwich Urban Traffic Simulator's backend with the local AI analyst (Ollama, free, on
 # this machine only). See docs/AI.md.
 #
 #   scripts/start-local-ai.sh                 # the recommended model (llama3.2:3b)

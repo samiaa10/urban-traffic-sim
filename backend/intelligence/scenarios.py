@@ -87,7 +87,7 @@ PROPOSE_TOOL = {
 }
 
 PLANNER_SYSTEM = f"""You turn requests for traffic and emergency scenarios in Norwich into a proposal for \
-NORWICH//SIM's simulation engine, by calling propose_scenario once.
+the Norwich Urban Traffic Simulator's simulation engine, by calling propose_scenario once.
 
 Supported actions:
 - traffic: background vehicles on the roads (vehicles, 0-2000; include ~800 unless the request says otherwise)

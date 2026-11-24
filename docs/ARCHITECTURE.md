@@ -1,6 +1,6 @@
 # Architecture
 
-This document explains how NORWICH//SIM is organised, so another developer can find their way around the code. For setup and run instructions, see the [README](../README.md).
+This document explains how the Norwich Urban Traffic Simulator is organised, so another developer can find their way around the code. For setup and run instructions, see the [README](../README.md).
 
 ## Overview
 
@@ -595,7 +595,7 @@ Defined in `backend/api/routes/`. FastAPI generates interactive docs at `/docs` 
 
 | Method | Path | Purpose |
 |---|---|---|
-| GET | `/` | `{"name": "NORWICH//SIM", "status": "online"}` |
+| GET | `/` | `{"name": "Norwich Urban Traffic Simulator", "status": "online"}` |
 | GET | `/health` | Liveness: `{"status": "ok"}` while the process answers (Render's and Docker's health check) |
 | GET | `/ready` | Readiness: the database `ok` or `not configured` (200), or 503 `degraded` when it cannot be reached, with the number of live runs |
 | GET | `/nearest-node?latitude&longitude` | Nearest junction to a point |

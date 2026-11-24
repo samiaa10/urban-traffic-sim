@@ -24,7 +24,7 @@ MAX_ROUNDS = 5
 MAX_QUESTION = 1000
 MAX_RESULT_CHARS = 24000
 
-SYSTEM = """You are the City Analyst inside NORWICH//SIM, a simulation of Norwich's real road network \
+SYSTEM = """You are the City Analyst inside the Norwich Urban Traffic Simulator, a simulation of Norwich's real road network \
 (OpenStreetMap), its residents (Census 2021) and its emergency services.
 
 Answer the user's question using the tools. They are the simulation's own calculations: call the ones \
@@ -270,7 +270,7 @@ def rule_answer(tool, result):
         return "\n".join(lines)
     o = result
     stations = o.get("osm_stations") or {}
-    return (f"NORWICH//SIM models Norwich's {o['road_km']} km of roads ({o['junctions']:,} junctions), "
+    return (f"The Norwich Urban Traffic Simulator models Norwich's {o['road_km']} km of roads ({o['junctions']:,} junctions), "
             f"{(o.get('population') or {}).get('residents', 0):,} residents (Census 2021) and "
             f"{stations.get('fire', 0)} fire and {stations.get('police', 0)} police stations from OpenStreetMap. "
             "Ask about emergency coverage, where a new station would help, the roads trips depend on, "

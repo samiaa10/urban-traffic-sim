@@ -1,8 +1,8 @@
-# NORWICH//SIM
+# Norwich Urban Traffic Simulator
 
 [![Tests](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml/badge.svg)](https://github.com/samiaa10/urban-traffic-sim/actions/workflows/tests.yml)
 
-NORWICH//SIM is an urban traffic simulation and optimisation platform built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing, the simulation and the optimisation, and a React/TypeScript operations dashboard shows vehicles, congestion, incidents and emergency vehicles live, on a 2D map or a 3D map of the city.
+The Norwich Urban Traffic Simulator is a traffic, disruption and emergency-response simulation built on Norwich's real road network from OpenStreetMap. A Python/FastAPI backend does the routing, the simulation and the optimisation, and a React/TypeScript operations dashboard shows vehicles, congestion, incidents and emergency vehicles live, on a 2D map or a 3D map of the city.
 
 **Live demo: [norwich-sim.onrender.com](https://norwich-sim.onrender.com)** (free hosting: the first visit can take up to a minute while the backend wakes up).
 
@@ -526,7 +526,7 @@ This puts the app on the internet for free: the React frontend as a **static sit
 |---|---|
 | Memory | 512 MB per service. Measured locally (peak resident memory of the Python process, Python 3.9.6 on macOS, 2026-11-13): about 52 MB once the API has started with the map loaded, and about 74 MB after a 5,000-scenario station ranking plus a 5-station set search. Render's Linux figures will differ a little, but there is plenty of headroom |
 | Speed | 0.1 CPU. Everything works but is slower than on your computer, so optimiser searches may take several seconds |
-| Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"NORWICH//SIM","status":"online"}`, then use the site |
+| Sleeping | The backend sleeps after 15 minutes without requests, and the first request after that takes about a minute to wake it. The map page loads at once but shows "backend not running" errors until the backend is awake. Open the backend address first, wait for `{"name":"Norwich Urban Traffic Simulator","status":"online"}`, then use the site |
 | Map data | The map file is committed in Git, so the deployed backend has it. Nothing is written to disk, so the free plan's temporary filesystem is not a problem |
 | Logs | The backend's start-up and dispatch log lines appear in the service's **Logs** tab. Add a `LOG_LEVEL` environment variable (for example `DEBUG`) to change how much is logged; it is optional and not in `render.yaml` |
 | Database | The Blueprint creates a free PostgreSQL database (`norwich-sim-db`) and connects the backend to it, so runs, histories and scenario studies are saved. **Render's free database expires 30 days after it is created** and is deleted 14 days after that unless upgraded; it has 1 GB and no backups. See [The database](#the-database) |

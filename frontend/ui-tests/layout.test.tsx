@@ -25,7 +25,7 @@ describe("page structure", () => {
     render(<App />)
 
     expect(screen.getByRole("heading", { level: 1 }).textContent).toBe(
-      "NORWICH//SIM"
+      "Norwich Urban Traffic Simulator"
     )
 
     const nav = screen.getByRole("navigation", { name: "Sections" })

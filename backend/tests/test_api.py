@@ -206,7 +206,7 @@ def test_root_reports_online(client):
     response = client.get("/")
 
     assert response.status_code == 200
-    assert response.json() == {"name": "NORWICH//SIM", "status": "online"}
+    assert response.json() == {"name": "Norwich Urban Traffic Simulator", "status": "online"}
 
 
 def test_nearest_node_finds_the_closest_junction(client, api):

@@ -1,6 +1,6 @@
 # 3D map prototype: evaluation
 
-An experimental 3D map (branch `experiment-3d-map`), built to decide whether NORWICH//SIM should move from its 2D Leaflet map to MapLibre GL. The 2D map is unchanged and stays the default; a **2D / 3D** switch in the map's toolbar chooses between them, and the choice is remembered in the browser.
+An experimental 3D map (branch `experiment-3d-map`), built to decide whether the Norwich Urban Traffic Simulator should move from its 2D Leaflet map to MapLibre GL. The 2D map is unchanged and stays the default; a **2D / 3D** switch in the map's toolbar chooses between them, and the choice is remembered in the browser.
 
 ![The 3D map with 2,000 vehicles, live congestion and a planned route across central Norwich](screenshots/map-3d.jpg)
 

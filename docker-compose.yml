@@ -1,4 +1,4 @@
-# The whole of NORWICH//SIM with PostgreSQL:
+# The whole Norwich Urban Traffic Simulator with PostgreSQL:
 #
 #     docker compose up --build
 #
